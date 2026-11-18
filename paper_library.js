@@ -4,6 +4,7 @@ const papersPage = document.body.dataset.page === "papers";
 const libraryPanel = element("library");
 const libraryStatus = element("library-status");
 const paperPicker = element("library-paper");
+const paperSearch = element("paper-search");
 const groupPicker = element("library-group");
 const metadataForm = element("metadata");
 const lookupPaperForm = element("lookup-paper");
@@ -117,21 +118,34 @@ function rememberPaperSelection() {
   history.replaceState(null, "", url);
 }
 
+function paperFilename(item) {
+  return item.path.split(/[\\/]/).pop();
+}
+
+function updatePaperOptions(selected = paperPicker.value) {
+  const terms = paperSearch.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const papers = libraryData.papers.filter(item => {
+    const text = [item.title, item.authors, item.doi, item.venue, paperFilename(item)]
+      .filter(Boolean).join(" ").toLowerCase();
+    return terms.every(term => text.includes(term));
+  });
+  const options = papers.map(item => [item.id, item.title || paperFilename(item)]);
+  const current = libraryData.papers.find(item => String(item.id) === selected);
+  if (current && !papers.includes(current)) {
+    options.unshift([current.id, `${current.title || paperFilename(current)} (selected)`]);
+  }
+  setOptions(paperPicker, options, papers.length ? "Choose a paper" : "No matching papers");
+  if (current) paperPicker.value = selected;
+  element("paper-search-status").textContent = terms.length
+    ? `${papers.length} of ${libraryData.papers.length} papers match.` : "";
+}
+
 async function loadLibrary(paperId) {
   libraryData = await api(papersPage ? "paper-details" : "compare");
   if (papersPage) {
-    setOptions(paperPicker, libraryData.papers.map(item => [
-      item.id, item.title || item.path.split(/[\\/]/).pop(),
-    ]), "Choose a paper");
-    if (paperId !== undefined) {
-      paperPicker.value = String(paperId);
-      rememberPaperSelection();
-    } else if (!paperPicker.value) {
-      const requested = new URLSearchParams(location.search).get("paper");
-      if (requested !== null && [...paperPicker.options].some(option => option.value === requested)) {
-        paperPicker.value = requested;
-      }
-    }
+    const requested = new URLSearchParams(location.search).get("paper");
+    updatePaperOptions(paperId === undefined ? paperPicker.value || requested : String(paperId));
+    if (paperId !== undefined) rememberPaperSelection();
     showPaper();
     return;
   }
@@ -174,8 +188,12 @@ function submit(form, action) {
   });
 }
 
+paperSearch.addEventListener("input", () => {
+  if (libraryData) updatePaperOptions();
+});
 paperPicker.addEventListener("change", () => {
   libraryStatus.textContent = "";
+  updatePaperOptions();
   rememberPaperSelection();
   showPaper();
 });

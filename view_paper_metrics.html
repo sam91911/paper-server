@@ -86,12 +86,14 @@
   </form>
   <ul id="import-results" aria-label="PDF import results" hidden></ul>
   <div class="library-actions">
+    <label>Search papers <input type="search" id="paper-search" placeholder="Title, author, DOI, venue, or filename"></label>
     <label class="paper-picker">Paper details <select id="library-paper"></select></label>
     <form id="create-group">
       <label>New group <input name="name" required maxlength="120"></label>
       <button>Create group</button>
     </form>
   </div>
+  <p id="paper-search-status" role="status"></p>
   <p id="library-status" role="status"></p>
   <div id="paper-detail" hidden>
     <p><a id="open-paper-pdf" target="_blank" rel="noopener" hidden>Open local PDF</a></p>
