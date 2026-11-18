@@ -81,9 +81,10 @@
 <section id="library" hidden>
   <h2>Paper library</h2>
   <form id="pdf-import">
-    <label>Add paper PDF <input id="paper-pdf" type="file" accept=".pdf,application/pdf" required></label>
+    <label>Add paper PDFs <input id="paper-pdf" type="file" accept=".pdf,application/pdf" multiple required></label>
     <button id="import-pdf-button">Import and extract metrics</button>
   </form>
+  <ul id="import-results" aria-label="PDF import results" hidden></ul>
   <div class="library-actions">
     <label class="paper-picker">Paper details <select id="library-paper"></select></label>
     <form id="create-group">

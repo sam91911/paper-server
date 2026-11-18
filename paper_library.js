@@ -180,31 +180,58 @@ metadataForm.addEventListener("input", () => {
   element("metadata-source").textContent = "Source: Manual";
 });
 
+async function importPaper(file) {
+  const response = await fetch("/api/papers", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/pdf",
+      "X-Paper-Filename": encodeURIComponent(file.name),
+    },
+    body: file,
+  });
+  const imported = await response.json();
+  if (!response.ok) throw new Error(imported.error || "PDF import failed.");
+  return imported;
+}
+
 submit(element("pdf-import"), async () => {
   const field = element("paper-pdf");
-  const file = field.files[0];
-  if (!file) return;
+  const files = [...field.files];
+  if (!files.length) return;
   const button = element("import-pdf-button");
-  button.disabled = true;
-  libraryStatus.textContent = "Extracting metrics from the PDF…";
+  const report = element("import-results");
+  report.replaceChildren();
+  report.hidden = false;
+  button.disabled = field.disabled = true;
+  let importedCount = 0;
+  let lastPaperId;
   try {
-    const response = await fetch("/api/papers", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/pdf",
-        "X-Paper-Filename": encodeURIComponent(file.name),
-      },
-      body: file,
-    });
-    const imported = await response.json();
-    if (!response.ok) throw new Error(imported.error || "PDF import failed.");
-    await loadLibrary(imported.paper_id);
+    for (const [index, file] of files.entries()) {
+      libraryStatus.textContent = `Importing PDF ${index + 1} of ${files.length}…`;
+      try {
+        const imported = await importPaper(file);
+        importedCount++;
+        lastPaperId = imported.paper_id;
+        const result = imported.has_text
+          ? `${imported.metrics} metric candidate(s) found`
+          : "saved with no extractable text";
+        add(report, "li", `${file.name} · ${result}`);
+      } catch (error) {
+        add(report, "li", `${file.name} · Import failed: ${error.message}`);
+      }
+    }
     field.value = "";
-    libraryStatus.textContent = imported.has_text
-      ? `Paper saved in SQLite. Found ${imported.metrics} metric candidate(s).`
-      : "Paper saved in SQLite. This PDF has no extractable text.";
+    const summary = `Imported ${importedCount} of ${files.length} PDF(s).`;
+    if (importedCount) {
+      try {
+        await loadLibrary(lastPaperId);
+      } catch (error) {
+        throw new Error(`${summary} The library could not refresh: ${error.message}`);
+      }
+    }
+    libraryStatus.textContent = summary;
   } finally {
-    button.disabled = false;
+    button.disabled = field.disabled = false;
   }
 });
 
