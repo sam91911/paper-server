@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper metrics</title>
+<style>
+  * { box-sizing: border-box; }
+  body { max-width: 76rem; margin: 0 auto; padding: 2rem 1rem; font: 1rem/1.5 system-ui, sans-serif; color: #172638; background: #f3f6fa; }
+  h1 { margin: 0 0 1rem; }
+  h2 { font-size: 1.15rem; margin: 0 0 .75rem; }
+  section, .compare-panel { background: white; border: 1px solid #d7e0ea; border-radius: .75rem; padding: 1rem; margin: 1rem 0; }
+  .filters { display: flex; flex-wrap: wrap; gap: .8rem 1rem; align-items: end; }
+  label { display: grid; gap: .25rem; font-weight: 600; }
+  input, select, textarea { font: inherit; color: inherit; border: 1px solid #8b9bb0; background: white; border-radius: .35rem; padding: .35rem; max-width: 100%; }
+  textarea { width: 100%; min-height: 12rem; font-family: monospace; }
+  button { font: inherit; margin: .5rem .5rem 0 0; cursor: pointer; }
+  .chart-row { display: grid; grid-template-columns: minmax(8rem, 2fr) minmax(5rem, 3fr) minmax(5rem, auto); gap: .7rem; align-items: center; padding: .3rem 0; }
+  .paper { overflow-wrap: anywhere; }
+  .track { height: 1rem; position: relative; background: #edf2f7; border-radius: .2rem; }
+  .bar { height: 100%; background: #176d81; border-radius: .2rem; position: absolute; }
+  .zero { position: absolute; height: 100%; width: 1px; background: #40536a; }
+  .number { font-variant-numeric: tabular-nums; }
+  .table-scroll { overflow: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: .5rem; border-bottom: 1px solid #d7e0ea; text-align: left; vertical-align: top; }
+  tbody tr:hover { background: #f0f6fa; }
+  summary { cursor: pointer; }
+  .metadata-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: .6rem; }
+  .library-actions { display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: end; }
+  .library-actions > label { min-width: 0; max-width: 100%; }
+  .paper-picker { flex: 1 1 24rem; }
+  #library-paper { width: 100%; min-width: 0; text-overflow: ellipsis; }
+  #pdf-import { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: end; margin-bottom: 1rem; }
+  #pdf-import label { min-width: 0; max-width: 100%; }
+  #membership label { display: flex; margin: .3rem 0; }
+  #comments textarea, #new-comment { min-height: 4rem; }
+  #library-status, #lookup-disclosure { color: #40536a; }
+  #saved-metadata { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .3rem 1rem; }
+  #saved-metadata dt { font-weight: 600; }
+  #saved-metadata dd { margin: 0; overflow-wrap: anywhere; }
+  #lookup-results li { margin: .5rem 0; }
+  #lookup-results button { text-align: left; }
+  [hidden] { display: none !important; }
+  nav { display: flex; gap: 1rem; margin-bottom: 1rem; }
+  nav a[aria-current="page"] { color: inherit; font-weight: 700; }
+  .scatter { margin: .5rem 0; }
+  .scatter-y { font-weight: 600; margin-bottom: .35rem; }
+  .scatter-area { height: clamp(14rem, 40vh, 24rem); position: relative; border: 1px solid #8b9bb0;
+    padding: .6rem; background: repeating-linear-gradient(to top, transparent 0 calc(25% - 1px), #d7e0ea calc(25% - 1px) 25%); }
+  .scatter-points { position: absolute; inset: .6rem; }
+  .scatter-point { position: absolute; width: .8rem; height: .8rem; padding: 0; margin: 0;
+    border: 1px solid white; border-radius: 50%; background: #176d81; transform: translate(-50%, 50%); }
+  .scatter-point:focus-visible { outline: 2px solid #172638; z-index: 1; }
+  .scatter-scale { display: flex; justify-content: space-between; gap: .5rem; }
+  .pair-select { width: 100%; min-width: 8rem; }
+  @media (max-width: 35rem) {
+    .chart-row { grid-template-columns: 1fr auto; }
+    .chart-row .track { grid-row: 2; grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+<nav id="library-nav" aria-label="Library pages" hidden>
+  <a id="compare-link" href="/">Compare metrics</a>
+  <a id="papers-link" href="/papers">Papers</a>
+</nav>
+<h1 id="page-title">Paper metrics</h1>
+<label id="csv-picker">Metrics CSV <input id="file" type="file" accept=".csv,text/csv"></label>
+<p id="status" class="compare-only" role="status">Choose a CSV from the offline extractor.</p>
+<details class="compare-only">
+  <summary>Unit conversion table</summary>
+  <p>Enter one CSV row per rule. The displayed value is the original value multiplied by the factor. For A/B units, the multiplier is the numerator multiplier divided by the denominator multiplier. A rule for the full ratio overrides its component rules. Exact spellings take priority. If case alone could change the scale, enter the exact spelling.</p>
+  <label>Source unit, target unit, multiplier
+    <textarea id="unit-rules" spellcheck="false"></textarea>
+  </label>
+  <button id="apply-units" type="button">Apply rules</button>
+  <button id="reset-units" type="button">Restore defaults</button>
+  <p id="unit-status" role="status"></p>
+</details>
+<section id="library" hidden>
+  <h2>Paper library</h2>
+  <form id="pdf-import">
+    <label>Add paper PDF <input id="paper-pdf" type="file" accept=".pdf,application/pdf" required></label>
+    <button id="import-pdf-button">Import and extract metrics</button>
+  </form>
+  <div class="library-actions">
+    <label class="paper-picker">Paper details <select id="library-paper"></select></label>
+    <form id="create-group">
+      <label>New group <input name="name" required maxlength="120"></label>
+      <button>Create group</button>
+    </form>
+  </div>
+  <p id="library-status" role="status"></p>
+  <div id="paper-detail" hidden>
+    <details open>
+      <summary>Publication metadata</summary>
+      <p id="no-metadata">No publication metadata saved.</p>
+      <dl id="saved-metadata"></dl>
+      <form id="lookup-paper">
+        <button>Find this paper on Crossref</button>
+        <p>Uses the saved DOI first, then the saved title or PDF filename without its extension.</p>
+      </form>
+      <details>
+        <summary>Search by a different DOI or title</summary>
+      <form id="lookup">
+        <p id="lookup-disclosure">Lookup sends the entered DOI or title to Crossref.</p>
+        <label>Lookup by <select name="kind"><option value="doi">DOI</option><option value="title">Title</option></select></label>
+        <label>DOI or title <input name="query" required maxlength="500"></label>
+        <button>Search Crossref</button>
+      </form>
+      </details>
+      <ul id="lookup-results"></ul>
+      <form id="metadata">
+        <div class="metadata-fields">
+          <label>DOI <input name="doi"></label>
+          <label>Title <input name="title"></label>
+          <label>Authors <input name="authors"></label>
+          <label>Year <input name="year"></label>
+          <label>Venue <input name="venue"></label>
+          <label>Publisher <input name="publisher"></label>
+        </div>
+        <p id="metadata-source"></p>
+        <button>Save metadata</button>
+      </form>
+    </details>
+    <details>
+      <summary>Group membership</summary>
+      <form id="membership"><div id="group-options"></div><button>Save groups</button></form>
+    </details>
+    <details>
+      <summary>Comments</summary>
+      <div id="comments"></div>
+      <form id="add-comment">
+        <label>New comment <textarea id="new-comment" required maxlength="20000"></textarea></label>
+        <button>Add comment</button>
+      </form>
+    </details>
+  </div>
+</section>
+<main id="results" hidden>
+  <section class="filters" aria-label="Comparison filters">
+    <label id="chart-group-label" hidden>Paper group <select id="library-group"></select></label>
+    <label>Metric and unit <select id="group"></select></label>
+    <label>Paper <input id="paper" type="search" placeholder="Filter by filename"></label>
+    <label>Conditions <input id="conditions" type="search" placeholder="e.g. INT8"></label>
+    <label>Sort by value <select id="sort"><option value="desc">Highest first</option><option value="asc">Lowest first</option></select></label>
+  </section>
+  <details id="compare-2d" class="compare-panel">
+    <summary>2D comparison</summary>
+    <div class="filters">
+      <label>X-axis <select id="x-metric"></select></label>
+      <label>Y-axis <select id="y-metric"></select></label>
+      <label><span><input type="checkbox" id="match-paper-only"> Allow different conditions</span></label>
+    </div>
+    <p id="pair-status" role="status"></p>
+    <div id="scatter" class="scatter" aria-label="Metric scatter plot"></div>
+    <p id="point-detail" role="status"></p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Paper</th><th>Conditions</th><th id="x-column">X</th><th id="y-column">Y</th></tr></thead>
+        <tbody id="pair-rows"></tbody>
+      </table>
+    </div>
+  </details>
+  <section>
+    <h2 id="chart-title">Metric comparison</h2>
+    <div id="chart" aria-labelledby="chart-title"></div>
+  </section>
+  <section>
+    <h2>Source rows</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Paper</th><th>Page</th><th>Value</th><th>Original value</th><th>Conditions</th><th>Source text</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+"use strict";
+const required = ["paper", "page", "metric", "value", "unit", "conditions", "evidence"];
+
+function parseCSV(text) {
+  const records = [];
+  let row = [], field = "", quoted = false;
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    if (quoted) {
+      if (character !== '"') field += character;
+      else if (text[index + 1] === '"') { field += '"'; index++; }
+      else quoted = false;
+    } else if (character === '"' && field === "") {
+      quoted = true;
+    } else if (character === ",") {
+      row.push(field);
+      field = "";
+    } else if (character === "\r" || character === "\n") {
+      if (character === "\r" && text[index + 1] === "\n") index++;
+      records.push([...row, field]);
+      row = [];
+      field = "";
+    } else {
+      field += character;
+    }
+  }
+  if (quoted) throw new Error("The CSV ends inside a quoted field.");
+  if (row.length || field) records.push([...row, field]);
+  return records;
+}
+
+const defaultRules = `source,target,multiplier
+W,mW,1000
+mW,mW,1
+MW,mW,1e9
+µW,mW,0.001
+nW,mW,0.000001
+TOPS/W,TOPS/W,1
+GOPS/W,TOPS/W,0.001
+MOPS/W,TOPS/W,0.000001
+TOPS,TOPS,1
+GOPS,TOPS,0.001
+MOPS,TOPS,0.000001
+s,ms,1000
+second,ms,1000
+seconds,ms,1000
+ms,ms,1
+Ms,ms,1e9
+µs,ms,0.001
+ns,ms,0.000001
+mm²,mm²,1
+mm2,mm²,1
+mm^2,mm²,1
+µm²,mm²,0.000001
+µm2,mm²,0.000001
+µm^2,mm²,0.000001
+Hz,MHz,0.000001
+kHz,MHz,0.001
+MHz,MHz,1
+mHz,MHz,1e-9
+GHz,MHz,1000
+%,%,1`;
+
+function unitKey(unit) {
+  return unit.trim().replace(/\s+/g, "").split("/")
+    .map(part => part.replace(/^[μu](?=[A-Za-z])/i, "µ")).join("/");
+}
+
+function readRules(text) {
+  const [header = [], ...body] = parseCSV(text);
+  if (header.join(",") !== "source,target,multiplier") {
+    throw new Error("Use this header: source,target,multiplier");
+  }
+  const exact = new Map(), folded = new Map();
+  for (const [index, row] of body.entries()) {
+    if (row.every(cell => !cell.trim())) continue;
+    const [source, target, multiplier] = row.map(cell => cell.trim());
+    const factor = Number(multiplier);
+    const key = unitKey(source || "");
+    if (row.length !== 3 || !key || !target || !Number.isFinite(factor) || factor <= 0) {
+      throw new Error(`Invalid unit rule on row ${index + 2}.`);
+    }
+    if (exact.has(key)) throw new Error(`Duplicate source unit on row ${index + 2}.`);
+    const rule = { target, factor };
+    exact.set(key, rule);
+    const lower = key.toLowerCase();
+    if (!folded.has(lower)) folded.set(lower, rule);
+    else {
+      const previous = folded.get(lower);
+      if (!previous || previous.target !== target || previous.factor !== factor) {
+        folded.set(lower, null);
+      }
+    }
+  }
+  return { exact, folded };
+}
+
+const displayNumber = new Intl.NumberFormat("en", { maximumSignificantDigits: 12, useGrouping: false });
+
+function conversionRule(key, rules) {
+  const direct = rules.exact.get(key) ?? rules.folded.get(key.toLowerCase());
+  if (direct !== undefined) return direct;
+
+  const parts = key.split("/");
+  if (parts.length !== 2 || parts.some(part => !part)) return undefined;
+  const [numerator, denominator] = parts.map(part =>
+    rules.exact.get(part) ?? rules.folded.get(part.toLowerCase()));
+  if (numerator === null || denominator === null) return null;
+  if (!numerator && !denominator) return undefined;
+  return {
+    target: `${numerator?.target ?? parts[0]}/${denominator?.target ?? parts[1]}`,
+    factor: (numerator?.factor ?? 1) / (denominator?.factor ?? 1),
+  };
+}
+
+function convert(row, rules) {
+  const key = unitKey(row.originalUnit);
+  const rule = conversionRule(key, rules);
+  const number = rule ? row.originalNumber * rule.factor : row.originalNumber;
+  const applied = rule && rule.factor > 0 && Number.isFinite(number) && (number !== 0 || row.originalNumber === 0);
+  const unit = applied ? rule.target : row.originalUnit;
+  const groupUnit = applied ? unit : unitKey(unit).toLowerCase();
+  const groupKind = applied ? "converted" : rule !== undefined ? "unresolved" : "unmapped";
+  return {
+    ...row,
+    unit,
+    number: applied ? number : row.originalNumber,
+    value: applied && rule.factor !== 1 ? displayNumber.format(number) : row.originalValue,
+    group: JSON.stringify([row.metric, groupKind === "unresolved" ? key : groupUnit, groupKind]),
+  };
+}
+
+function readMetrics(text) {
+  const [header = [], ...body] = parseCSV(text.replace(/^\uFEFF/, ""));
+  if (!required.every(name => header.includes(name))) {
+    throw new Error("Choose a metrics CSV produced by the extractor.");
+  }
+  const columns = required.map(name => header.indexOf(name));
+  return body.filter(row => row.some(Boolean)).map(row => {
+    if (row.length !== header.length) throw new Error("A CSV row has the wrong number of fields.");
+    const metric = Object.fromEntries(required.map((name, index) => [name, row[columns[index]]]));
+    if (!metric.value.trim() || !Number.isFinite(Number(metric.value))) {
+      throw new Error("A metric row has an invalid numeric value.");
+    }
+    metric.originalValue = metric.value;
+    metric.originalUnit = metric.unit;
+    metric.originalNumber = Number(metric.value);
+    return metric;
+  });
+}
+
+const element = id => document.getElementById(id);
+const file = element("file");
+const group = element("group");
+const paper = element("paper");
+const conditions = element("conditions");
+const sort = element("sort");
+const status = element("status");
+const results = element("results");
+const unitRules = element("unit-rules");
+const unitStatus = element("unit-status");
+const storageKey = "paper-metrics-unit-rules";
+let rawMetrics = [], metrics = [], rules = readRules(defaultRules);
+let libraryGroupMembers = null;
+unitRules.value = defaultRules;
+try {
+  const saved = localStorage.getItem(storageKey);
+  if (saved) {
+    rules = readRules(saved);
+    unitRules.value = saved;
+  }
+} catch {
+  // Some browsers restrict storage for local HTML files.
+}
+
+function refreshGroups() {
+  const selected = group.value;
+  metrics = rawMetrics.map(row => convert(row, rules));
+  group.replaceChildren();
+  const groups = new Map(metrics.map(row => [
+    row.group, row.unit ? `${row.metric} (${row.unit})` : row.metric,
+  ]));
+  for (const [key, label] of [...groups].sort((a, b) => a[1].localeCompare(b[1]))) {
+    add(group, "option", label).value = key;
+  }
+  updateAxes(groups);
+  if (groups.has(selected)) group.value = selected;
+  else if (group.options.length) group.selectedIndex = 0;
+  render();
+}
+
+function applyRules() {
+  try {
+    rules = readRules(unitRules.value);
+    refreshGroups();
+    try {
+      localStorage.setItem(storageKey, unitRules.value);
+      unitStatus.textContent = "Rules applied and saved in this browser.";
+    } catch {
+      unitStatus.textContent = "Rules applied for this session. Browser storage is unavailable.";
+    }
+  } catch (error) {
+    unitStatus.textContent = error.message;
+  }
+}
+
+element("apply-units").addEventListener("click", applyRules);
+element("reset-units").addEventListener("click", () => {
+  unitRules.value = defaultRules;
+  applyRules();
+});
+
+function add(parent, tag, text, className) {
+  const child = document.createElement(tag);
+  if (className) child.className = className;
+  if (text !== undefined) child.textContent = text;
+  parent.append(child);
+  return child;
+}
+
+function render() {
+  const chart = element("chart");
+  const table = element("rows");
+  chart.replaceChildren();
+  table.replaceChildren();
+  if (!metrics.length) return;
+  const paperQuery = paper.value.trim().toLowerCase();
+  const conditionQuery = conditions.value.trim().toLowerCase();
+  const filtered = metrics.filter(row =>
+    (!libraryGroupMembers || libraryGroupMembers.has(row.paper_id))
+    && [row.paper, row.title || ""].some(label => label.toLowerCase().includes(paperQuery))
+    && row.conditions.toLowerCase().includes(conditionQuery));
+  renderPairs(filtered);
+  const rows = filtered.filter(row => row.group === group.value);
+  rows.sort((first, second) => (sort.value === "asc" ? 1 : -1) * (first.number - second.number));
+  status.textContent = `Showing ${rows.length} matching result(s) from ${new Set(rows.map(row => row.paper)).size} paper(s).`;
+  element("chart-title").textContent = group.selectedOptions[0].textContent;
+  if (!rows.length) {
+    add(chart, "p", "No results match these filters.");
+    return;
+  }
+
+  let minimum = 0, maximum = 0;
+  for (const row of rows) {
+    minimum = Math.min(minimum, row.number);
+    maximum = Math.max(maximum, row.number);
+  }
+  // Normalize first so even the difference between extreme values stays finite.
+  const scale = Math.max(Math.abs(minimum), Math.abs(maximum)) || 1;
+  const span = (maximum / scale - minimum / scale) || 1;
+  const position = value => 100 * (value / scale - minimum / scale) / span;
+  const zero = position(0);
+
+  for (const row of rows) {
+    const value = row.unit ? `${row.value} ${row.unit}` : row.value;
+    const filename = row.title || row.paper.split(/[\\/]/).pop();
+    const entry = add(chart, "div", undefined, "chart-row");
+    add(entry, "span", `${filename} · p. ${row.page}`, "paper").title = row.paper;
+    const track = add(entry, "div", undefined, "track");
+    track.setAttribute("aria-hidden", "true");
+    const endpoint = position(row.number);
+    const bar = add(track, "div", undefined, "bar");
+    bar.style.left = `${Math.min(zero, endpoint)}%`;
+    bar.style.width = `${Math.abs(endpoint - zero)}%`;
+    add(track, "div", undefined, "zero").style.left = `${zero}%`;
+    add(entry, "span", value, "number");
+
+    const line = add(table, "tr");
+    addPaperLabel(add(line, "td", undefined, "paper"), row);
+    add(line, "td", row.page);
+    add(line, "td", value, "number");
+    add(line, "td", [row.originalValue, row.originalUnit].filter(Boolean).join(" "), "number");
+    add(line, "td", row.conditions || "—");
+    const details = add(add(line, "td"), "details");
+    add(details, "summary", "Show source");
+    add(details, "p", row.evidence || "No source text in this row.");
+  }
+}
+
+const xMetric = element("x-metric");
+const yMetric = element("y-metric");
+const matchPaperOnly = element("match-paper-only");
+const pairChoices = new Map();
+
+function updateAxes(groups) {
+  const prior = [xMetric.value, yMetric.value];
+  const options = [...groups].sort((a, b) => a[1].localeCompare(b[1]));
+  for (const [index, picker] of [xMetric, yMetric].entries()) {
+    picker.replaceChildren();
+    for (const [key, label] of options) add(picker, "option", label).value = key;
+    if (groups.has(prior[index])) picker.value = prior[index];
+    else if (options.length) picker.selectedIndex = Math.min(index, options.length - 1);
+  }
+}
+
+function paperName(row) {
+  return row.title || row.paper.split(/[\\/]/).pop();
+}
+
+function addPaperLabel(parent, row) {
+  if (row.paper_id === undefined) {
+    parent.textContent = paperName(row);
+  } else {
+    add(parent, "a", paperName(row)).href = `/papers?paper=${encodeURIComponent(row.paper_id)}`;
+  }
+  parent.title = row.paper;
+}
+
+function pairLabel(row) {
+  return [`${row.value} ${row.unit}`.trim(), `p. ${row.page}`, row.conditions].filter(Boolean).join(" · ");
+}
+
+function pairCandidates(rows, x, y, paperOnly) {
+  const pairs = new Map();
+  if (!x || !y || x === y) return [];
+  for (const row of rows) {
+    if (row.group !== x && row.group !== y) continue;
+    const conditions = row.conditions.trim().toLowerCase();
+    const key = JSON.stringify([row.paper_id ?? row.paper, paperOnly ? "" : conditions]);
+    if (!pairs.has(key)) pairs.set(key, { key, paper: row, x: new Map(), y: new Map() });
+    const axis = pairs.get(key)[row.group === x ? "x" : "y"];
+    const candidate = JSON.stringify([row.number, conditions]);
+    if (!axis.has(candidate)) axis.set(candidate, row);
+  }
+  return [...pairs.values()].filter(pair => pair.x.size && pair.y.size);
+}
+
+function chooseValue(cell, pair, axis, rerender) {
+  const options = pair[axis];
+  if (options.size === 1) {
+    const row = options.values().next().value;
+    cell.textContent = pairLabel(row);
+    cell.title = row.evidence;
+    return row;
+  }
+  const key = JSON.stringify([xMetric.value, yMetric.value, matchPaperOnly.checked, pair.key, axis]);
+  const picker = add(cell, "select", undefined, "pair-select");
+  picker.setAttribute("aria-label", `${axis.toUpperCase()} value for ${paperName(pair.paper)}`);
+  add(picker, "option", "Choose value").value = "";
+  for (const [id, row] of options) {
+    const option = add(picker, "option", pairLabel(row));
+    option.value = id;
+    option.title = row.evidence;
+  }
+  const selected = pairChoices.get(key);
+  picker.value = options.has(selected) ? selected : "";
+  picker.addEventListener("change", () => {
+    pairChoices.set(key, picker.value);
+    rerender();
+  });
+  const row = options.get(picker.value);
+  if (row?.evidence) {
+    const detail = add(cell, "details");
+    add(detail, "summary", "Show source");
+    add(detail, "p", row.evidence);
+  }
+  return row;
+}
+
+function plotDomain(points, axis) {
+  let min = Infinity, max = -Infinity;
+  for (const point of points) {
+    min = Math.min(min, point[axis].number);
+    max = Math.max(max, point[axis].number);
+  }
+  const scale = Math.max(Math.abs(min), Math.abs(max)) || 1;
+  const span = max / scale - min / scale;
+  return {min, max, position: value => span ? 100 * (value / scale - min / scale) / span : 50};
+}
+
+function drawScatter(points, xLabel, yLabel) {
+  const chart = element("scatter");
+  const detail = element("point-detail");
+  chart.replaceChildren();
+  detail.textContent = "";
+  if (!points.length) return;
+  const x = plotDomain(points, "x");
+  const y = plotDomain(points, "y");
+  add(chart, "div", `${yLabel} · ${displayNumber.format(y.min)} to ${displayNumber.format(y.max)}`, "scatter-y");
+  const area = add(add(chart, "div", undefined, "scatter-area"), "div", undefined, "scatter-points");
+  for (const point of points) {
+    const text = `${paperName(point.x)} · X: ${pairLabel(point.x)} · Y: ${pairLabel(point.y)}`;
+    const marker = add(area, "button", undefined, "scatter-point");
+    marker.type = "button";
+    marker.title = text;
+    marker.setAttribute("aria-label", text);
+    marker.style.left = `${x.position(point.x.number)}%`;
+    marker.style.bottom = `${y.position(point.y.number)}%`;
+    marker.addEventListener("click", () => { detail.textContent = text; });
+  }
+  const scale = add(chart, "div", undefined, "scatter-scale");
+  add(scale, "span", displayNumber.format(x.min));
+  add(scale, "strong", xLabel);
+  add(scale, "span", displayNumber.format(x.max));
+}
+
+function renderPairs(rows) {
+  const table = element("pair-rows");
+  const message = element("pair-status");
+  table.replaceChildren();
+  const xLabel = xMetric.selectedOptions[0]?.textContent ?? "X";
+  const yLabel = yMetric.selectedOptions[0]?.textContent ?? "Y";
+  element("x-column").textContent = xLabel;
+  element("y-column").textContent = yLabel;
+  const pairs = pairCandidates(rows, xMetric.value, yMetric.value, matchPaperOnly.checked);
+  const points = [];
+  for (const pair of pairs) {
+    const line = add(table, "tr");
+    const heading = add(line, "th", undefined, "paper");
+    heading.scope = "row";
+    addPaperLabel(heading, pair.paper);
+    add(line, "td", matchPaperOnly.checked ? "Shown with each value" : pair.paper.conditions || "Unspecified");
+    const x = chooseValue(add(line, "td"), pair, "x", () => renderPairs(rows));
+    const y = chooseValue(add(line, "td"), pair, "y", () => renderPairs(rows));
+    if (x && y) points.push({ x, y });
+  }
+  if (xMetric.value === yMetric.value) message.textContent = "Choose two different metrics.";
+  else if (!pairs.length) message.textContent = matchPaperOnly.checked
+    ? "No paper has both selected metrics under these filters."
+    : "No paper has both metrics with matching conditions. Enable different conditions to compare across them.";
+  else message.textContent = `Plotted ${points.length} of ${pairs.length} pair(s).${points.length < pairs.length ? " Choose values in the table for the remaining pairs." : ""}`;
+  drawScatter(points, xLabel, yLabel);
+}
+
+for (const control of [xMetric, yMetric, matchPaperOnly]) control.addEventListener("change", render);
+
+file.addEventListener("change", async () => {
+  const selected = file.files[0];
+  if (!selected) return;
+  results.hidden = true;
+  status.textContent = "Reading CSV…";
+  try {
+    const content = await selected.text();
+    if (file.files[0] !== selected) return;
+    rawMetrics = readMetrics(content);
+    paper.value = conditions.value = "";
+    if (!rawMetrics.length) {
+      refreshGroups();
+      status.textContent = "The CSV contains no metric rows.";
+      return;
+    }
+    results.hidden = false;
+    refreshGroups();
+  } catch (error) {
+    if (file.files[0] === selected) status.textContent = error.message;
+  }
+});
+
+for (const control of [group, paper, conditions, sort]) {
+  control.addEventListener("input", render);
+}
+</script>
+<!-- library-script -->
+</body>
+</html>

@@ -1,0 +1,14 @@
+# Local paper data and generated reports
+*.pdf
+*.csv
+*.sqlite3
+*.sqlite3-*
+*.pdfs/
+cc-papers/
+
+# Local credentials and runtime files
+.aws/
+.codex/
+.agents/
+__pycache__/
+*.py[cod]
