@@ -76,7 +76,7 @@ function showPaper() {
   if (!selected) return;
   const pdfLink = element("open-paper-pdf");
   pdfLink.hidden = !selected.has_pdf;
-  if (selected.has_pdf) pdfLink.href = `/papers/${selected.id}/source.pdf`;
+  if (selected.has_pdf) pdfLink.href = paperPDFURL(selected.id);
   else pdfLink.removeAttribute("href");
   showSavedMetadata(selected);
   setMetadata(selected);
@@ -135,11 +135,12 @@ async function loadLibrary(paperId) {
     showPaper();
     return;
   }
-  const titles = new Map(libraryData.papers.map(item => [item.id, item.title]));
+  const papersById = new Map(libraryData.papers.map(item => [item.id, item]));
   setOptions(groupPicker, libraryData.groups.map(item => [item.id, item.name]), "All papers");
   rawMetrics = libraryData.metrics.map(row => ({
     ...row,
-    title: titles.get(row.paper_id),
+    title: papersById.get(row.paper_id)?.title,
+    has_pdf: papersById.get(row.paper_id)?.has_pdf,
     originalValue: row.value,
     originalNumber: Number(row.value),
     originalUnit: row.unit,

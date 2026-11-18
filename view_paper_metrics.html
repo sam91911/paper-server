@@ -453,7 +453,8 @@ function render() {
 
     const line = add(table, "tr");
     addPaperLabel(add(line, "td", undefined, "paper"), row);
-    add(line, "td", row.page);
+    const pageCell = add(line, "td");
+    if (!addSourcePageLink(pageCell, row, row.page)) pageCell.textContent = row.page;
     add(line, "td", value, "number");
     add(line, "td", [row.originalValue, row.originalUnit].filter(Boolean).join(" "), "number");
     add(line, "td", row.conditions || "—");
@@ -542,11 +543,29 @@ function pairCandidates(rows, x, y, paperOnly) {
   return [...pairs.values()].filter(pair => pair.x.size && pair.y.size);
 }
 
+function paperPDFURL(id) {
+  return `/papers/${encodeURIComponent(id)}/source.pdf`;
+}
+
+function addSourcePageLink(parent, row, label) {
+  const page = Number(row?.page);
+  if (!row?.has_pdf || !Number.isSafeInteger(page) || page < 1) return false;
+  const link = add(parent, "a", label);
+  link.href = `${paperPDFURL(row.paper_id)}#page=${page}`;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.title = `Open PDF page ${page} in a new tab`;
+  return true;
+}
+
 function showPairSource(cell, row) {
-  if (!row?.evidence) return;
-  const detail = add(cell, "details");
-  add(detail, "summary", "Show source");
-  add(detail, "p", row.evidence);
+  if (!row) return;
+  if (row.evidence) {
+    const detail = add(cell, "details");
+    add(detail, "summary", "Show source");
+    add(detail, "p", row.evidence);
+  }
+  addSourcePageLink(cell, row, `Open PDF page ${row.page}`);
 }
 
 function chooseValue(cell, pair, axis, rerender) {

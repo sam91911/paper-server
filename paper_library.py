@@ -113,7 +113,7 @@ def snapshot(db, view="library"):
     paper_columns = "id, path, title" if view == "compare" else "id, path, doi, title, authors, year, venue, publisher, source"
     if view == "library":
         paper_columns = "*"
-    elif view == "paper-details":
+    elif view in ("compare", "paper-details"):
         paper_columns += ", sha256 IS NOT NULL AS has_pdf"
     data = {
         "papers": [dict(row) for row in db.execute(f"SELECT {paper_columns} FROM papers ORDER BY path")],
