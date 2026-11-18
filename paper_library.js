@@ -74,6 +74,10 @@ function showPaper() {
   lookupResults.replaceChildren();
   lookupForm.reset();
   if (!selected) return;
+  const pdfLink = element("open-paper-pdf");
+  pdfLink.hidden = !selected.has_pdf;
+  if (selected.has_pdf) pdfLink.href = `/papers/${selected.id}/source.pdf`;
+  else pdfLink.removeAttribute("href");
   showSavedMetadata(selected);
   setMetadata(selected);
   lookupForm.elements.query.value = selected.doi;

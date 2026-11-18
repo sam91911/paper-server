@@ -6,6 +6,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import tempfile
@@ -122,6 +123,8 @@ class Handler(BaseHTTPRequestHandler):
                     b"<!-- library-script -->", b'<script src="/paper_library.js"></script>'
                 )
             self.send_data(200, content, content_type)
+        elif match := re.fullmatch(r"/papers/([1-9][0-9]{0,18})/source\.pdf", route):
+            self.serve_pdf(int(match[1]))
         elif route in ("/api/library", "/api/compare", "/api/paper-details"):
             try:
                 with library.connect(self.server.database) as db:
@@ -132,6 +135,35 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(500, {"error": "Could not read the library database"})
         else:
             self.send_json(404, {"error": "Unknown route"})
+
+    def serve_pdf(self, paper_id):
+        try:
+            with library.connect(self.server.database) as db:
+                paper = db.execute(
+                    "SELECT path, sha256 FROM papers WHERE id=?", (paper_id,)
+                ).fetchone()
+            if paper is None or not paper["sha256"]:
+                self.send_json(404, {"error": "No verified PDF for this paper. Import the PDF first."})
+                return
+            with Path(paper["path"]).open("rb") as source:
+                payload = source.read(MAX_PDF_BYTES + 1)
+        except (FileNotFoundError, IsADirectoryError, PermissionError):
+            self.send_json(404, {"error": "The local PDF is unavailable. Re-import it to restore access."})
+            return
+        except OverflowError:
+            self.send_json(404, {"error": "Paper not found"})
+            return
+        except (sqlite3.Error, OSError):
+            self.send_json(500, {"error": "Could not read the local PDF"})
+            return
+
+        if len(payload) > MAX_PDF_BYTES:
+            self.send_json(413, {"error": "The PDF is larger than the 50 MiB viewer limit"})
+        elif (b"%PDF-" not in payload[:1024] or
+              hashlib.sha256(payload).hexdigest() != paper["sha256"]):
+            self.send_json(409, {"error": "The local file no longer matches this paper record."})
+        else:
+            self.send_data(200, payload, "application/pdf")
 
     def do_POST(self):
         if not self.origin_allowed():
