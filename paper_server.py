@@ -32,10 +32,8 @@ def import_pdf(database, filename, payload):
     with library.connect(database) as db:
         db.execute("BEGIN IMMEDIATE")
         existing = db.execute("SELECT id, path FROM papers WHERE sha256=?", (digest,)).fetchone()
-        if existing:
-            paper_id = library.store(db, existing["path"], rows, digest)
-        else:
-            # A CSV-only record can be matched once its original PDF is available.
+        if not existing:
+            # Match a CSV-only record if its original PDF is still available.
             for old in db.execute("SELECT path FROM papers WHERE sha256 IS NULL").fetchall():
                 source = Path(old["path"])
                 if source.name != filename:
@@ -49,19 +47,22 @@ def import_pdf(database, filename, payload):
                     library.store(db, source, (), digest)
                     break
 
-            directory = database.with_name(database.name + ".pdfs") / digest
-            directory.parent.mkdir(mode=0o700, exist_ok=True)
-            directory.mkdir(mode=0o700, exist_ok=True)
+        directory = database.absolute().with_name(database.name + ".pdfs") / digest
+        directory.parent.mkdir(mode=0o700, exist_ok=True)
+        directory.mkdir(mode=0o700, exist_ok=True)
+        target = Path(existing["path"]) if existing else directory / filename
+        if target.parent != directory:
             target = directory / filename
-            with tempfile.NamedTemporaryFile(dir=directory, delete=False) as temp:
-                temporary = Path(temp.name)
-                try:
-                    temp.write(payload)
-                    temp.close()
-                    os.replace(temporary, target)
-                finally:
-                    temporary.unlink(missing_ok=True)
-            paper_id = library.store(db, target, rows, digest)
+        with tempfile.NamedTemporaryFile(dir=directory, delete=False) as temp:
+            temporary = Path(temp.name)
+            try:
+                temp.write(payload)
+                temp.close()
+                os.replace(temporary, target)
+            finally:
+                temporary.unlink(missing_ok=True)
+        paper_id = library.store(db, target, rows, digest)
+        db.execute("UPDATE papers SET path=? WHERE id=?", (str(target), paper_id))
     return {"paper_id": paper_id, "metrics": len(rows), "has_text": has_text}
 
 
