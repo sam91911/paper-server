@@ -469,6 +469,33 @@ function render() {
 const xMetric = element("x-metric");
 const yMetric = element("y-metric");
 const matchPaperOnly = element("match-paper-only");
+const comparisonPanel = element("compare-2d");
+const comparisonStorageKey = "paper-metrics-comparison-settings";
+let comparisonSettings = {};
+try {
+  const saved = JSON.parse(localStorage.getItem(comparisonStorageKey));
+  if (saved && typeof saved === "object") comparisonSettings = saved;
+} catch {
+  // Comparison works with session defaults if preferences cannot be read.
+}
+matchPaperOnly.checked = comparisonSettings.allowDifferentConditions === true;
+comparisonPanel.open = comparisonSettings.open === true;
+
+function saveComparisonSettings() {
+  comparisonSettings = {
+    x: xMetric.value || comparisonSettings.x,
+    y: yMetric.value || comparisonSettings.y,
+    allowDifferentConditions: matchPaperOnly.checked,
+    open: comparisonPanel.open,
+  };
+  try {
+    localStorage.setItem(comparisonStorageKey, JSON.stringify(comparisonSettings));
+  } catch {
+    // The current controls remain usable if browser storage is unavailable.
+  }
+}
+
+comparisonPanel.addEventListener("toggle", saveComparisonSettings);
 const pairChoices = new Map();
 const exportPairsButton = element("export-pairs");
 let plottedPairs = [];
@@ -501,13 +528,17 @@ exportPairsButton.addEventListener("click", () => {
 });
 
 function updateAxes(groups) {
-  const prior = [xMetric.value, yMetric.value];
+  const prior = [xMetric.value || comparisonSettings.x, yMetric.value || comparisonSettings.y];
   const options = [...groups].sort((a, b) => a[1].localeCompare(b[1]));
+  const available = options.map(([key]) => key);
+  const selected = prior.map(key => groups.has(key) ? key : undefined);
+  for (let index = 0; index < selected.length; index++) {
+    selected[index] ??= available.find(key => key !== selected[1 - index]) ?? available[0];
+  }
   for (const [index, picker] of [xMetric, yMetric].entries()) {
     picker.replaceChildren();
     for (const [key, label] of options) add(picker, "option", label).value = key;
-    if (groups.has(prior[index])) picker.value = prior[index];
-    else if (options.length) picker.selectedIndex = Math.min(index, options.length - 1);
+    if (selected[index] !== undefined) picker.value = selected[index];
   }
 }
 
@@ -666,7 +697,12 @@ function renderPairs(rows) {
   drawScatter(points, xLabel, yLabel);
 }
 
-for (const control of [xMetric, yMetric, matchPaperOnly]) control.addEventListener("change", render);
+for (const control of [xMetric, yMetric, matchPaperOnly]) {
+  control.addEventListener("change", () => {
+    saveComparisonSettings();
+    render();
+  });
+}
 
 file.addEventListener("change", async () => {
   const selected = file.files[0];
