@@ -6,7 +6,7 @@ Requires Python 3.11 or newer and Poppler's `pdftotext`.
 python3 paper_server.py --database papers.sqlite3
 ```
 
-Open <http://127.0.0.1:8765/> to compare metrics. Use the **Papers** page to import one or more PDFs, manage groups and comments, or look up publication metadata on Crossref. Select a paper name in a comparison table to open its details.
+Open <http://127.0.0.1:8765/> to compare metrics. Use the **Papers** page to import one or more PDFs, manage groups and comments, or look up publication metadata on Crossref. Select a paper name in a comparison table to open its details. In **2D comparison**, download the plotted X–Y pairs as CSV, including their converted units, conditions, and source pages.
 
 For command-line extraction, pass `--database`, `--output`, or both.
 

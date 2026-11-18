@@ -154,6 +154,7 @@
       <label>Y-axis <select id="y-metric"></select></label>
       <label><span><input type="checkbox" id="match-paper-only"> Allow different conditions</span></label>
     </div>
+    <button id="export-pairs" type="button" disabled>Download plotted pairs CSV</button>
     <p id="pair-status" role="status"></p>
     <div id="scatter" class="scatter" aria-label="Metric scatter plot"></div>
     <p id="point-detail" role="status"></p>
@@ -404,7 +405,10 @@ function render() {
   const table = element("rows");
   chart.replaceChildren();
   table.replaceChildren();
-  if (!metrics.length) return;
+  if (!metrics.length) {
+    renderPairs([]);
+    return;
+  }
   const paperQuery = paper.value.trim().toLowerCase();
   const conditionQuery = conditions.value.trim().toLowerCase();
   const filtered = metrics.filter(row =>
@@ -462,6 +466,35 @@ const xMetric = element("x-metric");
 const yMetric = element("y-metric");
 const matchPaperOnly = element("match-paper-only");
 const pairChoices = new Map();
+const exportPairsButton = element("export-pairs");
+let plottedPairs = [];
+
+function comparisonCSV(points) {
+  const columns = ["metric", "value", "unit", "conditions", "page"];
+  const header = ["paper", ...["x", "y"].flatMap(axis => columns.map(name => `${axis}_${name}`))];
+  const rows = points.map(({x, y}) => [
+    paperName(x), ...[x, y].flatMap(row => [
+      row.metric, row.number, row.unit, row.conditions, Number(row.page),
+    ]),
+  ]);
+  return [header, ...rows].map(row => row.map(value => {
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    let text = String(value);
+    if (/^\s*[=+@-]|^[\t\r\n]/.test(text)) text = "'" + text;
+    return '"' + text.replace(/"/g, '""') + '"';
+  }).join(",")).join("\r\n") + "\r\n";
+}
+
+exportPairsButton.addEventListener("click", () => {
+  if (!plottedPairs.length) return;
+  const csv = new Blob(["\uFEFF", comparisonCSV(plottedPairs)], {type: "text/csv;charset=utf-8"});
+  const url = URL.createObjectURL(csv);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "paper-comparison.csv";
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
 
 function updateAxes(groups) {
   const prior = [xMetric.value, yMetric.value];
@@ -600,6 +633,8 @@ function renderPairs(rows) {
     ? "No paper has both selected metrics under these filters."
     : "No paper has both metrics with matching conditions. Enable different conditions to compare across them.";
   else message.textContent = `Plotted ${points.length} of ${pairs.length} pair(s).${points.length < pairs.length ? " Choose values in the table for the remaining pairs." : ""}`;
+  plottedPairs = points;
+  exportPairsButton.disabled = points.length === 0;
   drawScatter(points, xLabel, yLabel);
 }
 
