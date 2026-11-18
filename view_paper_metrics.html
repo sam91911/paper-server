@@ -533,10 +533,19 @@ function pairCandidates(rows, x, y, paperOnly) {
     const key = JSON.stringify([row.paper_id ?? row.paper, paperOnly ? "" : conditions]);
     if (!pairs.has(key)) pairs.set(key, { key, paper: row, x: new Map(), y: new Map() });
     const axis = pairs.get(key)[row.group === x ? "x" : "y"];
-    const candidate = JSON.stringify([row.number, conditions]);
+    const candidate = JSON.stringify([
+      row.originalValue, row.originalUnit, conditions, row.page, row.evidence,
+    ]);
     if (!axis.has(candidate)) axis.set(candidate, row);
   }
   return [...pairs.values()].filter(pair => pair.x.size && pair.y.size);
+}
+
+function showPairSource(cell, row) {
+  if (!row?.evidence) return;
+  const detail = add(cell, "details");
+  add(detail, "summary", "Show source");
+  add(detail, "p", row.evidence);
 }
 
 function chooseValue(cell, pair, axis, rerender) {
@@ -544,7 +553,7 @@ function chooseValue(cell, pair, axis, rerender) {
   if (options.size === 1) {
     const row = options.values().next().value;
     cell.textContent = pairLabel(row);
-    cell.title = row.evidence;
+    showPairSource(cell, row);
     return row;
   }
   const key = JSON.stringify([xMetric.value, yMetric.value, matchPaperOnly.checked, pair.key, axis]);
@@ -552,7 +561,8 @@ function chooseValue(cell, pair, axis, rerender) {
   picker.setAttribute("aria-label", `${axis.toUpperCase()} value for ${paperName(pair.paper)}`);
   add(picker, "option", "Choose value").value = "";
   for (const [id, row] of options) {
-    const option = add(picker, "option", pairLabel(row));
+    const source = row.evidence?.length > 65 ? row.evidence.slice(0, 62) + "…" : row.evidence;
+    const option = add(picker, "option", [pairLabel(row), source].filter(Boolean).join(" · "));
     option.value = id;
     option.title = row.evidence;
   }
@@ -563,11 +573,7 @@ function chooseValue(cell, pair, axis, rerender) {
     rerender();
   });
   const row = options.get(picker.value);
-  if (row?.evidence) {
-    const detail = add(cell, "details");
-    add(detail, "summary", "Show source");
-    add(detail, "p", row.evidence);
-  }
+  showPairSource(cell, row);
   return row;
 }
 
@@ -649,6 +655,7 @@ file.addEventListener("change", async () => {
     const content = await selected.text();
     if (file.files[0] !== selected) return;
     rawMetrics = readMetrics(content);
+    pairChoices.clear();
     paper.value = conditions.value = "";
     if (!rawMetrics.length) {
       refreshGroups();
