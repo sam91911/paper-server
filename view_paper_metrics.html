@@ -51,6 +51,8 @@
   .scatter-points { position: absolute; inset: .6rem; }
   .scatter-point { position: absolute; width: .8rem; height: .8rem; padding: 0; margin: 0;
     border: 1px solid white; border-radius: 50%; background: #176d81; transform: translate(-50%, 50%); }
+  .scatter-point.tradeoff { background: #8f431a; outline: 2px solid #8f431a; z-index: 1; }
+  .tradeoff-label { display: block; color: #8f431a; font-size: .85rem; }
   .scatter-point:focus-visible { outline: 2px solid #172638; z-index: 1; }
   .scatter-scale { display: flex; justify-content: space-between; gap: .5rem; }
   .pair-select { width: 100%; min-width: 8rem; }
@@ -157,6 +159,14 @@
       <label>Y-axis <select id="y-metric"></select></label>
       <label><span><input type="checkbox" id="match-paper-only"> Allow different conditions</span></label>
     </div>
+    <details>
+      <summary>Highlight trade-offs</summary>
+      <div class="filters">
+        <label>X preference <select id="x-preference"><option value="">None</option><option value="high">Higher is better</option><option value="low">Lower is better</option></select></label>
+        <label>Y preference <select id="y-preference"><option value="">None</option><option value="high">Higher is better</option><option value="low">Lower is better</option></select></label>
+      </div>
+      <p>Choose both preferences to mark points that no other plotted point beats on one metric while matching or beating it on the other.</p>
+    </details>
     <button id="export-pairs" type="button" disabled>Download plotted pairs CSV</button>
     <p id="pair-status" role="status"></p>
     <div id="scatter" class="scatter" aria-label="Metric scatter plot"></div>
@@ -490,6 +500,8 @@ function render() {
 const xMetric = element("x-metric");
 const yMetric = element("y-metric");
 const matchPaperOnly = element("match-paper-only");
+const xPreference = element("x-preference");
+const yPreference = element("y-preference");
 const comparisonPanel = element("compare-2d");
 const comparisonStorageKey = "paper-metrics-comparison-settings";
 let comparisonSettings = {};
@@ -662,7 +674,27 @@ function plotDomain(points, axis) {
   return {min, max, position: value => span ? 100 * (value / scale - min / scale) / span : 50};
 }
 
-function drawScatter(points, xLabel, yLabel) {
+function bestTradeoffs(points, xDirection, yDirection) {
+  if (!xDirection || !yDirection) return new Set();
+  const xWeight = xDirection === "low" ? -1 : 1;
+  const yWeight = yDirection === "low" ? -1 : 1;
+  const ranked = points.map(point => ({
+    point, x: point.x.number * xWeight, y: point.y.number * yWeight,
+  })).sort((first, second) => second.x - first.x || second.y - first.y);
+  const frontier = new Set();
+  let bestY = -Infinity;
+  let xAtBestY = -Infinity;
+  for (const {point, x, y} of ranked) {
+    if (y > bestY) {
+      bestY = y;
+      xAtBestY = x;
+    }
+    if (y === bestY && x === xAtBestY) frontier.add(point);
+  }
+  return frontier;
+}
+
+function drawScatter(points, xLabel, yLabel, frontier) {
   const chart = element("scatter");
   const detail = element("point-detail");
   chart.replaceChildren();
@@ -673,8 +705,10 @@ function drawScatter(points, xLabel, yLabel) {
   add(chart, "div", `${yLabel} · ${displayNumber.format(y.min)} to ${displayNumber.format(y.max)}`, "scatter-y");
   const area = add(add(chart, "div", undefined, "scatter-area"), "div", undefined, "scatter-points");
   for (const point of points) {
-    const text = `${paperName(point.x)} · X: ${pairLabel(point.x)} · Y: ${pairLabel(point.y)}`;
+    const mark = frontier.has(point) ? " · Best trade-off" : "";
+    const text = `${paperName(point.x)}${mark} · X: ${pairLabel(point.x)} · Y: ${pairLabel(point.y)}`;
     const marker = add(area, "button", undefined, "scatter-point");
+    if (mark) marker.classList.add("tradeoff");
     marker.type = "button";
     marker.title = text;
     marker.setAttribute("aria-label", text);
@@ -706,7 +740,7 @@ function renderPairs(rows) {
     add(line, "td", matchPaperOnly.checked ? "Shown with each value" : pair.paper.conditions || "Unspecified");
     const x = chooseValue(add(line, "td"), pair, "x", () => renderPairs(rows));
     const y = chooseValue(add(line, "td"), pair, "y", () => renderPairs(rows));
-    if (x && y) points.push({ x, y });
+    if (x && y) points.push({ x, y, heading });
   }
   if (xMetric.value === yMetric.value) message.textContent = "Choose two different metrics.";
   else if (!pairs.length) message.textContent = matchPaperOnly.checked
@@ -715,7 +749,9 @@ function renderPairs(rows) {
   else message.textContent = `Plotted ${points.length} of ${pairs.length} pair(s).${points.length < pairs.length ? " Choose values in the table for the remaining pairs." : ""}`;
   plottedPairs = points;
   exportPairsButton.disabled = points.length === 0;
-  drawScatter(points, xLabel, yLabel);
+  const frontier = bestTradeoffs(points, xPreference.value, yPreference.value);
+  for (const point of frontier) add(point.heading, "span", "Best trade-off", "tradeoff-label");
+  drawScatter(points, xLabel, yLabel, frontier);
 }
 
 for (const control of [xMetric, yMetric, matchPaperOnly]) {
@@ -724,6 +760,8 @@ for (const control of [xMetric, yMetric, matchPaperOnly]) {
     render();
   });
 }
+
+for (const preference of [xPreference, yPreference]) preference.addEventListener("change", render);
 
 file.addEventListener("change", async () => {
   const selected = file.files[0];
