@@ -5,6 +5,7 @@ const libraryPanel = element("library");
 const libraryStatus = element("library-status");
 const paperPicker = element("library-paper");
 const paperSearch = element("paper-search");
+const paperGroupFilter = element("paper-group-filter");
 const groupPicker = element("library-group");
 const metadataForm = element("metadata");
 const lookupPaperForm = element("lookup-paper");
@@ -49,10 +50,15 @@ function selectedPaper() {
   return libraryData?.papers.find(item => item.id === Number(paperPicker.value));
 }
 
+function groupMembers(value) {
+  if (!value) return null;
+  const groupId = Number(value);
+  return new Set(libraryData.memberships
+    .filter(item => item.group_id === groupId).map(item => item.paper_id));
+}
+
 function filterGroups() {
-  const groupId = Number(groupPicker.value);
-  libraryGroupMembers = groupId ? new Set(libraryData.memberships
-    .filter(item => item.group_id === groupId).map(item => item.paper_id)) : null;
+  libraryGroupMembers = groupMembers(groupPicker.value);
   render();
 }
 
@@ -124,7 +130,9 @@ function paperFilename(item) {
 
 function updatePaperOptions(selected = paperPicker.value) {
   const terms = paperSearch.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const members = groupMembers(paperGroupFilter.value);
   const papers = libraryData.papers.filter(item => {
+    if (members && !members.has(item.id)) return false;
     const text = [item.title, item.authors, item.doi, item.venue, paperFilename(item)]
       .filter(Boolean).join(" ").toLowerCase();
     return terms.every(term => text.includes(term));
@@ -136,13 +144,14 @@ function updatePaperOptions(selected = paperPicker.value) {
   }
   setOptions(paperPicker, options, papers.length ? "Choose a paper" : "No matching papers");
   if (current) paperPicker.value = selected;
-  element("paper-search-status").textContent = terms.length
+  element("paper-search-status").textContent = terms.length || members
     ? `${papers.length} of ${libraryData.papers.length} papers match.` : "";
 }
 
 async function loadLibrary(paperId) {
   libraryData = await api(papersPage ? "paper-details" : "compare");
   if (papersPage) {
+    setOptions(paperGroupFilter, libraryData.groups.map(item => [item.id, item.name]), "All groups");
     const requested = new URLSearchParams(location.search).get("paper");
     updatePaperOptions(paperId === undefined ? paperPicker.value || requested : String(paperId));
     if (paperId !== undefined) rememberPaperSelection();
@@ -160,9 +169,7 @@ async function loadLibrary(paperId) {
     originalUnit: row.unit,
   }));
   results.hidden = !rawMetrics.length;
-  libraryGroupMembers = groupPicker.value
-    ? new Set(libraryData.memberships.filter(item => item.group_id === Number(groupPicker.value))
-      .map(item => item.paper_id)) : null;
+  libraryGroupMembers = groupMembers(groupPicker.value);
   refreshGroups();
   if (!rawMetrics.length) status.textContent = "The library has no metric rows. Import a CSV or extract a PDF into the database.";
 }
@@ -191,6 +198,7 @@ function submit(form, action) {
 paperSearch.addEventListener("input", () => {
   if (libraryData) updatePaperOptions();
 });
+paperGroupFilter.addEventListener("change", () => updatePaperOptions());
 paperPicker.addEventListener("change", () => {
   libraryStatus.textContent = "";
   updatePaperOptions();
