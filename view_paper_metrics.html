@@ -244,10 +244,31 @@ kHz,MHz,0.001
 MHz,MHz,1
 mHz,MHz,1e-9
 GHz,MHz,1000
+J,pJ,1e12
+mJ,pJ,1e9
+µJ,pJ,1e6
+nJ,pJ,1000
+pJ,pJ,1
+fJ,pJ,0.001
+kB/s,GB/s,0.000001
+MB/s,GB/s,0.001
+GB/s,GB/s,1
+TB/s,GB/s,1000
+kb/s,GB/s,0.000000125
+Mb/s,GB/s,0.000125
+Gb/s,GB/s,0.125
+Tb/s,GB/s,125
+kbps,GB/s,0.000000125
+Mbps,GB/s,0.000125
+Gbps,GB/s,0.125
+Tbps,GB/s,125
+FPS,frames/s,1
+frames/s,frames/s,1
 %,%,1`;
 
 function unitKey(unit) {
-  return unit.trim().replace(/\s+/g, "").split("/")
+  return unit.trim().replace(/\s+/g, "")
+    .replace(/^([TGMP]OPS)per(W|mm(?:²|\^?2))$/i, "$1/$2").split("/")
     .map(part => part.replace(/^[μu](?=[A-Za-z])/i, "µ")).join("/");
 }
 

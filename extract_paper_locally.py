@@ -70,6 +70,8 @@ def candidates(page):
                     continue
                 metric = label.group().lower()
             unit = re.sub(r"\s+", "", match[group].replace("μ", "µ"))
+            if metric in ("energy efficiency", "area efficiency"):
+                unit = re.sub("per", "/", unit, flags=re.IGNORECASE)
             conditions = list(dict.fromkeys(item.group() for item in CONDITION.finditer(nearby)))
             values = [(match["first"], "")]
             if match["second"] is not None:
