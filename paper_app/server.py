@@ -4,67 +4,28 @@
 import argparse
 import csv
 import hashlib
+import io
 import json
-import os
 import re
 import sqlite3
 import subprocess
-import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-import crossref_metadata
-import paper_library as library
-from extract_paper_locally import extract_pdf
+from . import crossref, library
+from .pdf import import_pdf, spreadsheet_text
 
+WEB_ROOT = Path(__file__).resolve().with_name("web")
+PAGE = ("index.html", "text/html; charset=utf-8")
 ASSETS = {
-    "/": ("view_paper_metrics.html", "text/html; charset=utf-8"),
-    "/papers": ("view_paper_metrics.html", "text/html; charset=utf-8"),
-    "/paper_library.js": ("paper_library.js", "text/javascript; charset=utf-8"),
+    "/": PAGE,
+    "/papers": PAGE,
+    "/assets/library.js": ("library.js", "text/javascript; charset=utf-8"),
+    "/assets/metrics.js": ("metrics.js", "text/javascript; charset=utf-8"),
+    "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
 }
-ROOT = Path(__file__).resolve().parent
 MAX_PDF_BYTES = 50 * 1024 * 1024
-
-
-def import_pdf(database, filename, payload):
-    digest = hashlib.sha256(payload).hexdigest()
-    rows, has_text = extract_pdf(None, payload)
-    with library.connect(database) as db:
-        db.execute("BEGIN IMMEDIATE")
-        existing = db.execute("SELECT id, path FROM papers WHERE sha256=?", (digest,)).fetchone()
-        if not existing:
-            # Match a CSV-only record if its original PDF is still available.
-            for old in db.execute("SELECT path FROM papers WHERE sha256 IS NULL").fetchall():
-                source = Path(old["path"])
-                if source.name != filename:
-                    continue
-                try:
-                    with source.open("rb") as stream:
-                        matches = hashlib.file_digest(stream, "sha256").hexdigest() == digest
-                except OSError:
-                    continue
-                if matches:
-                    library.store(db, source, (), digest)
-                    break
-
-        directory = database.absolute().with_name(database.name + ".pdfs") / digest
-        directory.parent.mkdir(mode=0o700, exist_ok=True)
-        directory.mkdir(mode=0o700, exist_ok=True)
-        target = Path(existing["path"]) if existing else directory / filename
-        if target.parent != directory:
-            target = directory / filename
-        with tempfile.NamedTemporaryFile(dir=directory, delete=False) as temp:
-            temporary = Path(temp.name)
-            try:
-                temp.write(payload)
-                temp.close()
-                os.replace(temporary, target)
-            finally:
-                temporary.unlink(missing_ok=True)
-        paper_id = library.store(db, target, rows, digest)
-        db.execute("UPDATE papers SET path=? WHERE id=?", (str(target), paper_id))
-    return {"paper_id": paper_id, "metrics": len(rows), "has_text": has_text}
 
 
 def lookup_stored_paper(database, paper_id):
@@ -78,24 +39,26 @@ def lookup_stored_paper(database, paper_id):
     title = paper["title"].strip() or Path(paper["path"]).stem.replace("_", " ").strip()
     if paper["doi"].strip():
         try:
-            matches = crossref_metadata.lookup("doi", paper["doi"])
+            matches = crossref.lookup("doi", paper["doi"])
         except ValueError:
             matches = []
         if matches:
             return matches
-    return crossref_metadata.lookup("title", title[:500])
+    return crossref.lookup("title", title[:500])
 
 
 class Handler(BaseHTTPRequestHandler):
-    def send_data(self, status, data, content_type="application/json; charset=utf-8"):
+    def send_data(self, status, data, content_type="application/json; charset=utf-8", *, filename=None):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        if filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy",
-                         "default-src 'none'; script-src 'self' 'unsafe-inline'; "
-                         "style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
+                         "default-src 'none'; script-src 'self'; "
+                         "style-src 'self'; connect-src 'self'; frame-ancestors 'none'")
         self.end_headers()
         self.wfile.write(data)
 
@@ -115,16 +78,11 @@ class Handler(BaseHTTPRequestHandler):
         route = urlsplit(self.path).path
         if route in ASSETS:
             filename, content_type = ASSETS[route]
-            content = (ROOT / filename).read_bytes()
-            if route in ("/", "/papers"):
-                if route == "/papers":
-                    content = content.replace(b'<body>', b'<body data-page="papers">', 1)
-                content = content.replace(
-                    b"<!-- library-script -->", b'<script src="/paper_library.js"></script>'
-                )
-            self.send_data(200, content, content_type)
+            self.send_data(200, (WEB_ROOT / filename).read_bytes(), content_type)
         elif match := re.fullmatch(r"/papers/([1-9][0-9]{0,18})/source\.pdf", route):
             self.serve_pdf(int(match[1]))
+        elif route == "/exports/metrics.csv":
+            self.export_metrics()
         elif route in ("/api/library", "/api/compare", "/api/paper-details"):
             try:
                 with library.connect(self.server.database) as db:
@@ -135,6 +93,23 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(500, {"error": "Could not read the library database"})
         else:
             self.send_json(404, {"error": "Unknown route"})
+
+    def export_metrics(self):
+        output = io.StringIO(newline="")
+        writer = csv.writer(output)
+        writer.writerow(library.FIELDS)
+        try:
+            with library.connect(self.server.database) as db:
+                for row in library.metric_rows(db):
+                    writer.writerow(
+                        row[field] if field in ("page", "value") else spreadsheet_text(row[field])
+                        for field in library.FIELDS
+                    )
+        except sqlite3.Error:
+            self.send_json(500, {"error": "Could not export the metrics database"})
+            return
+        self.send_data(200, output.getvalue().encode("utf-8-sig"),
+                       "text/csv; charset=utf-8", filename="paper-metrics.csv")
 
     def serve_pdf(self, paper_id):
         try:
@@ -185,8 +160,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/lookup":
                 matches = (lookup_stored_paper(self.server.database, data["paper_id"])
                            if "paper_id" in data else
-                           crossref_metadata.lookup(data.get("kind"), data.get("query")))
+                           crossref.lookup(data.get("kind"), data.get("query")))
                 self.send_json(200, matches)
+                return
+            if self.path == "/api/search-papers":
+                self.send_json(200, crossref.search_papers(data.get("topic"), data.get("keywords", [])))
                 return
             with library.connect(self.server.database) as db:
                 self.update(db, data)

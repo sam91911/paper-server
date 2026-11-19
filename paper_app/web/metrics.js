@@ -1,201 +1,4 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Paper metrics</title>
-<style>
-  * { box-sizing: border-box; }
-  body { max-width: 76rem; margin: 0 auto; padding: 2rem 1rem; font: 1rem/1.5 system-ui, sans-serif; color: #172638; background: #f3f6fa; }
-  h1 { margin: 0 0 1rem; }
-  h2 { font-size: 1.15rem; margin: 0 0 .75rem; }
-  section, .compare-panel { background: white; border: 1px solid #d7e0ea; border-radius: .75rem; padding: 1rem; margin: 1rem 0; }
-  .filters { display: flex; flex-wrap: wrap; gap: .8rem 1rem; align-items: end; }
-  label { display: grid; gap: .25rem; font-weight: 600; }
-  input, select, textarea { font: inherit; color: inherit; border: 1px solid #8b9bb0; background: white; border-radius: .35rem; padding: .35rem; max-width: 100%; }
-  textarea { width: 100%; min-height: 12rem; font-family: monospace; }
-  button { font: inherit; margin: .5rem .5rem 0 0; cursor: pointer; }
-  .chart-row { display: grid; grid-template-columns: minmax(8rem, 2fr) minmax(5rem, 3fr) minmax(5rem, auto); gap: .7rem; align-items: center; padding: .3rem 0; }
-  .paper { overflow-wrap: anywhere; }
-  .track { height: 1rem; position: relative; background: #edf2f7; border-radius: .2rem; }
-  .bar { height: 100%; background: #176d81; border-radius: .2rem; position: absolute; }
-  .zero { position: absolute; height: 100%; width: 1px; background: #40536a; }
-  .number { font-variant-numeric: tabular-nums; }
-  .table-scroll { overflow: auto; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { padding: .5rem; border-bottom: 1px solid #d7e0ea; text-align: left; vertical-align: top; }
-  tbody tr:hover { background: #f0f6fa; }
-  summary { cursor: pointer; }
-  .metadata-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: .6rem; }
-  .library-actions { display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: end; }
-  .library-actions > label { min-width: 0; max-width: 100%; }
-  .paper-picker { flex: 1 1 24rem; }
-  #library-paper { width: 100%; min-width: 0; text-overflow: ellipsis; }
-  #pdf-import { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: end; margin-bottom: 1rem; }
-  #pdf-import label { min-width: 0; max-width: 100%; }
-  #membership label { display: flex; margin: .3rem 0; }
-  #comments textarea, #new-comment { min-height: 4rem; }
-  #library-status, #lookup-disclosure { color: #40536a; }
-  #saved-metadata { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .3rem 1rem; }
-  #saved-metadata dt { font-weight: 600; }
-  #saved-metadata dd { margin: 0; overflow-wrap: anywhere; }
-  #lookup-results li { margin: .5rem 0; }
-  #lookup-results button { text-align: left; }
-  [hidden] { display: none !important; }
-  nav { display: flex; gap: 1rem; margin-bottom: 1rem; }
-  nav a[aria-current="page"] { color: inherit; font-weight: 700; }
-  .scatter { margin: .5rem 0; }
-  .scatter-y { font-weight: 600; margin-bottom: .35rem; }
-  .scatter-area { height: clamp(14rem, 40vh, 24rem); position: relative; border: 1px solid #8b9bb0;
-    padding: .6rem; background: repeating-linear-gradient(to top, transparent 0 calc(25% - 1px), #d7e0ea calc(25% - 1px) 25%); }
-  .scatter-points { position: absolute; inset: .6rem; }
-  .scatter-point { position: absolute; width: .8rem; height: .8rem; padding: 0; margin: 0;
-    border: 1px solid white; border-radius: 50%; background: #176d81; transform: translate(-50%, 50%); }
-  .scatter-point.tradeoff { background: #8f431a; outline: 2px solid #8f431a; z-index: 1; }
-  .tradeoff-label { display: block; color: #8f431a; font-size: .85rem; }
-  .scatter-point:focus-visible { outline: 2px solid #172638; z-index: 1; }
-  .scatter-scale { display: flex; justify-content: space-between; gap: .5rem; }
-  .pair-select { width: 100%; min-width: 8rem; }
-  @media (max-width: 35rem) {
-    .chart-row { grid-template-columns: 1fr auto; }
-    .chart-row .track { grid-row: 2; grid-column: 1 / -1; }
-  }
-</style>
-</head>
-<body>
-<nav id="library-nav" aria-label="Library pages" hidden>
-  <a id="compare-link" href="/">Compare metrics</a>
-  <a id="papers-link" href="/papers">Papers</a>
-</nav>
-<h1 id="page-title">Paper metrics</h1>
-<label id="csv-picker">Metrics CSV <input id="file" type="file" accept=".csv,text/csv"></label>
-<p id="status" class="compare-only" role="status">Choose a CSV from the offline extractor.</p>
-<details class="compare-only">
-  <summary>Unit conversion table</summary>
-  <p>Enter one CSV row per rule. The displayed value is the original value multiplied by the factor. For A/B units, the multiplier is the numerator multiplier divided by the denominator multiplier. A rule for the full ratio overrides its component rules. Exact spellings take priority. If case alone could change the scale, enter the exact spelling.</p>
-  <label>Source unit, target unit, multiplier
-    <textarea id="unit-rules" spellcheck="false"></textarea>
-  </label>
-  <button id="apply-units" type="button">Apply rules</button>
-  <button id="reset-units" type="button">Restore defaults</button>
-  <p id="unit-status" role="status"></p>
-</details>
-<section id="library" hidden>
-  <h2>Paper library</h2>
-  <form id="pdf-import">
-    <label>Add paper PDFs <input id="paper-pdf" type="file" accept=".pdf,application/pdf" multiple required></label>
-    <button id="import-pdf-button">Import and extract metrics</button>
-  </form>
-  <ul id="import-results" aria-label="PDF import results" hidden></ul>
-  <div class="library-actions">
-    <label>Search papers <input type="search" id="paper-search" placeholder="Title, author, DOI, venue, or filename"></label>
-    <label>Paper group <select id="paper-group-filter"></select></label>
-    <label class="paper-picker">Paper details <select id="library-paper"></select></label>
-    <form id="create-group">
-      <label>New group <input name="name" required maxlength="120"></label>
-      <button>Create group</button>
-    </form>
-  </div>
-  <p id="paper-search-status" role="status"></p>
-  <p id="library-status" role="status"></p>
-  <div id="paper-detail" hidden>
-    <p><a id="open-paper-pdf" target="_blank" rel="noopener" hidden>Open local PDF</a></p>
-    <details open>
-      <summary>Publication metadata</summary>
-      <p id="no-metadata">No publication metadata saved.</p>
-      <dl id="saved-metadata"></dl>
-      <form id="lookup-paper">
-        <button>Find this paper on Crossref</button>
-        <p>Uses the saved DOI first, then the saved title or PDF filename without its extension.</p>
-      </form>
-      <details>
-        <summary>Search by a different DOI or title</summary>
-      <form id="lookup">
-        <p id="lookup-disclosure">Lookup sends the entered DOI or title to Crossref.</p>
-        <label>Lookup by <select name="kind"><option value="doi">DOI</option><option value="title">Title</option></select></label>
-        <label>DOI or title <input name="query" required maxlength="500"></label>
-        <button>Search Crossref</button>
-      </form>
-      </details>
-      <ul id="lookup-results"></ul>
-      <form id="metadata">
-        <div class="metadata-fields">
-          <label>DOI <input name="doi"></label>
-          <label>Title <input name="title"></label>
-          <label>Authors <input name="authors"></label>
-          <label>Year <input name="year"></label>
-          <label>Venue <input name="venue"></label>
-          <label>Publisher <input name="publisher"></label>
-        </div>
-        <p id="metadata-source"></p>
-        <button>Save metadata</button>
-      </form>
-    </details>
-    <details>
-      <summary>Group membership</summary>
-      <form id="membership"><div id="group-options"></div><button>Save groups</button></form>
-    </details>
-    <details>
-      <summary>Comments</summary>
-      <div id="comments"></div>
-      <form id="add-comment">
-        <label>New comment <textarea id="new-comment" required maxlength="20000"></textarea></label>
-        <button>Add comment</button>
-      </form>
-    </details>
-  </div>
-</section>
-<main id="results" hidden>
-  <section class="filters" aria-label="Comparison filters">
-    <label id="chart-group-label" hidden>Paper group <select id="library-group"></select></label>
-    <label>Metric and unit <select id="group"></select></label>
-    <label>Paper <input id="paper" type="search" placeholder="Filter by filename"></label>
-    <label>Conditions <input id="conditions" type="search" placeholder="e.g. INT8"></label>
-    <label>Sort by value <select id="sort"><option value="desc">Highest first</option><option value="asc">Lowest first</option></select></label>
-  </section>
-  <details id="compare-2d" class="compare-panel">
-    <summary>2D comparison</summary>
-    <div class="filters">
-      <label>X-axis <select id="x-metric"></select></label>
-      <label>Y-axis <select id="y-metric"></select></label>
-      <label><span><input type="checkbox" id="match-paper-only"> Allow different conditions</span></label>
-    </div>
-    <details>
-      <summary>Highlight trade-offs</summary>
-      <div class="filters">
-        <label>X preference <select id="x-preference"><option value="">None</option><option value="high">Higher is better</option><option value="low">Lower is better</option></select></label>
-        <label>Y preference <select id="y-preference"><option value="">None</option><option value="high">Higher is better</option><option value="low">Lower is better</option></select></label>
-      </div>
-      <p>Choose both preferences to mark points that no other plotted point beats on one metric while matching or beating it on the other.</p>
-    </details>
-    <button id="export-pairs" type="button" disabled>Download plotted pairs CSV</button>
-    <p id="pair-status" role="status"></p>
-    <div id="scatter" class="scatter" aria-label="Metric scatter plot"></div>
-    <p id="point-detail" role="status"></p>
-    <div class="table-scroll">
-      <table>
-        <thead><tr><th>Paper</th><th>Conditions</th><th id="x-column">X</th><th id="y-column">Y</th></tr></thead>
-        <tbody id="pair-rows"></tbody>
-      </table>
-    </div>
-  </details>
-  <section>
-    <h2 id="chart-title">Metric comparison</h2>
-    <div id="chart" aria-labelledby="chart-title"></div>
-  </section>
-  <section>
-    <h2>Source rows</h2>
-    <div class="table-scroll">
-      <table>
-        <thead><tr><th>Paper</th><th>Page</th><th>Value</th><th>Original value</th><th>Conditions</th><th>Source text</th></tr></thead>
-        <tbody id="rows"></tbody>
-      </table>
-    </div>
-  </section>
-</main>
-<script>
 "use strict";
-const required = ["paper", "page", "metric", "value", "unit", "conditions", "evidence"];
 
 function parseCSV(text) {
   const records = [];
@@ -347,27 +150,7 @@ function convert(row, rules) {
   };
 }
 
-function readMetrics(text) {
-  const [header = [], ...body] = parseCSV(text.replace(/^\uFEFF/, ""));
-  if (!required.every(name => header.includes(name))) {
-    throw new Error("Choose a metrics CSV produced by the extractor.");
-  }
-  const columns = required.map(name => header.indexOf(name));
-  return body.filter(row => row.some(Boolean)).map(row => {
-    if (row.length !== header.length) throw new Error("A CSV row has the wrong number of fields.");
-    const metric = Object.fromEntries(required.map((name, index) => [name, row[columns[index]]]));
-    if (!metric.value.trim() || !Number.isFinite(Number(metric.value))) {
-      throw new Error("A metric row has an invalid numeric value.");
-    }
-    metric.originalValue = metric.value;
-    metric.originalUnit = metric.unit;
-    metric.originalNumber = Number(metric.value);
-    return metric;
-  });
-}
-
 const element = id => document.getElementById(id);
-const file = element("file");
 const group = element("group");
 const paper = element("paper");
 const conditions = element("conditions");
@@ -387,7 +170,7 @@ try {
     unitRules.value = saved;
   }
 } catch {
-  // Some browsers restrict storage for local HTML files.
+  // Unit conversion still works when browser storage is unavailable.
 }
 
 function refreshGroups() {
@@ -764,33 +547,6 @@ for (const control of [xMetric, yMetric, matchPaperOnly]) {
 
 for (const preference of [xPreference, yPreference]) preference.addEventListener("change", render);
 
-file.addEventListener("change", async () => {
-  const selected = file.files[0];
-  if (!selected) return;
-  results.hidden = true;
-  status.textContent = "Reading CSV…";
-  try {
-    const content = await selected.text();
-    if (file.files[0] !== selected) return;
-    rawMetrics = readMetrics(content);
-    pairChoices.clear();
-    paper.value = conditions.value = "";
-    if (!rawMetrics.length) {
-      refreshGroups();
-      status.textContent = "The CSV contains no metric rows.";
-      return;
-    }
-    results.hidden = false;
-    refreshGroups();
-  } catch (error) {
-    if (file.files[0] === selected) status.textContent = error.message;
-  }
-});
-
 for (const control of [group, paper, conditions, sort]) {
   control.addEventListener("input", render);
 }
-</script>
-<!-- library-script -->
-</body>
-</html>

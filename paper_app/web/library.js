@@ -1,6 +1,6 @@
 "use strict";
 
-const papersPage = document.body.dataset.page === "papers";
+const papersPage = location.pathname === "/papers";
 const libraryPanel = element("library");
 const libraryStatus = element("library-status");
 const paperPicker = element("library-paper");
@@ -315,6 +315,34 @@ submit(lookupForm, () => findMetadata({
   kind: lookupForm.elements.kind.value, query: lookupForm.elements.query.value,
 }));
 
+const relatedSearch = element("related-paper-search");
+submit(relatedSearch, async () => {
+  const searchStatus = element("related-paper-status");
+  const results = element("related-paper-results");
+  const download = element("download-related-dois");
+  results.replaceChildren();
+  download.hidden = true;
+  searchStatus.textContent = "Searching Crossref titles…";
+  try {
+    const matches = await api("search-papers", {
+      topic: relatedSearch.elements.topic.value.trim(),
+      keywords: relatedSearch.elements.keywords.value.split("\n").map(line => line.trim()).filter(Boolean),
+    });
+    for (const { title, doi } of matches) {
+      const item = add(results, "li", `${title} · `);
+      add(item, "a", doi).href = `https://doi.org/${doi.split("/").map(encodeURIComponent).join("/")}`;
+    }
+    searchStatus.textContent = matches.length ? `${matches.length} matching papers.` : "No matching titles.";
+    if (matches.length) {
+      const content = matches.map(match => match.doi).join("\n") + "\n";
+      download.href = `data:text/plain;charset=utf-8,${encodeURIComponent(content)}`;
+      download.hidden = false;
+    }
+  } catch (error) {
+    searchStatus.textContent = error.message;
+  }
+});
+
 libraryPanel.hidden = !papersPage;
 element("library-nav").hidden = false;
 element(papersPage ? "papers-link" : "compare-link").setAttribute("aria-current", "page");
@@ -324,5 +352,4 @@ if (papersPage) {
   element("page-title").textContent = "Papers";
   for (const item of document.querySelectorAll(".compare-only")) item.hidden = true;
 }
-element("csv-picker").hidden = true;
 loadLibrary().catch(error => { (papersPage ? libraryStatus : status).textContent = error.message; });

@@ -3,18 +3,26 @@
 Requires Python 3.11 or newer and Poppler's `pdftotext`.
 
 ```sh
-python3 paper_server.py --database papers.sqlite3
+./run_paper_server.sh /path/to/papers.sqlite3
 ```
 
-Open <http://127.0.0.1:8765/> to compare metrics. Use the **Papers** page to import one or more PDFs, manage groups and comments, or look up publication metadata on Crossref. Select a paper name in a comparison table to open its details. In **2D comparison**, download the plotted X–Y pairs as CSV, including their converted units, conditions, and source pages.
+Open [the paper library](http://127.0.0.1:8765/papers) to import PDFs, manage groups and comments, and search Crossref. Open [Compare metrics](http://127.0.0.1:8765/) to compare extracted values and export CSVs. Press Ctrl+C to stop the server.
 
-For command-line extraction, pass `--database`, `--output`, or both.
+For related paper search, enter the main topic and any related keyword groups, one per line. A title matches when it contains every word in any one group. The results include publisher DOI links and a DOI text download. Crossref receives only the supplied title keywords or bibliographic lookup values.
+
+To load an existing metrics CSV, run this from the repository root.
 
 ```sh
-python3 extract_paper_locally.py ./cc-papers/*.pdf --database papers.sqlite3 --output new-metrics.csv
-python3 paper_server.py --database papers.sqlite3 --import-csv existing-metrics.csv
+python3 -m paper_app.server --database /path/to/papers.sqlite3 --import-csv /path/to/metrics.csv
 ```
 
-Open `view_paper_metrics.html` directly to browse an exported CSV without the server. Metrics are extracted by text rules and may include a cited baseline or miss measurements shown only in a figure. Check the source before ranking papers.
+Keep the SQLite file and its sibling `.pdfs/` directory together when backing up the library. Extracted metrics can include values from cited baselines and can miss values shown only in figures. Check the source before ranking papers.
 
-The server binds to loopback. PDFs and SQLite data stay on the computer. A Crossref lookup sends only the DOI or title used for the search. Keep the database and its sibling `papers.sqlite3.pdfs/` directory together when backing up the library.
+## Source layout
+
+- `run_paper_server.sh` starts the loopback server.
+- `paper_app/server.py` handles HTTP routes, uploads, and CSV exports.
+- `paper_app/library.py` manages SQLite data and CSV imports.
+- `paper_app/pdf.py` extracts metrics and stores imported PDFs.
+- `paper_app/crossref.py` handles DOI lookup and title search.
+- `paper_app/web/` contains the HTML, CSS, and browser scripts.

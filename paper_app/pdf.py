@@ -1,17 +1,14 @@
-#!/usr/bin/env python3
-"""Extract metric candidates from PDF text into a CSV using fixed rules."""
+"""Extract metric candidates and store imported PDFs."""
 
-import argparse
-import csv
 import hashlib
 import os
 import re
-import sqlite3
 import subprocess
+import tempfile
 from decimal import Decimal
 from pathlib import Path
 
-from paper_library import FIELDS, connect, initialize, store
+from . import library
 
 NUMBER = r"[+−-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+−-]?\d+)?"
 UNIT_GROUPS = {
@@ -82,10 +79,9 @@ def candidates(page):
                 yield metric, str(number), unit, qualifiers, nearby
 
 
-def extract_pdf(path, payload=None):
-    source = "-" if payload is not None else str(path.absolute())
+def extract_pdf(payload):
     result = subprocess.run(
-        ["pdftotext", "-layout", "-enc", "UTF-8", source, "-"],
+        ["pdftotext", "-layout", "-enc", "UTF-8", "-", "-"],
         input=payload, capture_output=True, timeout=60, check=True,
     )
     pages = result.stdout.decode("utf-8").split("\f")
@@ -97,57 +93,41 @@ def extract_pdf(path, payload=None):
     return rows, any(page.strip() for page in pages)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("pdfs", nargs="+", type=Path, help="PDF files or symbolic links")
-    parser.add_argument("--output", type=Path, help="New local CSV file")
-    parser.add_argument("--database", type=Path, help="SQLite library file")
-    args = parser.parse_args()
-    if not args.output and not args.database:
-        parser.error("Specify --output, --database, or both")
-    if args.output and (args.output.exists() or args.output.is_symlink()):
-        parser.error("Choose a new output file")
+def import_pdf(database, filename, payload):
+    digest = hashlib.sha256(payload).hexdigest()
+    rows, has_text = extract_pdf(payload)
+    with library.connect(database) as db:
+        db.execute("BEGIN IMMEDIATE")
+        existing = db.execute("SELECT id, path FROM papers WHERE sha256=?", (digest,)).fetchone()
+        if not existing:
+            # Match a CSV-only record if its original PDF is still available.
+            for old in db.execute("SELECT path FROM papers WHERE sha256 IS NULL").fetchall():
+                source = Path(old["path"])
+                if source.name != filename:
+                    continue
+                try:
+                    with source.open("rb") as stream:
+                        matches = hashlib.file_digest(stream, "sha256").hexdigest() == digest
+                except OSError:
+                    continue
+                if matches:
+                    library.store(db, source, (), digest)
+                    break
 
-    if args.output and args.database and args.output.resolve() == args.database.resolve():
-        parser.error("The CSV and database must have different paths")
-    rows = {}
-    imports = []
-    skipped = 0
-    for pdf in args.pdfs:
-        try:
-            payload = pdf.read_bytes() if args.database else None
-            paper_rows, has_text = extract_pdf(pdf, payload)
-        except (OSError, subprocess.SubprocessError, UnicodeError) as error:
-            parser.exit(1, f"PDF extraction failed ({type(error).__name__}).\n")
-        if not has_text:
-            skipped += 1
-        for page, metric, value, unit, conditions, evidence in paper_rows:
-            row = (
-                spreadsheet_text(str(pdf)), page, spreadsheet_text(metric),
-                value, spreadsheet_text(unit), spreadsheet_text(conditions),
-                spreadsheet_text(evidence),
-            )
-            rows[row] = None
-
-        if payload is not None:
-            imports.append((pdf, paper_rows, hashlib.sha256(payload).hexdigest()))
-
-    try:
-        if args.database:
-            initialize(args.database)
-            with connect(args.database) as db:
-                for pdf, paper_rows, digest in imports:
-                    store(db, pdf, paper_rows, digest)
-        if args.output:
-            with open(args.output, "x", encoding="utf-8", newline="",
-                      opener=lambda path, flags: os.open(path, flags, 0o600)) as output:
-                writer = csv.writer(output)
-                writer.writerow(FIELDS)
-                writer.writerows(rows)
-    except (OSError, ValueError, sqlite3.Error) as error:
-        parser.exit(1, f"Cannot save results: {error}\n")
-    print(f"Saved {len(rows)} metric candidate(s). PDFs without extractable text: {skipped}.")
-
-
-if __name__ == "__main__":
-    main()
+        directory = database.absolute().with_name(database.name + ".pdfs") / digest
+        directory.parent.mkdir(mode=0o700, exist_ok=True)
+        directory.mkdir(mode=0o700, exist_ok=True)
+        target = Path(existing["path"]) if existing else directory / filename
+        if target.parent != directory:
+            target = directory / filename
+        with tempfile.NamedTemporaryFile(dir=directory, delete=False) as temp:
+            temporary = Path(temp.name)
+            try:
+                temp.write(payload)
+                temp.close()
+                os.replace(temporary, target)
+            finally:
+                temporary.unlink(missing_ok=True)
+        paper_id = library.store(db, target, rows, digest)
+        db.execute("UPDATE papers SET path=? WHERE id=?", (str(target), paper_id))
+    return {"paper_id": paper_id, "metrics": len(rows), "has_text": has_text}

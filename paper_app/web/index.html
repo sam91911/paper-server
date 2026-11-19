@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper metrics</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<nav id="library-nav" aria-label="Library pages" hidden>
+  <a id="compare-link" href="/">Compare metrics</a>
+  <a id="papers-link" href="/papers">Papers</a>
+  <a href="/exports/metrics.csv">Download library metrics CSV</a>
+</nav>
+<h1 id="page-title">Paper metrics</h1>
+<p id="status" class="compare-only" role="status">Loading metrics…</p>
+<details class="compare-only">
+  <summary>Unit conversion table</summary>
+  <p>Enter one CSV row per rule. The displayed value is the original value multiplied by the factor. For A/B units, the multiplier is the numerator multiplier divided by the denominator multiplier. A rule for the full ratio overrides its component rules. Exact spellings take priority. If case alone could change the scale, enter the exact spelling.</p>
+  <label>Source unit, target unit, multiplier
+    <textarea id="unit-rules" spellcheck="false"></textarea>
+  </label>
+  <button id="apply-units" type="button">Apply rules</button>
+  <button id="reset-units" type="button">Restore defaults</button>
+  <p id="unit-status" role="status"></p>
+</details>
+<section id="library" hidden>
+  <h2>Paper library</h2>
+  <details>
+    <summary>Find related papers on Crossref</summary>
+    <form id="related-paper-search">
+      <label>Topic keywords <input name="topic" required maxlength="500" placeholder="AI accelerator"></label>
+      <label>Related keyword groups, one per line
+        <textarea name="keywords" rows="3" placeholder="neural network accelerator"></textarea>
+      </label>
+      <button>Search titles</button>
+    </form>
+    <p id="related-paper-status" role="status"></p>
+    <a id="download-related-dois" download="related_paper_dois.txt" hidden>Download DOIs</a>
+    <ol id="related-paper-results"></ol>
+  </details>
+  <form id="pdf-import">
+    <label>Add paper PDFs <input id="paper-pdf" type="file" accept=".pdf,application/pdf" multiple required></label>
+    <button id="import-pdf-button">Import and extract metrics</button>
+  </form>
+  <ul id="import-results" aria-label="PDF import results" hidden></ul>
+  <div class="library-actions">
+    <label>Search papers <input type="search" id="paper-search" placeholder="Title, author, DOI, venue, or filename"></label>
+    <label>Paper group <select id="paper-group-filter"></select></label>
+    <label class="paper-picker">Paper details <select id="library-paper"></select></label>
+    <form id="create-group">
+      <label>New group <input name="name" required maxlength="120"></label>
+      <button>Create group</button>
+    </form>
+  </div>
+  <p id="paper-search-status" role="status"></p>
+  <p id="library-status" role="status"></p>
+  <div id="paper-detail" hidden>
+    <p><a id="open-paper-pdf" target="_blank" rel="noopener" hidden>Open local PDF</a></p>
+    <details open>
+      <summary>Publication metadata</summary>
+      <p id="no-metadata">No publication metadata saved.</p>
+      <dl id="saved-metadata"></dl>
+      <form id="lookup-paper">
+        <button>Find this paper on Crossref</button>
+        <p>Uses the saved DOI first, then the saved title or PDF filename without its extension.</p>
+      </form>
+      <details>
+        <summary>Search by a different DOI or title</summary>
+      <form id="lookup">
+        <p id="lookup-disclosure">Lookup sends the entered DOI or title to Crossref.</p>
+        <label>Lookup by <select name="kind"><option value="doi">DOI</option><option value="title">Title</option></select></label>
+        <label>DOI or title <input name="query" required maxlength="500"></label>
+        <button>Search Crossref</button>
+      </form>
+      </details>
+      <ul id="lookup-results"></ul>
+      <form id="metadata">
+        <div class="metadata-fields">
+          <label>DOI <input name="doi"></label>
+          <label>Title <input name="title"></label>
+          <label>Authors <input name="authors"></label>
+          <label>Year <input name="year"></label>
+          <label>Venue <input name="venue"></label>
+          <label>Publisher <input name="publisher"></label>
+        </div>
+        <p id="metadata-source"></p>
+        <button>Save metadata</button>
+      </form>
+    </details>
+    <details>
+      <summary>Group membership</summary>
+      <form id="membership"><div id="group-options"></div><button>Save groups</button></form>
+    </details>
+    <details>
+      <summary>Comments</summary>
+      <div id="comments"></div>
+      <form id="add-comment">
+        <label>New comment <textarea id="new-comment" required maxlength="20000"></textarea></label>
+        <button>Add comment</button>
+      </form>
+    </details>
+  </div>
+</section>
+<main id="results" hidden>
+  <section class="filters" aria-label="Comparison filters">
+    <label id="chart-group-label" hidden>Paper group <select id="library-group"></select></label>
+    <label>Metric and unit <select id="group"></select></label>
+    <label>Paper <input id="paper" type="search" placeholder="Filter by filename"></label>
+    <label>Conditions <input id="conditions" type="search" placeholder="e.g. INT8"></label>
+    <label>Sort by value <select id="sort"><option value="desc">Highest first</option><option value="asc">Lowest first</option></select></label>
+  </section>
+  <details id="compare-2d" class="compare-panel">
+    <summary>2D comparison</summary>
+    <div class="filters">
+      <label>X-axis <select id="x-metric"></select></label>
+      <label>Y-axis <select id="y-metric"></select></label>
+      <label><span><input type="checkbox" id="match-paper-only"> Allow different conditions</span></label>
+    </div>
+    <details>
+      <summary>Highlight trade-offs</summary>
+      <div class="filters">
+        <label>X preference <select id="x-preference"><option value="">None</option><option value="high">Higher is better</option><option value="low">Lower is better</option></select></label>
+        <label>Y preference <select id="y-preference"><option value="">None</option><option value="high">Higher is better</option><option value="low">Lower is better</option></select></label>
+      </div>
+      <p>Choose both preferences to mark points that no other plotted point beats on one metric while matching or beating it on the other.</p>
+    </details>
+    <button id="export-pairs" type="button" disabled>Download plotted pairs CSV</button>
+    <p id="pair-status" role="status"></p>
+    <div id="scatter" class="scatter" aria-label="Metric scatter plot"></div>
+    <p id="point-detail" role="status"></p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Paper</th><th>Conditions</th><th id="x-column">X</th><th id="y-column">Y</th></tr></thead>
+        <tbody id="pair-rows"></tbody>
+      </table>
+    </div>
+  </details>
+  <section>
+    <h2 id="chart-title">Metric comparison</h2>
+    <div id="chart" aria-labelledby="chart-title"></div>
+  </section>
+  <section>
+    <h2>Source rows</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Paper</th><th>Page</th><th>Value</th><th>Original value</th><th>Conditions</th><th>Source text</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script src="/assets/metrics.js"></script>
+<script src="/assets/library.js"></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-"""SQLite storage shared by the metrics extractor and local paper server."""
+"""SQLite storage for papers, metrics, and library organization."""
 
 import csv
 import math
@@ -109,6 +109,13 @@ def import_csv(db, stream, base):
     return len(papers)
 
 
+def metric_rows(db):
+    return db.execute(
+        "SELECT m.*, p.path AS paper FROM metrics m JOIN papers p ON p.id=m.paper_id "
+        "ORDER BY m.paper_id, m.page, m.metric, m.value, m.unit, m.conditions, m.evidence"
+    )
+
+
 def snapshot(db, view="library"):
     paper_columns = "id, path, title" if view == "compare" else "id, path, doi, title, authors, year, venue, publisher, source"
     if view == "library":
@@ -121,9 +128,7 @@ def snapshot(db, view="library"):
         "memberships": [dict(row) for row in db.execute("SELECT * FROM memberships")],
     }
     if view != "paper-details":
-        data["metrics"] = [dict(row) for row in db.execute(
-            "SELECT m.*, p.path AS paper FROM metrics m JOIN papers p ON p.id=m.paper_id ORDER BY m.paper_id,m.page"
-        )]
+        data["metrics"] = [dict(row) for row in metric_rows(db)]
     if view != "compare":
         data["comments"] = [dict(row) for row in db.execute("SELECT * FROM comments ORDER BY id")]
     return data
