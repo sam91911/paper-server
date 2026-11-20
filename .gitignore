@@ -12,3 +12,9 @@ cc-papers/
 .agents/
 __pycache__/
 *.py[cod]
+
+# Isolated arXiv example library
+/.paper-demo/
+
+# Locally packaged VS Code extension
+*.vsix

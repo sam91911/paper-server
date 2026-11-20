@@ -1,0 +1,32 @@
+{
+  "name": "paper-library",
+  "displayName": "Local Paper Library",
+  "description": "Edit library Markdown and discuss papers or documents from VS Code.",
+  "publisher": "local-paper-library",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.93.0" },
+  "extensionKind": ["ui"],
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "activationEvents": ["onFileSystem:paper-library"],
+  "contributes": {
+    "configuration": {
+      "title": "Paper Library",
+      "properties": {
+        "paperLibrary.server": {
+          "type": "string",
+          "default": "http://127.0.0.1:8765",
+          "scope": "application",
+          "description": "Paper Library server origin, including its port."
+        }
+      }
+    },
+    "commands": [
+      { "command": "paperLibrary.connect", "title": "Configure Server and Key", "category": "Paper Library" },
+      { "command": "paperLibrary.forgetKey", "title": "Forget Application Key", "category": "Paper Library" },
+      { "command": "paperLibrary.openDocument", "title": "Open Document", "category": "Paper Library" },
+      { "command": "paperLibrary.newDocument", "title": "New Document", "category": "Paper Library" },
+      { "command": "paperLibrary.postComment", "title": "Post Comment", "category": "Paper Library" }
+    ]
+  }
+}

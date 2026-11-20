@@ -8,7 +8,7 @@ import tempfile
 from decimal import Decimal
 from pathlib import Path
 
-from . import library
+from . import library, sharing
 
 NUMBER = r"[+−-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+−-]?\d+)?"
 UNIT_GROUPS = {
@@ -93,13 +93,15 @@ def extract_pdf(payload):
     return rows, any(page.strip() for page in pages)
 
 
-def import_pdf(database, filename, payload):
+def import_pdf(database, filename, payload, account, audience, recipients=None):
     digest = hashlib.sha256(payload).hexdigest()
     rows, has_text = extract_pdf(payload)
     with library.connect(database) as db:
         db.execute("BEGIN IMMEDIATE")
         existing = db.execute("SELECT id, path FROM papers WHERE sha256=?", (digest,)).fetchone()
-        if not existing:
+        if existing:
+            sharing.paper_for(db, existing["id"], account, owner_only=True)
+        else:
             # Match a CSV-only record if its original PDF is still available.
             for old in db.execute("SELECT path FROM papers WHERE sha256 IS NULL").fetchall():
                 source = Path(old["path"])
@@ -114,6 +116,8 @@ def import_pdf(database, filename, payload):
                     library.store(db, source, (), digest)
                     break
 
+        if not existing:
+            sharing.recipient_ids(db, recipients)
         directory = database.absolute().with_name(database.name + ".pdfs") / digest
         directory.parent.mkdir(mode=0o700, exist_ok=True)
         directory.mkdir(mode=0o700, exist_ok=True)
@@ -130,4 +134,8 @@ def import_pdf(database, filename, payload):
                 temporary.unlink(missing_ok=True)
         paper_id = library.store(db, target, rows, digest)
         db.execute("UPDATE papers SET path=? WHERE id=?", (str(target), paper_id))
+        db.execute("UPDATE paper_metadata_checks SET next_check=0,detected_doi=NULL WHERE paper_id=?", (paper_id,))
+        if not existing:
+            db.execute("INSERT INTO paper_access VALUES (?,?,?)", (paper_id, account["id"], audience))
+            sharing.set_recipients(db, "paper", paper_id, recipients)
     return {"paper_id": paper_id, "metrics": len(rows), "has_text": has_text}

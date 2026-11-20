@@ -236,7 +236,7 @@ function render() {
   renderPairs(filtered);
   const rows = filtered.filter(row => row.group === group.value);
   rows.sort((first, second) => (sort.value === "asc" ? 1 : -1) * (first.number - second.number));
-  status.textContent = `Showing ${rows.length} matching result(s) from ${new Set(rows.map(row => row.paper)).size} paper(s).`;
+  status.textContent = `Showing ${rows.length} matching result(s) from ${new Set(rows.map(row => row.paper_id ?? row.paper)).size} paper(s).`;
   element("chart-title").textContent = group.selectedOptions[0].textContent;
   if (!rows.length) {
     add(chart, "p", "No results match these filters.");
@@ -401,10 +401,8 @@ function addSourcePageLink(parent, row, label) {
   const page = Number(row?.page);
   if (!row?.has_pdf || !Number.isSafeInteger(page) || page < 1) return false;
   const link = add(parent, "a", label);
-  link.href = `${paperPDFURL(row.paper_id)}#page=${page}`;
-  link.target = "_blank";
-  link.rel = "noopener";
-  link.title = `Open PDF page ${page} in a new tab`;
+  link.href = `/papers?paper=${encodeURIComponent(row.paper_id)}&page=${page}`;
+  link.title = `View PDF page ${page} in the paper library`;
   return true;
 }
 

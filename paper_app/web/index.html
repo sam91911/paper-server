@@ -7,21 +7,20 @@
 <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
-<nav id="library-nav" aria-label="Library pages" hidden>
-  <a id="compare-link" href="/">Compare metrics</a>
-  <a id="papers-link" href="/papers">Papers</a>
-  <a href="/exports/metrics.csv">Download library metrics CSV</a>
-</nav>
+<header class="page-header">
 <h1 id="page-title">Paper metrics</h1>
+</header>
+<div class="page-content">
+<p class="compare-only"><a href="/exports/metrics.csv">Download library metrics CSV</a></p>
 <p id="status" class="compare-only" role="status">Loading metrics…</p>
-<details class="compare-only">
+<details class="compare-only compare-panel">
   <summary>Unit conversion table</summary>
   <p>Enter one CSV row per rule. The displayed value is the original value multiplied by the factor. For A/B units, the multiplier is the numerator multiplier divided by the denominator multiplier. A rule for the full ratio overrides its component rules. Exact spellings take priority. If case alone could change the scale, enter the exact spelling.</p>
   <label>Source unit, target unit, multiplier
     <textarea id="unit-rules" spellcheck="false"></textarea>
   </label>
   <button id="apply-units" type="button">Apply rules</button>
-  <button id="reset-units" type="button">Restore defaults</button>
+  <button class="secondary" id="reset-units" type="button">Restore defaults</button>
   <p id="unit-status" role="status"></p>
 </details>
 <section id="library" hidden>
@@ -33,20 +32,32 @@
       <label>Related keyword groups, one per line
         <textarea name="keywords" rows="3" placeholder="neural network accelerator"></textarea>
       </label>
+      <div class="search-filters">
+        <label>Publisher <input name="publisher" list="crossref-publishers" maxlength="160" placeholder="e.g. IEEE"></label>
+        <datalist id="crossref-publishers"></datalist>
+        <label>From year <input name="year_from" type="number" min="1000" max="9999" placeholder="Any"></label>
+        <label>Through year <input name="year_to" type="number" min="1000" max="9999" placeholder="Any"></label>
+      </div>
       <button>Search titles</button>
     </form>
     <p id="related-paper-status" role="status"></p>
     <a id="download-related-dois" download="related_paper_dois.txt" hidden>Download DOIs</a>
-    <ol id="related-paper-results"></ol>
+    <div id="related-paper-results"></div>
   </details>
-  <form id="pdf-import">
+  <p id="pdf-sign-in"><a href="/account">Sign in to upload PDFs</a>.</p>
+  <form id="pdf-import" hidden>
     <label>Add paper PDFs <input id="paper-pdf" type="file" accept=".pdf,application/pdf" multiple required></label>
+    <label>File access <select name="audience" class="audience-options"></select></label>
+    <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
     <button id="import-pdf-button">Import and extract metrics</button>
   </form>
   <ul id="import-results" aria-label="PDF import results" hidden></ul>
   <div class="library-actions">
     <label>Search papers <input type="search" id="paper-search" placeholder="Title, author, DOI, venue, or filename"></label>
     <label>Paper group <select id="paper-group-filter"></select></label>
+    <label>Publisher <select id="paper-publisher-filter"></select></label>
+    <label>From year <input id="paper-year-from" type="number" min="1000" max="9999" placeholder="Any"></label>
+    <label>Through year <input id="paper-year-to" type="number" min="1000" max="9999" placeholder="Any"></label>
     <label class="paper-picker">Paper details <select id="library-paper"></select></label>
     <form id="create-group">
       <label>New group <input name="name" required maxlength="120"></label>
@@ -56,14 +67,39 @@
   <p id="paper-search-status" role="status"></p>
   <p id="library-status" role="status"></p>
   <div id="paper-detail" hidden>
-    <p><a id="open-paper-pdf" target="_blank" rel="noopener" hidden>Open local PDF</a></p>
+    <details open>
+      <summary>Paper file</summary>
+      <p id="paper-file-name"></p>
+      <p id="paper-file-links" class="file-actions" hidden>
+        <button type="button" id="view-paper-pdf">View PDF here</button>
+        <button type="button" id="review-paper" class="secondary">Review with AI</button>
+        <a id="open-paper-pdf" target="_blank" rel="noopener">Open in new tab</a>
+        <a id="download-paper-pdf" download>Download PDF</a>
+      </p>
+      <div id="paper-pdf-viewer" class="pdf-viewer" hidden>
+        <div class="pdf-toolbar">
+          <strong id="paper-pdf-title"></strong>
+          <a id="paper-pdf-tab" target="_blank" rel="noopener">Open in new tab</a>
+          <button type="button" id="paper-pdf-close" class="secondary">Close preview</button>
+        </div>
+        <iframe id="paper-pdf-frame" referrerpolicy="no-referrer" title="Paper PDF preview"></iframe>
+      </div>
+      <p id="paper-audience"></p>
+      <form id="paper-access" class="account-actions" hidden>
+        <label>File access <select name="audience" class="audience-options"></select></label>
+    <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
+        <label class="inline-check"><input name="allow_title" type="checkbox"> Allow automatic title or filename lookup on Crossref</label>
+        <button>Save access</button>
+      </form>
+      <form id="archive-paper"><button class="secondary">Archive paper</button></form>
+    </details>
     <details open>
       <summary>Publication metadata</summary>
       <p id="no-metadata">No publication metadata saved.</p>
       <dl id="saved-metadata"></dl>
       <form id="lookup-paper">
         <button>Find this paper on Crossref</button>
-        <p>Uses the saved DOI first, then the saved title or PDF filename without its extension.</p>
+        <p>Sends the DOI to Crossref first. If needed, sends the saved title or the PDF filename without its extension.</p>
       </form>
       <details>
         <summary>Search by a different DOI or title</summary>
@@ -74,12 +110,15 @@
         <button>Search Crossref</button>
       </form>
       </details>
-      <ul id="lookup-results"></ul>
+      <div id="lookup-results"></div>
       <form id="metadata">
         <div class="metadata-fields">
           <label>DOI <input name="doi"></label>
           <label>Title <input name="title"></label>
-          <label>Authors <input name="authors"></label>
+          <label>Related papers, one DOI or DOI link per line
+          <textarea name="doi_refs" rows="2" maxlength="9000"></textarea>
+        </label>
+        <label>Authors <input name="authors"></label>
           <label>Year <input name="year"></label>
           <label>Venue <input name="venue"></label>
           <label>Publisher <input name="publisher"></label>
@@ -93,14 +132,146 @@
       <form id="membership"><div id="group-options"></div><button>Save groups</button></form>
     </details>
     <details>
-      <summary>Comments</summary>
+      <summary id="comment-summary">Comments</summary>
       <div id="comments"></div>
-      <form id="add-comment">
+      <p id="comment-sign-in" hidden><a href="/account">Sign in to post a comment</a>.</p>
+      <form id="add-comment" hidden>
+        <p id="reply-context" hidden></p>
+        <button type="button" id="cancel-reply" class="secondary" hidden>Cancel reply</button>
         <label>New comment <textarea id="new-comment" required maxlength="20000"></textarea></label>
-        <button>Add comment</button>
+        <label>Related papers, one DOI or DOI link per line
+          <textarea name="doi_refs" rows="2" maxlength="9000"></textarea>
+        </label>
+        <label id="comment-author-choice">Author
+          <select name="kind">
+            <option value="user">My account</option>
+            <option value="ai">AI-generated · recorded by my account</option>
+          </select>
+        </label>
+        <div class="account-actions">
+          <label>Location target <select name="target"></select></label>
+          <label id="comment-position-label" hidden><span id="comment-position-text">Page or line number</span>
+            <input name="position" type="number" min="1" max="1000000">
+          </label>
+        </div>
+        <label>Comment access <select name="audience" class="audience-options"></select></label>
+        <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
+        <button id="post-comment">Add comment</button>
       </form>
     </details>
   </div>
+  <details id="paper-archive">
+    <summary id="archive-summary">Archived papers</summary>
+    <p>Archived papers stay on disk and are hidden from comparisons and CSV exports.</p>
+    <div id="archived-papers"></div>
+  </details>
+</section>
+<section id="account-page" hidden>
+  <h2 id="account-summary">Sign in</h2>
+  <form id="account-form">
+    <label>Username <input name="username" autocomplete="username" required maxlength="32"></label>
+    <label>Password <input type="password" name="password" autocomplete="current-password" required maxlength="256"></label>
+    <button>Sign in</button>
+  </form>
+  <p id="google-option" hidden><a href="/auth/google">Sign in with Google</a></p>
+  <details id="signup-panel">
+    <summary>Create a human account</summary>
+    <p>You can create an account without an invitation. Sign in to see your workspace and items shared with your username.</p>
+    <form id="signup">
+      <label>Name <input name="display_name" autocomplete="name" required maxlength="120"></label>
+      <label>Email <input name="email" type="email" autocomplete="email" required maxlength="254"></label>
+      <label>Username <input name="username" autocomplete="username" required maxlength="32"></label>
+      <label>Password <input name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label>
+      <label>Invitation code (optional) <input name="invite" autocomplete="off" minlength="43" maxlength="43"></label>
+      <button>Create account</button>
+    </form>
+  </details>
+  <p id="account-username" hidden></p>
+  <p id="account-email" hidden></p>
+  <details id="key-panel" hidden>
+    <summary>Application keys</summary>
+    <p>Use an application key to sign API requests. Each key has your account's access.</p>
+    <form id="create-key" class="account-actions">
+      <label>Key label <input name="label" required maxlength="100" placeholder="Local paper reviewer"></label>
+      <button>Create key</button>
+    </form>
+    <label id="issued-key-label" hidden>New key. Copy it now.
+      <input id="issued-key" readonly autocomplete="off" spellcheck="false">
+    </label>
+    <div id="application-key-list"></div>
+  </details>
+  <form id="change-password" hidden>
+    <h3>Change password</h3>
+    <label>Current password <input name="current_password" type="password" autocomplete="current-password" required maxlength="256"></label>
+    <label>New password <input name="new_password" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label>
+    <button>Change password</button>
+  </form>
+  <form id="sign-out" hidden><button class="secondary">Sign out</button></form>
+  <p id="account-status" role="status"></p>
+</section>
+<section id="markdown-documents" hidden>
+    <p id="documents-sign-in"><a href="/account">Sign in to create a document</a>.</p>
+    <div id="documents-workspace" hidden>
+      <div class="account-actions">
+        <label>Document <select id="document-picker"></select></label>
+        <button type="button" id="new-document" class="secondary">New document</button>
+        <button type="button" id="download-document" class="secondary" hidden>Download Markdown</button>
+        <button type="button" id="review-document" class="secondary" hidden>Review with AI</button>
+      </div>
+      <p id="document-owner"></p>
+      <div class="document-layout" id="document-layout">
+        <form id="document-editor" hidden>
+          <h2>Edit Markdown</h2>
+          <div class="document-fields">
+            <label class="document-title-field">Title <input name="title" maxlength="160" required></label>
+            <label>Document access <select name="audience" class="audience-options"></select></label>
+            <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
+          </div>
+          <label>Markdown <textarea name="markdown" maxlength="100000" spellcheck="false"></textarea></label>
+          <div class="document-tools">
+            <div class="account-actions">
+              <label>DOI <input id="document-doi" maxlength="500"></label>
+              <button type="button" id="insert-doi" class="secondary">Insert DOI link</button>
+            </div>
+            <div class="account-actions">
+              <label>Local PDF <select id="document-file"></select></label>
+              <button type="button" id="insert-file" class="secondary">Insert PDF link</button>
+              <button type="button" id="view-document-pdf" class="secondary">View PDF here</button>
+            </div>
+          </div>
+          <button>Save document</button>
+        </form>
+        <section id="document-preview-panel" class="document-preview-panel" aria-labelledby="preview-title" hidden>
+          <h2 id="preview-title">Preview</h2>
+          <div id="document-preview" class="document-preview"></div>
+        </section>
+      </div>
+      <div id="document-pdf-viewer" class="pdf-viewer" hidden>
+        <div class="pdf-toolbar">
+          <strong id="document-pdf-title"></strong>
+          <a id="document-pdf-tab" target="_blank" rel="noopener">Open in new tab</a>
+          <button type="button" id="document-pdf-close" class="secondary">Close preview</button>
+        </div>
+        <iframe id="document-pdf-frame" referrerpolicy="no-referrer" title="Document PDF preview"></iframe>
+      </div>
+      <details id="document-discussion" hidden>
+        <summary id="document-comment-summary">Comments</summary>
+        <div id="document-comments"></div>
+        <form id="document-comment-form">
+          <p id="document-reply-context" hidden></p>
+          <button id="cancel-document-reply" type="button" class="secondary" hidden>Cancel reply</button>
+          <label>Comment <textarea name="body" required maxlength="20000"></textarea></label>
+          <label>Related papers, one DOI per line <textarea name="doi_refs" rows="2" maxlength="9000"></textarea></label>
+          <div class="document-fields">
+            <label>Source line (optional) <input name="line" type="number" min="1" max="1000000"></label>
+            <label>Comment access <select name="audience" class="audience-options"></select></label>
+            <label>Share with usernames <input name="recipients" maxlength="1700"></label>
+          </div>
+          <button id="post-document-comment">Add comment</button>
+        </form>
+      </details>
+      <p id="document-status" role="status"></p>
+    </div>
 </section>
 <main id="results" hidden>
   <section class="filters" aria-label="Comparison filters">
@@ -150,6 +321,39 @@
     </div>
   </section>
 </main>
+</div>
+<nav id="library-nav" class="bottom-nav" aria-label="Library pages">
+  <a id="compare-link" href="/">Compare</a>
+  <a id="papers-link" href="/papers">Papers</a>
+  <a id="documents-link" href="/documents">Documents</a>
+  <a id="account-link" href="/account">Account</a>
+</nav>
+<dialog id="agent-dialog" aria-labelledby="agent-heading">
+  <form method="dialog" class="agent-toolbar">
+    <h2 id="agent-heading">Review with AI</h2>
+    <button class="secondary">Close</button>
+  </form>
+  <p id="agent-target"></p>
+  <p id="agent-tools" role="status"></p>
+  <div class="document-fields">
+    <label>Agent <select id="agent-engine">
+      <option value="local">Local GGUF model</option>
+      <option value="cloud">Cloud model via API</option>
+    </select></label>
+    <label>Terminal <select id="agent-platform">
+      <option value="linux">Linux</option><option value="macos">macOS</option><option value="windows">Windows PowerShell</option>
+    </select></label>
+    <label id="agent-position-field"><span id="agent-position-label">PDF page</span>
+      <input id="agent-position" type="number" min="1" max="1000000">
+    </label>
+  </div>
+  <p id="agent-prerequisites"></p>
+  <label class="inline-check"><input id="agent-post" type="checkbox"> Post the response as a private comment</label>
+  <label>Command <textarea id="agent-command" rows="3" readonly spellcheck="false"></textarea></label>
+  <button type="button" id="copy-agent-command">Copy command</button>
+  <button type="button" id="copy-agent-check" class="secondary">Copy local tool check</button>
+  <p id="copy-agent-status" role="status"></p>
+</dialog>
 <script src="/assets/metrics.js"></script>
 <script src="/assets/library.js"></script>
 </body>
