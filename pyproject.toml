@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-paper-library"
+version = "0.1.0"
+description = "A local paper library and research discussion server"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+google = ["google-auth[requests]>=2,<3"]
+
+[tool.setuptools.packages.find]
+include = ["paper_app*"]
+
+[tool.setuptools.package-data]
+paper_app = ["web/*.html", "web/*.css", "web/*.js"]

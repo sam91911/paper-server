@@ -69,8 +69,41 @@ Run `./run_paper_server.sh .paper-demo/papers.sqlite3` to open the populated exa
 
 - `run_paper_server.sh` starts the loopback server.
 - `paper_app/server.py` handles HTTP routes, uploads, and CSV exports.
+- `paper_app/*_routes.py` contains account, document, comment, and paper write operations.
 - `paper_app/library.py` manages SQLite data and CSV imports.
 - `paper_app/pdf.py` extracts metrics and stores imported PDFs.
 - `paper_app/crossref.py` handles DOI lookup and title search.
 - `paper_app/metadata_sync.py` checks for missing metadata in the background.
 - `paper_app/web/` contains the HTML, CSS, and browser scripts.
+- `paper_app/backup.py` and `paper_app/integrity.py` back up, restore, and check local data.
+
+## Backup and restore
+
+Create a backup in a new directory, then restore it to a new database path:
+
+```sh
+python3 -m paper_app.backup create /path/to/papers.sqlite3 /path/to/backup
+python3 -m paper_app.backup restore /path/to/backup /path/to/restored.sqlite3
+```
+
+The command holds a SQLite write lock while copying the database and verified PDF files, so imports and other writes wait until the backup finishes. It checks each stored PDF's SHA-256 when creating and restoring the backup and checks SQLite integrity on restore. Keep the backup private: it contains account credentials and library content. Test the restored library before relying on a backup. CSV-only records can refer to external files; those files are not included and must be backed up separately. External processes that modify PDF files outside the app are not coordinated by the database lock.
+
+## Development
+
+The core server uses the Python standard library. For the optional Google sign-in dependencies, install the project with `python3 -m pip install '.[google]'`. Install Poppler separately to provide `pdftotext`. The server warns at startup if it is missing; PDF import requires it.
+
+Run the checks locally:
+
+```sh
+python3 -m compileall -q paper_app
+python3 -m unittest discover -s tests -v
+for test in tests/*.mjs; do node "$test"; done
+```
+
+The JavaScript checks require Node.js; the application itself does not. To reproduce the synthetic snapshot benchmark, run `python3 -m scripts.benchmark_snapshots`.
+
+To check database integrity and find missing, changed, or unreferenced managed PDF files without deleting anything, stop the server first and run `python3 -m paper_app.integrity /path/to/papers.sqlite3`. The server must be stopped to avoid reporting an in-progress import as an orphan. Investigate any orphan before removing it.
+
+API clients that do not need a complete metric snapshot can read `GET /api/metric-page`, then follow each non-null `next_after` value with `?after=<value>`. Each page contains up to 500 accessible rows. Cursors are intended for a single traversal; concurrent edits can change later pages, so use the complete snapshot or a backup when a consistent point-in-time view is required. The comparison page currently loads the full metric dataset to support global filtering, sorting and trade-off analysis, but renders its chart and source table in pages of 100 rows.
+
+`GET /api/paper-page` offers the same cursor pattern for accessible, unarchived papers, in pages of up to 100. The browser paper picker filters the complete accessible paper list and displays 100 choices per page. Document text and paper or document discussions are fetched only when selected; discussions load up to 50 root threads at a time.

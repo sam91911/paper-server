@@ -162,6 +162,8 @@ const unitStatus = element("unit-status");
 const storageKey = "paper-metrics-unit-rules";
 let rawMetrics = [], metrics = [], rules = readRules(defaultRules);
 let libraryGroupMembers = null;
+const resultPageSize = 100;
+let resultPage = 0;
 unitRules.value = defaultRules;
 try {
   const saved = localStorage.getItem(storageKey);
@@ -224,7 +226,7 @@ function render() {
   chart.replaceChildren();
   table.replaceChildren();
   if (!metrics.length) {
-    renderPairs([]);
+    if (comparisonPanel.open) renderPairs([]);
     return;
   }
   const paperQuery = paper.value.trim().toLowerCase();
@@ -233,10 +235,17 @@ function render() {
     (!libraryGroupMembers || libraryGroupMembers.has(row.paper_id))
     && [row.paper, row.title || ""].some(label => label.toLowerCase().includes(paperQuery))
     && row.conditions.toLowerCase().includes(conditionQuery));
-  renderPairs(filtered);
+  if (comparisonPanel.open) renderPairs(filtered);
   const rows = filtered.filter(row => row.group === group.value);
   rows.sort((first, second) => (sort.value === "asc" ? 1 : -1) * (first.number - second.number));
-  status.textContent = `Showing ${rows.length} matching result(s) from ${new Set(rows.map(row => row.paper_id ?? row.paper)).size} paper(s).`;
+  const pages = Math.max(1, Math.ceil(rows.length / resultPageSize));
+  resultPage = Math.max(0, Math.min(resultPage, pages - 1));
+  const start = resultPage * resultPageSize;
+  const displayed = rows.slice(start, start + resultPageSize);
+  status.textContent = `${rows.length} matching result(s) from ${new Set(rows.map(row => row.paper_id ?? row.paper)).size} paper(s).`;
+  element("results-page").textContent = `Page ${resultPage + 1} of ${pages}`;
+  element("results-previous").disabled = resultPage === 0;
+  element("results-next").disabled = resultPage + 1 >= pages;
   element("chart-title").textContent = group.selectedOptions[0].textContent;
   if (!rows.length) {
     add(chart, "p", "No results match these filters.");
@@ -254,7 +263,7 @@ function render() {
   const position = value => 100 * (value / scale - minimum / scale) / span;
   const zero = position(0);
 
-  for (const row of rows) {
+  for (const row of displayed) {
     const value = row.unit ? `${row.value} ${row.unit}` : row.value;
     const filename = row.title || row.paper.split(/[\\/]/).pop();
     const entry = add(chart, "div", undefined, "chart-row");
@@ -281,12 +290,16 @@ function render() {
   }
 }
 
+element("results-previous").addEventListener("click", () => { resultPage--; render(); });
+element("results-next").addEventListener("click", () => { resultPage++; render(); });
+
 const xMetric = element("x-metric");
 const yMetric = element("y-metric");
 const matchPaperOnly = element("match-paper-only");
 const xPreference = element("x-preference");
 const yPreference = element("y-preference");
 const comparisonPanel = element("compare-2d");
+comparisonPanel.addEventListener("toggle", () => { if (comparisonPanel.open) render(); });
 const comparisonStorageKey = "paper-metrics-comparison-settings";
 let comparisonSettings = {};
 try {
@@ -546,5 +559,5 @@ for (const control of [xMetric, yMetric, matchPaperOnly]) {
 for (const preference of [xPreference, yPreference]) preference.addEventListener("change", render);
 
 for (const control of [group, paper, conditions, sort]) {
-  control.addEventListener("input", render);
+  control.addEventListener("input", () => { resultPage = 0; render(); });
 }

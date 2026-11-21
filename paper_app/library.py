@@ -9,7 +9,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import accounts, google_signin, sharing
+from . import accounts, experiments, google_signin, sharing, tools_catalog
 
 FIELDS = ("paper", "page", "metric", "value", "unit", "conditions", "evidence")
 METADATA = ("doi", "title", "authors", "year", "venue", "publisher", "source")
@@ -93,7 +93,7 @@ def connect(path):
 def initialize(path):
     with connect(path) as db:
         db.executescript(SCHEMA + COMMENT_SCHEMA.format(table="comments") + accounts.SCHEMA
-                         + sharing.SCHEMA + google_signin.SCHEMA)
+                         + sharing.SCHEMA + google_signin.SCHEMA + experiments.SCHEMA + tools_catalog.SCHEMA)
         # Existing comments have a mandatory paper_id. Rebuild with the same IDs
         # so authors, grants, reply links, and anchors survive the migration.
         db.execute("PRAGMA foreign_keys=OFF")
@@ -108,6 +108,9 @@ def initialize(path):
             db.execute("DROP TABLE comments")
             db.execute("ALTER TABLE comments_new RENAME TO comments")
         db.execute("CREATE INDEX IF NOT EXISTS comments_parent ON comments(parent_id)")
+        db.execute("CREATE INDEX IF NOT EXISTS comments_paper_root ON comments(paper_id, parent_id)")
+        db.execute("CREATE INDEX IF NOT EXISTS comments_document_root ON comments(document_id, parent_id)")
+        db.execute("CREATE INDEX IF NOT EXISTS documents_updated ON documents(updated DESC, id DESC)")
         db.execute("INSERT OR IGNORE INTO comment_id_sequence SELECT 1, COALESCE(MAX(id), 0) FROM comments")
         for table in ("comments", "comment_authors"):
             if db.execute(f"PRAGMA foreign_key_check({table})").fetchone():
@@ -176,7 +179,44 @@ def metric_rows(db, account=None):
             yield row
 
 
-def snapshot(db, view="library", account=None):
+def metric_page(db, account=None, *, after=0, limit=500):
+    """Return a bounded, access-filtered page using SQLite's metric rowid."""
+    rows = db.execute(
+        sharing.PAPER_SCOPE +
+        "SELECT m.rowid AS cursor, m.*, p.path AS paper FROM metrics m "
+        "JOIN visible_papers p ON p.id=m.paper_id "
+        "WHERE m.rowid>:after AND p.id NOT IN (SELECT paper_id FROM archived_papers) "
+        "ORDER BY m.rowid LIMIT :limit",
+        sharing.viewer_params(account, after=after, limit=limit + 1),
+    ).fetchall()
+    more = len(rows) > limit
+    page = [dict(row) for row in rows[:limit]]
+    next_cursor = page[-1]["cursor"] if more else None
+    for row in page:
+        row.pop("cursor")
+        if account and account["role"] != "user":
+            row["paper"] = Path(row["paper"]).name
+    return {"metrics": page, "next_after": next_cursor}
+
+
+def paper_page(db, account=None, *, after=0, limit=100):
+    rows = db.execute(
+        sharing.PAPER_SCOPE +
+        "SELECT id,path,doi,title,authors,year,venue,publisher,source,owner_id,audience, "
+        "sha256 IS NOT NULL AS has_pdf FROM visible_papers "
+        "WHERE id>:after AND id NOT IN (SELECT paper_id FROM archived_papers) "
+        "ORDER BY id LIMIT :limit",
+        sharing.viewer_params(account, after=after, limit=limit + 1),
+    ).fetchall()
+    more = len(rows) > limit
+    page = [dict(row) for row in rows[:limit]]
+    if not account or account["role"] != "user":
+        for row in page:
+            row["path"] = Path(row["path"]).name
+    return {"papers": page, "next_after": page[-1]["id"] if more else None}
+
+
+def snapshot(db, view="library", account=None, *, include_comments=True, document_summaries=False):
     def rows(query):
         return [dict(row) for row in db.execute(sharing.PAPER_SCOPE + query, sharing.viewer_params(account))]
 
@@ -203,8 +243,8 @@ def snapshot(db, view="library", account=None):
         for paper in data["papers"]:
             paper["path"] = Path(paper["path"]).name
     if view == "documents":
-        return {"account": account, "documents": sharing.documents_for(db, account), "papers": data["papers"],
-                "comments": comment_snapshot(db, account, documents=True)}
+        return {"account": account, "documents": sharing.documents_for(db, account, summaries=document_summaries), "papers": data["papers"],
+                "comments": comment_snapshot(db, account, documents=True) if include_comments else []}
     if view in ("paper-details", "compare"):
         data["account"] = account
     if view == "paper-details":
@@ -220,20 +260,29 @@ def snapshot(db, view="library", account=None):
     else:
         data["metrics"] = [dict(row) for row in metric_rows(db, account)]
     if view != "compare":
-        data["comments"] = comment_snapshot(db, account)
+        data["comments"] = comment_snapshot(db, account) if include_comments else []
     return data
 
 
-def comment_snapshot(db, account, *, documents=False):
+def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id=None, before=None, root_limit=None):
     root_scope = (
         "c.document_id IN (SELECT id FROM visible_documents)" if documents else
         "c.paper_id IN (SELECT id FROM visible_papers) "
         "AND c.paper_id NOT IN (SELECT paper_id FROM archived_papers)"
     )
+    if paper_id is not None:
+        root_scope += " AND c.paper_id=:paper_filter"
+    if document_id is not None:
+        root_scope += " AND c.document_id=:document_filter"
+    if before is not None:
+        root_scope += " AND c.id<:before"
+    root_order = " ORDER BY c.id DESC LIMIT :root_limit" if root_limit is not None else ""
     items = [dict(row) for row in db.execute(
-        sharing.PAPER_SCOPE + f""", visible_comments AS (
-            SELECT c.* FROM comments c
-            WHERE {root_scope} AND c.parent_id IS NULL AND {comment_access_sql()}
+        sharing.PAPER_SCOPE + f""", root_comments AS (
+            SELECT c.* FROM comments c WHERE {root_scope}
+            AND c.parent_id IS NULL AND {comment_access_sql()}{root_order}
+        ), visible_comments AS (
+            SELECT * FROM root_comments
             UNION ALL
             SELECT c.* FROM comments c JOIN visible_comments parent ON c.parent_id=parent.id
             WHERE {comment_access_sql()}
@@ -244,7 +293,7 @@ def comment_snapshot(db, account, *, documents=False):
         FROM visible_comments c LEFT JOIN comment_authors a ON a.comment_id=c.id
         LEFT JOIN accounts u ON a.account_id=u.id ORDER BY c.id
         """,
-        sharing.viewer_params(account),
+        sharing.viewer_params(account, paper_filter=paper_id, document_filter=document_id, before=before, root_limit=root_limit),
     )]
     sharing.attach_recipients(db, "comment", items, account, "author_id")
     for comment in items:

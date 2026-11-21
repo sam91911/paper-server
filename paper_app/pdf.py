@@ -95,6 +95,23 @@ def extract_pdf(payload):
 
 def import_pdf(database, filename, payload, account, audience, recipients=None):
     digest = hashlib.sha256(payload).hexdigest()
+    target = database.absolute().with_name(database.name + ".pdfs") / digest / filename
+    existed = target.exists()
+    try:
+        return _import_pdf(database, filename, payload, account, audience, recipients)
+    except Exception:
+        # Serialize cleanup against other imports. Never remove a file another
+        # successful transaction has already recorded, or one that predated us.
+        if not existed and target.exists():
+            with library.connect(database) as db:
+                db.execute("BEGIN IMMEDIATE")
+                if not db.execute("SELECT 1 FROM papers WHERE path=?", (str(target),)).fetchone():
+                    target.unlink(missing_ok=True)
+        raise
+
+
+def _import_pdf(database, filename, payload, account, audience, recipients=None):
+    digest = hashlib.sha256(payload).hexdigest()
     rows, has_text = extract_pdf(payload)
     with library.connect(database) as db:
         db.execute("BEGIN IMMEDIATE")

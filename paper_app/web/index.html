@@ -59,6 +59,11 @@
     <label>From year <input id="paper-year-from" type="number" min="1000" max="9999" placeholder="Any"></label>
     <label>Through year <input id="paper-year-to" type="number" min="1000" max="9999" placeholder="Any"></label>
     <label class="paper-picker">Paper details <select id="library-paper"></select></label>
+    <div class="paper-pages" aria-label="Paper list pages">
+      <button id="paper-page-previous" type="button">Previous</button>
+      <span id="paper-page-status" role="status"></span>
+      <button id="paper-page-next" type="button">Next</button>
+    </div>
     <form id="create-group">
       <label>New group <input name="name" required maxlength="120"></label>
       <button>Create group</button>
@@ -133,6 +138,7 @@
     </details>
     <details>
       <summary id="comment-summary">Comments</summary>
+      <button id="older-comments" type="button" hidden>Load older threads</button>
       <div id="comments"></div>
       <p id="comment-sign-in" hidden><a href="/account">Sign in to post a comment</a>.</p>
       <form id="add-comment" hidden>
@@ -256,6 +262,7 @@
       </div>
       <details id="document-discussion" hidden>
         <summary id="document-comment-summary">Comments</summary>
+        <button id="older-document-comments" type="button" hidden>Load older threads</button>
         <div id="document-comments"></div>
         <form id="document-comment-form">
           <p id="document-reply-context" hidden></p>
@@ -309,6 +316,11 @@
   </details>
   <section>
     <h2 id="chart-title">Metric comparison</h2>
+    <div class="filters" aria-label="Result pages">
+      <button id="results-previous" type="button">Previous</button>
+      <span id="results-page" role="status"></span>
+      <button id="results-next" type="button">Next</button>
+    </div>
     <div id="chart" aria-labelledby="chart-title"></div>
   </section>
   <section>
@@ -326,6 +338,7 @@
   <a id="compare-link" href="/">Compare</a>
   <a id="papers-link" href="/papers">Papers</a>
   <a id="documents-link" href="/documents">Documents</a>
+  <a href="/experiments">Experiments</a>
   <a id="account-link" href="/account">Account</a>
 </nav>
 <dialog id="agent-dialog" aria-labelledby="agent-heading">
@@ -354,7 +367,10 @@
   <button type="button" id="copy-agent-check" class="secondary">Copy local tool check</button>
   <p id="copy-agent-status" role="status"></p>
 </dialog>
+<script src="/assets/api.js"></script>
 <script src="/assets/metrics.js"></script>
 <script src="/assets/library.js"></script>
+<script src="/assets/documents.js"></script>
+<script src="/assets/boot.js"></script>
 </body>
 </html>

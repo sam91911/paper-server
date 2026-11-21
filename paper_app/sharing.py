@@ -118,13 +118,21 @@ def set_recipients(db, kind, item_id, recipients):
 def attach_recipients(db, kind, items, account, owner_field="owner_id"):
     if not account:
         return items
-    for item in items:
-        if item.get(owner_field) == account["id"]:
-            item["recipients"] = [row["username"] for row in db.execute(
-                "SELECT a.username FROM item_grants g JOIN accounts a ON a.id=g.account_id "
-                "WHERE g.kind=? AND g.item_id=? ORDER BY a.username",
-                (kind, item["id"]),
-            )]
+    owned = {item["id"]: item for item in items if item.get(owner_field) == account["id"]}
+    for item in owned.values():
+        item["recipients"] = []
+    # Restrict the query to owned items in bounded batches; this avoids one
+    # SQL query per item without exposing grants on other people's items.
+    ids = list(owned)
+    for start in range(0, len(ids), 500):
+        batch = ids[start:start + 500]
+        placeholders = ','.join('?' for _ in batch)
+        for row in db.execute(
+            "SELECT g.item_id,a.username FROM item_grants g JOIN accounts a ON a.id=g.account_id "
+            f"WHERE g.kind=? AND g.item_id IN ({placeholders}) ORDER BY a.username",
+            (kind, *batch),
+        ):
+            owned[row["item_id"]]["recipients"].append(row["username"])
     return items
 
 
@@ -145,14 +153,15 @@ def document_for(db, account, document_id):
     ).fetchone()
 
 
-def documents_for(db, account, *, targets_only=False):
+def documents_for(db, account, *, targets_only=False, summaries=False):
     if targets_only:
         return [dict(row) for row in db.execute(
             "SELECT id,title FROM documents d WHERE " + access_sql("d.owner_id", "d.audience", "document", "d.id") + " ORDER BY title",
             viewer_params(account),
         )]
+    columns = "d.id,d.owner_id,d.audience,d.title,d.updated,d.revision" if summaries else "d.*"
     items = [dict(row) for row in db.execute(
-        f"SELECT d.*, a.username AS owner_name, {accounts.ROLE_SQL.format(alias='a')} AS owner_role "
+        f"SELECT {columns}, a.username AS owner_name, {accounts.ROLE_SQL.format(alias='a')} AS owner_role "
         "FROM documents d JOIN accounts a ON a.id=d.owner_id WHERE "
         + access_sql("d.owner_id", "d.audience", "document", "d.id") + " ORDER BY d.updated DESC, d.id DESC",
         viewer_params(account),
