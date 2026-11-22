@@ -13,7 +13,8 @@ dependencies = []
 google = ["google-auth[requests]>=2,<3"]
 
 [tool.setuptools.packages.find]
-include = ["paper_app*"]
+include = ["paper_app*", "paper_client*"]
+namespaces = false
 
 [tool.setuptools.package-data]
 paper_app = ["web/*.html", "web/*.css", "web/*.js"]

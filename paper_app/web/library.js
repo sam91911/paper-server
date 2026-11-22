@@ -981,7 +981,7 @@ let agentTarget;
 function refreshAgentCommand() {
   const windows = agentPlatform.value === "windows";
   const python = windows ? "py -3" : "python3";
-  element("copy-agent-check").dataset.command = `${python} -m paper_app.local_ai --check`;
+  element("copy-agent-check").dataset.command = `${python} -m paper_client --check`;
   const port = Number(location.port) || 8765;
   let target = agentTarget.kind === "paper" ? String(agentTarget.id) : `--${agentTarget.kind} ${agentTarget.id}`;
   if (agentTarget.kind !== "thread" && agentPosition.value && !agentPosition.validity.valid) {
@@ -993,11 +993,11 @@ function refreshAgentCommand() {
   if (agentTarget.kind === "document" && agentPosition.value) target += ` --line ${agentPosition.valueAsNumber}`;
   const localModel = windows ? '"C:\\models\\model.gguf"' : '"/path/to/model.gguf"';
   const options = agentEngine.value === "cloud" ? "--cloud" : `--model ${localModel}`;
-  agentCommand.value = `${python} -m paper_app.local_ai ${target} --port ${port} ${options}${agentPost.checked ? " --post" : ""}`;
+  agentCommand.value = `${python} -m paper_client ${target} --port ${port} ${options}${agentPost.checked ? " --post" : ""}`;
   element("copy-agent-command").disabled = false;
   element("agent-prerequisites").textContent = agentEngine.value === "cloud"
-    ? "Run from the project directory with a Cloud AI application key. Set PAPER_AI_CLOUD_URL and PAPER_AI_CLOUD_MODEL. The command asks before sending context to that provider."
-    : "Run from the project directory with a Local AI application key. Replace the model path with your GGUF file. Install llama-completion, and use pdftotext for PDFs.";
+    ? "Run on the computer with the paper client and a Cloud AI application key. Set PAPER_AI_CLOUD_URL and PAPER_AI_CLOUD_MODEL. The command asks before sending context to that provider."
+    : "Run on the computer with the paper client and a Local AI application key. Replace the model path with your GGUF file. Install llama-completion, and use pdftotext for PDFs.";
 }
 
 async function openAgent(kind, id, label, position = "") {

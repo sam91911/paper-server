@@ -35,19 +35,24 @@ Google verifies the account identity. The app creates a new member account with 
 
 ## Local and cloud AI reviews
 
-Use **Review with AI** on a paper, a document, or a comment thread to get a terminal command for Windows PowerShell, macOS, or Linux. The browser reports tools installed on the server host. Use **Copy local tool check** to check a different computer without signing in. Run the command from the project directory on the same computer as the server, or forward the library port to your computer.
+The **server** (`paper_app`) stores research data, enforces access rules, and serves the web UI and HTTP API. The **workstation client** (`paper_client`) fetches authorized context over that API, runs the model or calls the configured provider, and can post a comment. It can be installed on a separate computer using `python3 -m pip install ./paper_client` from a copy of this repository. For a source-only setup, copy the `paper_client` directory and run Python from its parent directory.
+
+Use **Review with AI** on a paper, a document, or a comment thread to get a terminal command for Windows PowerShell, macOS, or Linux. The browser reports tools installed on the server host. Run **Copy local tool check** on the workstation to check its tools without signing in. When the server is on another computer, forward its library port to a loopback port on the workstation and pass that port with `--port`.
 
 For local review, install `llama-completion` from llama.cpp and use a local GGUF model. PDF review also requires Poppler's `pdftotext`. Create a key as a **Local AI** account, then provide it when prompted. You can use `--username reviewer` to sign in with a password instead.
 
 ```sh
-python3 -m paper_app.local_ai 1 --page 2 --model /path/to/model.gguf
-python3 -m paper_app.local_ai --document 2 --model /path/to/model.gguf --post
-python3 -m paper_app.local_ai --thread 3 --model /path/to/model.gguf --post
+python3 -m paper_client --check
+python3 -m paper_client 1 --page 2 --model /path/to/model.gguf
+python3 -m paper_client --document 2 --model /path/to/model.gguf --post
+python3 -m paper_client --thread 3 --model /path/to/model.gguf --post
 ```
 
 For cloud review, use a **Cloud AI** account and select `--cloud` instead of `--model`. Set `PAPER_AI_CLOUD_URL` to your provider's HTTPS Chat Completions URL and `PAPER_AI_CLOUD_MODEL` to its model ID. The command prompts before sending the permitted context and prompts separately for the provider key. On Windows, run `py -3` instead of `python3`. [Chat Completions request format](https://developers.openai.com/api/reference/resources/chat)
 
 Commands preview the result unless you add `--post`. Posted comments default to owner-only. Thread reviews are always posted owner-only because the model may have read replies with different audiences. The agent can read only what its own account can access. Generated replies to a document appear in that document's discussion.
+
+The original `python3 -m paper_app.local_ai` command still works with a full installation.
 
 ## VS Code extension
 
@@ -75,6 +80,7 @@ Run `./run_paper_server.sh .paper-demo/papers.sqlite3` to open the populated exa
 - `paper_app/crossref.py` handles DOI lookup and title search.
 - `paper_app/metadata_sync.py` checks for missing metadata in the background.
 - `paper_app/web/` contains the HTML, CSS, and browser scripts.
+- `paper_client/` contains the standalone review client and workstation tool checks.
 - `paper_app/backup.py` and `paper_app/integrity.py` back up, restore, and check local data.
 
 ## Backup and restore

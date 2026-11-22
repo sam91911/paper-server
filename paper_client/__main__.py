@@ -1,0 +1,6 @@
+"""Run the workstation review client."""
+
+from .review import main
+
+if __name__ == "__main__":
+    main()
