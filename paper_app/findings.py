@@ -110,7 +110,7 @@ def _rows(db, document_id, discussions_only):
         "FROM research_findings f JOIN accounts a ON a.id=f.author_id "
         "WHERE (:document IS NULL OR f.document_id=:document) "
         "AND (:discussions=0 OR EXISTS (SELECT 1 FROM comments c WHERE c.finding_id=f.id)) ORDER BY f.id DESC",
-        {"document": document_id, "discussions": discussions_only},
+        {"document": document_id, "discussions": int(discussions_only)},
     )
 
 
@@ -179,8 +179,8 @@ def save(db, account, data):
     if old is None:
         finding_id = db.execute(
             "INSERT INTO research_findings(document_id,author_id,author_role,statement,kind,metric,value,unit,conditions,evidence)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)", (document_id, account["id"], account["role"], *values),
-        ).lastrowid
+            " VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING id", (document_id, account["id"], account["role"], *values),
+        ).fetchone()[0]
         return {"id": finding_id, "revision": 1}
     in_use = db.execute("""
         SELECT EXISTS (SELECT 1 FROM comments WHERE finding_id=:id)

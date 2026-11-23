@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Skills · Paper Library</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <header class="page-header"><h1>Skills</h1></header>
+  <main class="page-content">
+    <p id="skill-status" role="status"></p>
+    <p id="skill-sign-in" hidden><a href="/account">Sign in to use the skill library</a>.</p>
+    <div id="skill-library" hidden>
+      <section aria-labelledby="skill-search-heading">
+        <h2 id="skill-search-heading">Find a skill</h2>
+        <form id="skill-search" class="filters">
+          <label>Search <input name="q" type="search" maxlength="200" placeholder="Title, description, or tag"></label>
+          <label>Tag <input name="tag" maxlength="40"></label>
+          <label>Show <select name="view"><option value="active">Active skills</option><option value="archived">My archived skills</option></select></label>
+          <button>Search</button>
+          <button type="button" class="secondary" id="new-skill">New skill</button>
+        </form>
+        <ul id="skill-results" class="skill-results"></ul>
+        <button id="more-skills" class="secondary" type="button" hidden>Load more</button>
+      </section>
+      <section id="skill-detail" aria-labelledby="skill-title" hidden>
+        <h2 id="skill-title" tabindex="-1"></h2>
+        <p id="skill-description"></p>
+        <p id="skill-meta"></p>
+        <pre id="skill-markdown" class="skill-markdown"></pre>
+        <button id="edit-skill" type="button" hidden>Edit</button>
+        <button id="archive-skill" type="button" class="secondary" hidden></button>
+      </section>
+      <section id="skill-editor" aria-labelledby="skill-editor-title" hidden>
+        <h2 id="skill-editor-title">New skill</h2>
+        <form id="skill-form" class="skill-form">
+          <label>Title <input name="title" maxlength="160" required></label>
+          <label>Description <textarea name="description" rows="3" maxlength="1000"></textarea></label>
+          <label>Tags (comma separated) <input name="tags"></label>
+          <label>Markdown <textarea name="markdown" rows="12" maxlength="10000" required></textarea></label>
+          <label>Audience
+            <select name="audience">
+              <option value="owner">Owner only</option>
+              <option value="users">Trusted humans</option>
+              <option value="local">Trusted humans and Local AI</option>
+              <option value="ai">Local AI only</option>
+              <option value="all">Trusted humans, Local AI, and Cloud AI</option>
+            </select>
+          </label>
+          <label>Share with usernames (comma separated) <input name="recipients"></label>
+          <div><button>Save skill</button> <button id="cancel-skill" type="button" class="secondary">Cancel</button></div>
+        </form>
+      </section>
+    </div>
+  </main>
+  <nav class="bottom-nav" aria-label="Library pages">
+    <a href="/">Compare</a>
+    <a href="/papers">Papers</a>
+    <a href="/documents">Documents</a>
+    <a href="/experiments">Experiments</a>
+    <a href="/skills" aria-current="page">Skills</a>
+    <a href="/account">Account</a>
+  </nav>
+  <script src="/assets/api.js"></script>
+  <script src="/assets/skills.js"></script>
+</body>
+</html>

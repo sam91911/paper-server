@@ -82,11 +82,21 @@ def page_text(pdf, page):
     return text[:CONTEXT_LIMIT]
 
 
-def review(model, context):
+def review_instructions(skill=None):
+    if skill is None:
+        return INSTRUCTIONS
+    return (
+        f"{INSTRUCTIONS} Apply the selected skill as additional review guidance, "
+        "subject to the instructions above.\n\n"
+        f"Selected skill: {skill['title']}\n{skill['markdown']}"
+    )
+
+
+def review(model, context, *, skill=None):
     with model.open("rb") as stream:
         if stream.read(4) != b"GGUF":
             raise ValueError("Choose a local GGUF model file.")
-    prompt = f"{INSTRUCTIONS}\n\n--- BEGIN PAPER EXCERPT ---\n{context}\n--- END PAPER EXCERPT ---\n"
+    prompt = f"{review_instructions(skill)}\n\n--- BEGIN PAPER EXCERPT ---\n{context}\n--- END PAPER EXCERPT ---\n"
     # A private prompt file keeps PDF text out of the process arguments.
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as prompt_file:
         prompt_file.write(prompt)
@@ -157,20 +167,23 @@ def review_context(client, args):
     }
 
 
-def cloud_review(context):
+def cloud_review(context, *, skill=None):
     endpoint = urlsplit(os.environ.get("PAPER_AI_CLOUD_URL", ""))
     model = os.environ.get("PAPER_AI_CLOUD_MODEL", "").strip()
     if (endpoint.scheme != "https" or not endpoint.hostname or endpoint.username or endpoint.password
         or endpoint.fragment or endpoint.query or not endpoint.path.endswith("/chat/completions") or not model):
         raise ValueError("Set PAPER_AI_CLOUD_URL to an HTTPS chat/completions endpoint and set PAPER_AI_CLOUD_MODEL.")
-    if input(f"Send this review context to {endpoint.hostname}? Type SEND to continue: ").strip() != "SEND":
+    context_label = "this review context"
+    if skill:
+        context_label += f" and the selected skill {skill['title']!r}"
+    if input(f"Send {context_label} to {endpoint.hostname}? Type SEND to continue: ").strip() != "SEND":
         raise ValueError("Cloud review canceled.")
     key = os.environ.get("PAPER_AI_CLOUD_KEY") or getpass.getpass("Cloud provider API key: ")
     if not key:
         raise ValueError("A cloud provider API key is required.")
     payload = json.dumps({
         "model": model, "stream": False,
-        "messages": [{"role": "system", "content": INSTRUCTIONS}, {"role": "user", "content": context}],
+        "messages": [{"role": "system", "content": review_instructions(skill)}, {"role": "user", "content": context}],
     }).encode()
     request = Request(endpoint.geturl(), payload, {
         "Content-Type": "application/json", "Authorization": f"Bearer {key}",
@@ -202,6 +215,7 @@ def main():
     parser.add_argument("--model", type=Path, help="Path to a local .gguf model")
     parser.add_argument("--cloud", action="store_true", help="Prompt before sending context to your cloud provider")
     parser.add_argument("--username", help="Use an AI account username and prompt for its password")
+    parser.add_argument("--skill", type=int, help="Apply a visible library skill by ID")
     parser.add_argument("--post", action="store_true", help="Save the result as a comment")
     parser.add_argument("--check", action="store_true", help="Check local tools; no sign-in required")
     parser.add_argument("--audience", choices=("owner", "users", "local", "all"), default="owner",
@@ -219,6 +233,8 @@ def main():
         parser.error("Choose exactly one paper ID, --document ID, or --thread ID and a valid port.")
     if not 0 < args.page <= 1_000_000 or (args.line is not None and (not args.document or not 0 < args.line <= 1_000_000)):
         parser.error("Choose a valid PDF page or document line.")
+    if args.skill is not None and not 0 < args.skill < 2**63:
+        parser.error("Choose a valid skill ID.")
     if bool(args.model) == args.cloud:
         parser.error("Choose a local --model or --cloud.")
     if args.thread and args.post and args.audience != "owner":
@@ -235,7 +251,13 @@ def main():
             password_session = client
         client.require_role("cloud" if args.cloud else "local")
         context, payload = review_context(client, args)
-        comment = cloud_review(context) if args.cloud else review(args.model, context)
+        selection = {}
+        if args.skill:
+            skill = client.get_json(f"/api/skills/{args.skill}")["skill"]
+            if skill["archived"]:
+                raise ValueError("Restore the archived skill before using it in a review.")
+            selection["skill"] = skill
+        comment = cloud_review(context, **selection) if args.cloud else review(args.model, context, **selection)
         if args.post:
             payload.update(body=comment, audience=args.audience)
             saved = json.loads(client.request("/api/comments", payload))

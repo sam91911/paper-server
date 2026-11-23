@@ -11,6 +11,7 @@ import tarfile
 from pathlib import Path
 from threading import Thread
 
+from . import database as storage
 from . import experiments, library, tools_catalog
 
 LOG_LIMIT = 1_000_000
@@ -49,7 +50,7 @@ def _validate(db, job):
 
 def execute(database, job_id):
     with library.connect(database) as db:
-        db.execute('BEGIN IMMEDIATE')
+        storage.begin(db, write=True)
         job = db.execute('SELECT * FROM tool_jobs WHERE id=?', (job_id,)).fetchone()
         if not job or job['status'] != 'approved':
             return
@@ -127,7 +128,7 @@ def execute(database, job_id):
                 if process and process.poll() is None:
                     process.kill(); process.wait()
         with library.connect(database) as db:
-            db.execute('BEGIN IMMEDIATE')
+            storage.begin(db, write=True)
             current = db.execute('SELECT * FROM tool_jobs WHERE id=?', (job_id,)).fetchone()
             account, _, _ = _validate(db, current)
             for filename, payload in outputs:

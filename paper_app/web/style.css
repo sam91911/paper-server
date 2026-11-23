@@ -46,7 +46,7 @@ a { color: var(--accent-dark); text-underline-offset: .18em; }
   z-index: 10;
   inset: auto 0 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: .25rem;
   justify-items: stretch;
   padding: .45rem max(.4rem, calc((100vw - 44rem) / 2)) calc(.45rem + env(safe-area-inset-bottom));
@@ -410,4 +410,15 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
 .goal-brief-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.skill-form { display: grid; gap: .9rem; max-width: 50rem; }
+.skill-results { padding-left: 0; list-style: none; }
+.skill-results li + li { margin-top: .7rem; }
+.skill-results p { margin: .25rem 0; }
+.skill-markdown { white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem; background: var(--soft); }
+
+@media (max-width: 32rem) {
+  .bottom-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .page-content { padding-bottom: calc(6.75rem + env(safe-area-inset-bottom)); }
 }

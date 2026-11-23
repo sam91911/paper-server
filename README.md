@@ -24,7 +24,7 @@ Requires Python 3.11 or newer and Poppler's `pdftotext`. Citing PDF pages also u
 ./run_paper_server.sh /path/to/papers.sqlite3
 ```
 
-Use the bottom bar to switch between [Compare](http://127.0.0.1:8765/), [Papers](http://127.0.0.1:8765/papers), [Documents](http://127.0.0.1:8765/documents), [Experiments](http://127.0.0.1:8765/experiments), and [Account](http://127.0.0.1:8765/account). Press Ctrl+C to stop the server.
+Use the bottom bar to switch between [Compare](http://127.0.0.1:8765/), [Papers](http://127.0.0.1:8765/papers), [Documents](http://127.0.0.1:8765/documents), [Experiments](http://127.0.0.1:8765/experiments), [Skills](http://127.0.0.1:8765/skills), and [Account](http://127.0.0.1:8765/account). Press Ctrl+C to stop the server.
 
 Anyone can select **Create a human account** on the **Account** page. New members can create their own items and read items shared with their username. An optional invitation gives access to trusted-human audiences. The operator can also change the tier later. Use `local` or `cloud` for AI accounts and `member` for access by direct sharing only.
 
@@ -44,6 +44,31 @@ Use **Account** to sign in with your username and password or create and revoke 
 Crossref search groups results by publisher, then journal or conference such as JSSC or ISSCC, with the newest papers first in each venue. Related-paper searches accept a main topic, optional keyword groups, a publisher name, and an inclusive year range. The paper library also filters local records by publisher and year.
 
 The server checks for missing bibliographic fields in the background and fills blank fields when it finds a match. It uses a stored DOI or one it can identify on the first page of a verified PDF. Under **Paper file**, owners can opt in to sending a stored title or filename to Crossref when DOI lookup is insufficient. Title-based autofill requires one exact normalized title match. PDF bytes are processed locally.
+
+## PostgreSQL
+
+SQLite remains the default. To run the library on PostgreSQL 16, create a dedicated empty UTF-8 database and use a role that owns it. Schema setup installs PostgreSQL's bundled `citext` extension for case-insensitive names. The library stores research rows and uploaded artifact bytes in PostgreSQL. Managed PDFs live in the server's filesystem.
+
+```sh
+python3 -m pip install '.[postgres]'
+export PAPER_DATABASE_URL='postgresql://paper@localhost/paper_library'
+export PAPER_PDF_DIR='/absolute/path/to/paper-library-pdfs'
+./run_paper_server.sh
+```
+
+Use PostgreSQL's normal credential configuration, such as a private `.pgpass` file. With these environment variables, omit `--database` from server commands, including account administration and CSV import. The application initializes or upgrades the PostgreSQL schema at startup.
+
+### Migrate a SQLite library
+
+Stop the SQLite server. Set `PAPER_DATABASE_URL` to a new empty database and `PAPER_PDF_DIR` to a new directory path. Run the migration before starting the PostgreSQL server.
+
+```sh
+python3 -m paper_app.migrate --from-sqlite /path/to/papers.sqlite3
+python3 -m paper_app.integrity
+./run_paper_server.sh
+```
+
+The importer preserves record IDs, account credentials and keys, sharing grants, research history, and artifact bytes. It verifies copied PDFs by hash and rewrites their stored paths. External file references continue to point to their original locations. To roll back, stop the PostgreSQL server, unset the two environment variables, and start the original SQLite library. Writes made after cutover stay in PostgreSQL.
 
 ## Optional Google sign-in
 
@@ -71,6 +96,47 @@ For cloud review, use a **Cloud AI** account and select `--cloud` instead of `--
 Commands preview the result unless you add `--post`. Posted comments default to owner-only. Thread reviews are always posted owner-only because the model may have read replies with different audiences. The agent can read only what its own account can access. Generated replies to a document appear in that document's discussion.
 
 The original `python3 -m paper_app.local_ai` command still works with a full installation.
+
+## HTTP API for Local AI and Cloud AI
+
+Open [the OpenAPI contract](http://127.0.0.1:8765/api/openapi.json) on the machine or forwarded loopback port running the library. It includes paper search and PDF access, documents and comments, findings and goals, experiments and artifact versions, and skills.
+
+Create a separate application key for each AI account on the **Account** page. Set `PAPER_APP_KEY` in the workstation client environment to the key for the account you want to use. Local and cloud clients use the same endpoints. In cloud mode, the workstation calls the library and asks before sending review context to the model provider.
+
+```sh
+# Run with a Local AI account's key to search papers visible to that account
+curl -fsS -H "Authorization: Bearer $PAPER_APP_KEY" \
+  'http://127.0.0.1:8765/api/paper-catalog?q=benchmark'
+
+# Run with a Cloud AI account's key to read a document shared with that account
+curl -fsS -H "Authorization: Bearer $PAPER_APP_KEY" \
+  'http://127.0.0.1:8765/api/document?id=1'
+
+# Post a comment using the same Cloud AI key
+curl -fsS -H "Authorization: Bearer $PAPER_APP_KEY" -H 'Content-Type: application/json' \
+  -d '{"document_id":1,"body":"How was the baseline measured?","audience":"owner"}' \
+  'http://127.0.0.1:8765/api/comments'
+```
+
+Each key uses its account's permissions. A document, paper, or skill shared with Local AI is visible to a Cloud AI account only if the Cloud AI account has an applicable grant.
+
+## Skills
+
+Use **Skills** to create and edit reusable Markdown guidance. Human, Local AI, and Cloud AI accounts can manage their own skills and share them with named accounts or an audience. New skills are owner-only by default. Archive a skill to remove it from active results, and restore it from **My archived skills**.
+
+API clients search visible titles, descriptions, and tags with `GET /api/skills?q=...&tag=...`, then fetch the selected Markdown with `GET /api/skills/{id}`. Use the returned `next_after` to request another page. To update a skill, use `POST /api/skills` with `action: "update"`, the skill ID, its current revision, and the skill fields. For archive or restore, send the action, ID, and revision. A stale revision returns HTTP 409. Only the owner can list archived skills using `archived=1`.
+
+```sh
+curl -fsS -H "Authorization: Bearer $PAPER_APP_KEY" \
+  'http://127.0.0.1:8765/api/skills?tag=methods'
+curl -fsS -H "Authorization: Bearer $PAPER_APP_KEY" \
+  'http://127.0.0.1:8765/api/skills/4'
+
+python3 -m paper_client --document 1 --model /path/to/model.gguf --skill 4
+python3 -m paper_client --document 1 --cloud --skill 4
+```
+
+Select the appropriate account key before running each review. In cloud mode the confirmation names the selected skill before sending its Markdown to the provider.
 
 ## VS Code extension
 
@@ -156,7 +222,7 @@ Run `./run_paper_server.sh .paper-demo/papers.sqlite3` to open the populated exa
 - `run_paper_server.sh` starts the loopback server.
 - `paper_app/server.py` handles HTTP routes, uploads, and CSV exports.
 - `paper_app/*_routes.py` contains account, document, comment, and paper write operations.
-- `paper_app/library.py` manages SQLite data and CSV imports.
+- `paper_app/library.py` manages SQLite and PostgreSQL data and CSV imports.
 - `paper_app/pdf.py` extracts metrics and stores imported PDFs.
 - `paper_app/crossref.py` handles DOI lookup and title search.
 - `paper_app/metadata_sync.py` checks for missing metadata in the background.
@@ -175,9 +241,23 @@ python3 -m paper_app.backup restore /path/to/backup /path/to/restored.sqlite3
 
 The command holds a SQLite write lock while copying the database and verified PDF files, so imports and other writes wait until the backup finishes. It verifies SHA-256 hashes for managed PDFs and uploaded artifact versions when creating and restoring a backup. The SQLite snapshot includes research goals, briefs, decisions, and uploaded artifacts. Keep the backup private because it contains account credentials and library content. Test the restored library before relying on a backup. Back up externally referenced files separately.
 
+### PostgreSQL backup and restore
+
+Stop the app and any processes that write to the library. Verify the database's stored hashes, then back up the database and the managed PDF directory together. Use a PostgreSQL client at least as recent as the database server.
+
+```sh
+python3 -m paper_app.integrity
+umask 077
+backup_dir=$(mktemp -d)
+pg_dump --format=custom --no-owner --dbname="$PAPER_DATABASE_URL" --file="$backup_dir/library.dump"
+cp -a -- "$PAPER_PDF_DIR" "$backup_dir/pdfs"
+```
+
+If the library has never stored a managed PDF, the PDF directory may be absent and the database archive is sufficient for managed content. Back up externally referenced files separately. To restore, use `pg_restore --exit-on-error --single-transaction --no-owner --dbname="$PAPER_DATABASE_URL" "$backup_dir/library.dump"` against a new empty database. Put the verified PDF copy at the same absolute `PAPER_PDF_DIR` path used by the source. Run `python3 -m paper_app.integrity` against the restored database and open a PDF and artifact before relying on the restore.
+
 ## Development
 
-The core server uses the Python standard library. For the optional Google sign-in dependencies, install the project with `python3 -m pip install '.[google]'`. Install Poppler separately to provide `pdftotext`. The server warns at startup if it is missing; PDF import requires it.
+SQLite mode uses the Python standard library. PostgreSQL mode uses Psycopg 3. For the optional Google sign-in dependencies, install the project with `python3 -m pip install '.[google]'`. Install Poppler separately to provide `pdftotext`. The server warns at startup if it is missing; PDF import requires it.
 
 Run the checks locally:
 
@@ -186,6 +266,8 @@ python3 -m compileall -q paper_app
 python3 -m unittest discover -s tests -v
 for test in tests/*.mjs; do node "$test"; done
 ```
+
+Set `PAPER_TEST_POSTGRES_URL` to a PostgreSQL test server and install `.[postgres]` to run the PostgreSQL integration tests. The test role needs permission to create and drop temporary databases. Install `pg_dump` and `pg_restore` to include the PostgreSQL restore test.
 
 The JavaScript checks require Node.js; the application itself does not. To reproduce the synthetic snapshot benchmark, run `python3 -m scripts.benchmark_snapshots`.
 

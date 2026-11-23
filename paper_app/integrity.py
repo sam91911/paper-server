@@ -2,7 +2,10 @@
 import argparse
 import hashlib
 import sqlite3
+from contextlib import closing
 from pathlib import Path
+
+from . import database as storage, library
 
 
 def bad_artifacts(db):
@@ -24,13 +27,24 @@ def bad_artifacts(db):
 
 
 def check(database):
-    database = database.resolve(strict=True)
-    directory = database.with_name(database.name + '.pdfs')
-    with sqlite3.connect(f'{database.as_uri()}?mode=ro', uri=True) as db:
-        rows = db.execute('SELECT id,path,sha256 FROM papers WHERE sha256 IS NOT NULL').fetchall()
-        sqlite_ok = db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
-        foreign_keys_ok = not db.execute('PRAGMA foreign_key_check').fetchone()
-        artifacts = bad_artifacts(db)
+    if isinstance(database, storage.PostgreSQL):
+        with library.connect(database) as db:
+            storage.begin(db)
+            rows = db.execute("SELECT id,path,sha256 FROM papers WHERE sha256 IS NOT NULL").fetchall()
+            artifacts = [row[0] for row in db.execute(
+                "SELECT id FROM research_versions WHERE (sha256 IS NOT NULL OR content IS NOT NULL) "
+                "AND (sha256 IS NULL OR content IS NULL OR sha256<>encode(sha256(content),'hex')) ORDER BY id"
+            )]
+        database_ok = True
+    else:
+        database = database.resolve(strict=True)
+        with closing(sqlite3.connect(f'{database.as_uri()}?mode=ro', uri=True)) as db:
+            rows = db.execute('SELECT id,path,sha256 FROM papers WHERE sha256 IS NOT NULL').fetchall()
+            sqlite_ok = db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+            foreign_keys_ok = not db.execute('PRAGMA foreign_key_check').fetchone()
+            database_ok = sqlite_ok and foreign_keys_ok
+            artifacts = bad_artifacts(db)
+    directory = storage.pdf_directory(database)
     referenced = set()
     missing, changed = [], []
     for paper_id, path, expected in rows:
@@ -45,17 +59,17 @@ def check(database):
         if actual != expected:
             changed.append(paper_id)
     orphans = sorted(str(p) for p in directory.glob('*/*') if p.is_file() and p.absolute() not in referenced)
-    return {'database_ok': sqlite_ok and foreign_keys_ok, 'missing': missing, 'changed': changed,
+    return {'database_ok': database_ok, 'missing': missing, 'changed': changed,
             'orphans': orphans, 'changed_artifacts': artifacts}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('database', type=Path)
+    parser.add_argument('database', nargs='?', type=Path)
     args = parser.parse_args()
     try:
-        result = check(args.database)
-    except (OSError, sqlite3.Error) as error:
+        result = check(storage.configuration(args.database))
+    except storage.ERRORS + (OSError, ValueError) as error:
         parser.exit(1, f'Integrity check failed: {error}\n')
     print('Database:', 'OK' if result['database_ok'] else 'FAILED')
     problems = ('missing', 'changed', 'orphans', 'changed_artifacts')

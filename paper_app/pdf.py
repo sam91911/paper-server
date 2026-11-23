@@ -8,6 +8,7 @@ import tempfile
 from decimal import Decimal
 from pathlib import Path
 
+from . import database as storage
 from . import library, sharing
 
 NUMBER = r"[+−-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+−-]?\d+)?"
@@ -95,7 +96,7 @@ def extract_pdf(payload):
 
 def import_pdf(database, filename, payload, account, audience, recipients=None):
     digest = hashlib.sha256(payload).hexdigest()
-    target = database.absolute().with_name(database.name + ".pdfs") / digest / filename
+    target = storage.pdf_directory(database) / digest / filename
     existed = target.exists()
     try:
         return _import_pdf(database, filename, payload, account, audience, recipients)
@@ -104,7 +105,7 @@ def import_pdf(database, filename, payload, account, audience, recipients=None):
         # successful transaction has already recorded, or one that predated us.
         if not existed and target.exists():
             with library.connect(database) as db:
-                db.execute("BEGIN IMMEDIATE")
+                storage.begin(db, write=True)
                 if not db.execute("SELECT 1 FROM papers WHERE path=?", (str(target),)).fetchone():
                     target.unlink(missing_ok=True)
         raise
@@ -114,7 +115,7 @@ def _import_pdf(database, filename, payload, account, audience, recipients=None)
     digest = hashlib.sha256(payload).hexdigest()
     rows, has_text = extract_pdf(payload)
     with library.connect(database) as db:
-        db.execute("BEGIN IMMEDIATE")
+        storage.begin(db, write=True)
         existing = db.execute("SELECT id, path FROM papers WHERE sha256=?", (digest,)).fetchone()
         if existing:
             sharing.paper_for(db, existing["id"], account, owner_only=True)
@@ -135,8 +136,8 @@ def _import_pdf(database, filename, payload, account, audience, recipients=None)
 
         if not existing:
             sharing.recipient_ids(db, recipients)
-        directory = database.absolute().with_name(database.name + ".pdfs") / digest
-        directory.parent.mkdir(mode=0o700, exist_ok=True)
+        directory = storage.pdf_directory(database) / digest
+        directory.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         directory.mkdir(mode=0o700, exist_ok=True)
         target = Path(existing["path"]) if existing else directory / filename
         if target.parent != directory:

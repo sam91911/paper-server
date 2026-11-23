@@ -11,10 +11,28 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - run: python -m compileall -q paper_app
       - run: python -m unittest discover -s tests -v
-      - run: node tests/test_metrics.mjs
-      - run: node tests/test_comments.mjs
-      - run: node tests/test_boot.mjs
-      - run: node tests/test_document_comments.mjs
-      - run: node tests/test_document_content.mjs
-      - run: node tests/test_papers.mjs
-      - run: node tests/test_experiments.mjs
+      - run: for test in tests/*.mjs; do node "$test" || exit; done
+  postgres:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PAPER_TEST_POSTGRES_URL: postgresql://postgres:test-only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: sudo apt-get update && sudo apt-get install -y poppler-utils postgresql-client-16
+      - run: python -m pip install '.[postgres]'
+      - run: python -m unittest discover -s tests -p test_postgres.py -v

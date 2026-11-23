@@ -3,13 +3,15 @@
 from . import accounts
 
 AUDIENCES = ("owner", "users", "local", "all", "ai")
-SCHEMA = """
+GRANTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS item_grants (
-    kind TEXT NOT NULL CHECK (kind IN ('paper','document','comment')),
+    kind TEXT NOT NULL CHECK (kind IN ('paper','document','comment','skill')),
     item_id INTEGER NOT NULL,
     account_id INTEGER NOT NULL REFERENCES accounts(id),
     PRIMARY KEY (kind,item_id,account_id)
 );
+"""
+SCHEMA = GRANTS_SCHEMA + """
 CREATE TABLE IF NOT EXISTS paper_access (
     paper_id INTEGER PRIMARY KEY REFERENCES papers(id),
     owner_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -48,6 +50,12 @@ PAPER_SCOPE = f"""
 
 
 def initialize(db):
+    grants_sql, = db.execute("SELECT sql FROM sqlite_schema WHERE name='item_grants'").fetchone()
+    if "'skill'" not in grants_sql:
+        db.execute("ALTER TABLE item_grants RENAME TO old_item_grants")
+        db.execute(GRANTS_SCHEMA)
+        db.execute("INSERT INTO item_grants SELECT * FROM old_item_grants")
+        db.execute("DROP TABLE old_item_grants")
     for table in ("paper_access", "documents"):
         sql, = db.execute("SELECT sql FROM sqlite_schema WHERE name=?", (table,)).fetchone()
         if "'local'" in sql:
@@ -182,9 +190,9 @@ def save_document(db, account, data):
     document_id = data.get("document_id")
     if document_id is None:
         document_id = db.execute(
-            "INSERT INTO documents(title,markdown,audience,owner_id) VALUES (?,?,?,?)",
+            "INSERT INTO documents(title,markdown,audience,owner_id) VALUES (?,?,?,?) RETURNING id",
             (*values, account["id"]),
-        ).lastrowid
+        ).fetchone()[0]
     elif type(document_id) is not int:
         raise ValueError("Choose a document.")
     else:

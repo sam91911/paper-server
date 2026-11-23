@@ -193,9 +193,9 @@ def save_experiment(db, account, data):
             raise sharing.AccessDenied
     if item_id is None:
         item_id = db.execute(
-            'INSERT INTO experiments(owner_id,title,description,paper_id,audience,research_document_id) VALUES (?,?,?,?,?,?)',
+            'INSERT INTO experiments(owner_id,title,description,paper_id,audience,research_document_id) VALUES (?,?,?,?,?,?) RETURNING id',
             (account['id'], title, description, paper_id, audience, document_id),
-        ).lastrowid
+        ).fetchone()[0]
     else:
         if data.get('revision') != row['revision']:
             raise sharing.EditConflict('This experiment changed. Reload it before saving.')
@@ -233,9 +233,9 @@ def save_run(db, account, data):
     if run_id is None:
         return db.execute(
             'INSERT INTO experiment_runs(experiment_id,owner_id,title,description,status,audience,methods,settings)'
-            ' VALUES (?,?,?,?,?,?,?,?)',
+            ' VALUES (?,?,?,?,?,?,?,?) RETURNING id',
             (experiment_id, account['id'], title, description, status, audience, methods, settings),
-        ).lastrowid
+        ).fetchone()[0]
     if row['experiment_id'] != experiment_id:
         raise sharing.AccessDenied
     if data.get('revision') != row['revision']:
@@ -269,8 +269,8 @@ def save_item(db, account, data, content=None):
     audience = _audience(data.get('audience'))
     item_id = data.get('id')
     if item_id is None:
-        item_id = db.execute('INSERT INTO research_items(experiment_id,run_id,owner_id,kind,title,audience) VALUES (?,?,?,?,?,?)',
-                             (experiment_id, run_id, account['id'], kind, title, audience)).lastrowid
+        item_id = db.execute('INSERT INTO research_items(experiment_id,run_id,owner_id,kind,title,audience) VALUES (?,?,?,?,?,?) RETURNING id',
+                             (experiment_id, run_id, account['id'], kind, title, audience)).fetchone()[0]
     else:
         old = require_item(db, item_id, account, edit=True)
         if (old['experiment_id'], old['run_id'], old['kind']) != (experiment_id, run_id, kind):

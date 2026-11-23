@@ -4,14 +4,15 @@ import hashlib
 import hmac
 import re
 import secrets
-import sqlite3
 import time
 from http.cookies import CookieError, SimpleCookie
+
+from . import database as storage
 
 COOKIE = "paper_session"
 ROLES = ("user", "member", "local", "cloud")
 ROLE_SQL = """CASE WHEN {alias}.role = 'user' THEN
-    CASE WHEN {alias}.trusted THEN 'user' ELSE 'member' END ELSE {alias}.ai_location END"""
+    CASE WHEN {alias}.trusted=1 THEN 'user' ELSE 'member' END ELSE {alias}.ai_location END"""
 SESSION_SECONDS = 7 * 24 * 60 * 60
 
 SCHEMA = """
@@ -139,7 +140,7 @@ def register_human(db, data):
     try:
         create_account(db, data.get("username"), data.get("password"), "user",
                        display_name=person_name(data.get("display_name")), email=email, trusted=bool(token))
-    except sqlite3.IntegrityError as error:
+    except storage.INTEGRITY_ERRORS as error:
         raise ValueError("That username or email address is already in use.") from error
 
 
@@ -189,8 +190,8 @@ def suggest_usernames(db, query):
     pattern = query.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
     return [dict(row) for row in db.execute(
         "SELECT username,display_name FROM accounts "
-        "WHERE username LIKE ? ESCAPE '!' OR display_name LIKE ? ESCAPE '!' "
-        "ORDER BY (username LIKE ? ESCAPE '!') DESC,username LIMIT 8",
+        "WHERE LOWER(username) LIKE LOWER(?) ESCAPE '!' OR LOWER(display_name) LIKE LOWER(?) ESCAPE '!' "
+        "ORDER BY (LOWER(username) LIKE LOWER(?) ESCAPE '!') DESC,username LIMIT 8",
         (pattern, pattern, pattern),
     )]
 
@@ -207,13 +208,13 @@ def create_account(db, username, password, role, *, display_name="", email=None,
     salt = secrets.token_bytes(16)
     db.execute(
         "INSERT INTO accounts(username,password_hash,salt,role,ai_location,display_name,email,trusted) VALUES (?,?,?,?,?,?,?,?)",
-        (username, password_hash(password, salt), salt, *role_fields(role), display_name, email, trusted and role != "member"),
+        (username, password_hash(password, salt), salt, *role_fields(role), display_name, email, int(trusted and role != "member")),
     )
 
 
 def set_role(db, username, role):
     if not db.execute("UPDATE accounts SET role=?,ai_location=?,trusted=? WHERE username=?",
-                      (*role_fields(role), role != "member", identity(username))).rowcount:
+                      (*role_fields(role), int(role != "member"), identity(username))).rowcount:
         raise ValueError("Account not found.")
     for table in ("sessions", "application_keys"):
         db.execute(f"DELETE FROM {table} WHERE account_id=(SELECT id FROM accounts WHERE username=?)", (username.strip(),))

@@ -143,7 +143,7 @@ def _brief_markdown(goal, brief):
 
 def _record_change(db, account, goal, action, *, priority=None, selected=None, deferred=None):
     priority = goal["priority"] if priority is None else priority
-    selected = goal["selected"] if selected is None else selected
+    selected = goal["selected"] if selected is None else int(selected)
     deferred = goal["deferred"] if deferred is None else deferred
     revision = goal["revision"] + 1
     db.execute("UPDATE research_goals SET priority=?,selected=?,deferred=?,revision=? WHERE id=?",
@@ -161,10 +161,10 @@ def _proposal(db, account, document, data):
     for finding_id in ids:
         findings.require_finding(db, account, document["id"], finding_id)
     goal_id = db.execute(
-        "INSERT INTO research_goals(document_id,author_id,author_role,question,rationale,uncertainty) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO research_goals(document_id,author_id,author_role,question,rationale,uncertainty) VALUES (?,?,?,?,?,?) RETURNING id",
         (document["id"], account["id"], account["role"], _text(data, "question", 160),
          _text(data, "rationale"), _text(data, "uncertainty")),
-    ).lastrowid
+    ).fetchone()[0]
     db.executemany("INSERT INTO research_goal_evidence(goal_id,finding_id) VALUES (?,?)",
                    [(goal_id, finding_id) for finding_id in ids])
     return {"id": goal_id, "revision": 1}
@@ -178,7 +178,8 @@ def _draft(db, account, goal, data):
     brief_id = db.execute("""
         INSERT INTO research_goal_briefs(goal_id,author_id,author_role,stage,baseline_id,approach,criterion,conditions,budget)
         VALUES (?,?,?,'feasibility',?,?,?,?,?)
-    """, (goal["id"], account["id"], account["role"], baseline["id"], *values)).lastrowid
+        RETURNING id
+    """, (goal["id"], account["id"], account["role"], baseline["id"], *values)).fetchone()[0]
     return {"id": goal["id"], "brief_id": brief_id}
 
 
@@ -254,8 +255,9 @@ def _decision(db, account, goal, brief, data):
     decision_id = db.execute("""
         INSERT INTO research_goal_decisions(brief_id,run_id,result_id,author_id,outcome,next_step,rationale,evidence)
         VALUES (?,?,?,?,?,?,?,?)
+        RETURNING id
     """, (brief["id"], run["id"], result["id"], account["id"], outcome, next_step,
-          rationale, json.dumps(snapshot))).lastrowid
+          rationale, json.dumps(snapshot))).fetchone()[0]
     if next_step == "design":
         db.execute("""
             INSERT INTO research_goal_briefs(goal_id,author_id,author_role,stage,approach,baseline_id,criterion,
@@ -311,7 +313,8 @@ def update(db, account, data):
         INSERT INTO research_goal_briefs(goal_id,author_id,author_role,stage,approach,criterion,
                                          conditions,budget,baseline_id,origin_decision_id)
         VALUES (?,?,?,'design',?,?,?,?,?,?)
-    """, (goal["id"], account["id"], account["role"], *values, baseline["id"], brief["origin_decision_id"])).lastrowid
+        RETURNING id
+    """, (goal["id"], account["id"], account["role"], *values, baseline["id"], brief["origin_decision_id"])).fetchone()[0]
     return {"id": goal["id"], "brief_id": new_id}
 
 

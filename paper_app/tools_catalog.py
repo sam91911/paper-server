@@ -56,8 +56,8 @@ def register(db, owner, data):
     ):
         raise ValueError('Provide a fixed executable and argument list.')
     audience = sharing.validate_audience(data.get('audience', 'owner'))
-    return db.execute('INSERT INTO research_tools(owner_id,name,version,description,instructions,audience,image_digest,command_json) VALUES (?,?,?,?,?,?,?,?)',
-                      (owner['id'], name, version, description, instructions, audience, image, json.dumps(command))).lastrowid
+    return db.execute('INSERT INTO research_tools(owner_id,name,version,description,instructions,audience,image_digest,command_json) VALUES (?,?,?,?,?,?,?,?) RETURNING id',
+                      (owner['id'], name, version, description, instructions, audience, image, json.dumps(command))).fetchone()[0]
 
 
 def require_tool(db, tool_id, account):
@@ -95,8 +95,8 @@ def create_job(db, account, data):
             'command': json.loads(tool['command_json']), 'inputs': inputs}
     request = json.dumps(spec, sort_keys=True, separators=(',', ':'))
     digest = hashlib.sha256(request.encode()).hexdigest()
-    return db.execute('INSERT INTO tool_jobs(experiment_id,run_id,tool_id,requester_id,request_json,request_hash) VALUES (?,?,?,?,?,?)',
-                      (run['experiment_id'], run_id, tool_id, account['id'], request, digest)).lastrowid
+    return db.execute('INSERT INTO tool_jobs(experiment_id,run_id,tool_id,requester_id,request_json,request_hash) VALUES (?,?,?,?,?,?) RETURNING id',
+                      (run['experiment_id'], run_id, tool_id, account['id'], request, digest)).fetchone()[0]
 
 
 def approve_job(db, approver, job_id):

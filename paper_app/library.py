@@ -1,4 +1,4 @@
-"""SQLite storage for papers, metrics, and library organization."""
+"""Database storage for papers, metrics, and library organization."""
 
 import csv
 import json
@@ -9,9 +9,11 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import accounts, experiments, findings, goals, google_signin, sharing, tools_catalog
+from . import database as storage
+from . import accounts, experiments, findings, goals, google_signin, sharing, skills, tools_catalog
 
 FIELDS = ("paper", "page", "metric", "value", "unit", "conditions", "evidence")
+METRIC_COLUMNS = "m.paper_id,m.page,m.metric,m.value,m.unit,m.conditions,m.evidence"
 METADATA = ("doi", "title", "authors", "year", "venue", "publisher", "source")
 
 COMMENT_COLUMNS = (
@@ -77,6 +79,10 @@ CREATE TABLE IF NOT EXISTS memberships (
 
 @contextmanager
 def connect(path):
+    if isinstance(path, storage.PostgreSQL):
+        with storage.connect_postgres(path) as db:
+            yield db
+        return
     if not Path(path).exists():
         descriptor = os.open(path, os.O_CREAT | os.O_WRONLY, 0o600)
         os.close(descriptor)
@@ -92,8 +98,12 @@ def connect(path):
 
 def initialize(path):
     with connect(path) as db:
+        if isinstance(path, storage.PostgreSQL):
+            storage.initialize_postgres(db)
+            return
         db.executescript(SCHEMA + COMMENT_SCHEMA.format(table="comments") + accounts.SCHEMA
-                         + sharing.SCHEMA + google_signin.SCHEMA + experiments.SCHEMA + tools_catalog.SCHEMA)
+                         + sharing.SCHEMA + google_signin.SCHEMA + experiments.SCHEMA + tools_catalog.SCHEMA
+                         + skills.SCHEMA)
         # Existing comments have a mandatory paper_id. Rebuild with the same IDs
         # so authors, grants, reply links, and anchors survive the migration.
         db.execute("PRAGMA foreign_keys=OFF")
@@ -125,10 +135,10 @@ def initialize(path):
         db.execute("CREATE INDEX IF NOT EXISTS comments_paper_root ON comments(paper_id, parent_id)")
         db.execute("CREATE INDEX IF NOT EXISTS comments_document_root ON comments(document_id, parent_id)")
         db.execute("CREATE INDEX IF NOT EXISTS documents_updated ON documents(updated DESC, id DESC)")
-        db.execute("INSERT OR IGNORE INTO comment_id_sequence SELECT 1, COALESCE(MAX(id), 0) FROM comments")
-        for table in ("comments", "comment_authors"):
+        db.execute("INSERT INTO comment_id_sequence SELECT 1, COALESCE(MAX(id), 0) FROM comments WHERE TRUE ON CONFLICT DO NOTHING")
+        for table in ("comments", "comment_authors", "item_grants"):
             if db.execute(f"PRAGMA foreign_key_check({table})").fetchone():
-                raise sqlite3.IntegrityError("Invalid comment references during migration")
+                raise sqlite3.IntegrityError("Invalid library references during migration")
 
 
 def store(db, path, rows, digest=None, base=None):
@@ -150,9 +160,9 @@ def store(db, path, rows, digest=None, base=None):
         if digest and not match:
             db.execute("UPDATE papers SET sha256=? WHERE id=?", (digest, paper_id))
     else:
-        paper_id = db.execute("INSERT INTO papers(path,sha256) VALUES (?,?)", (key, digest)).lastrowid
-    db.execute("INSERT OR IGNORE INTO paper_paths VALUES (?,?)", (key, paper_id))
-    db.executemany("INSERT OR IGNORE INTO metrics VALUES (?,?,?,?,?,?,?)",
+        paper_id = db.execute("INSERT INTO papers(path,sha256) VALUES (?,?) RETURNING id", (key, digest)).fetchone()[0]
+    db.execute("INSERT INTO paper_paths VALUES (?,?) ON CONFLICT DO NOTHING", (key, paper_id))
+    db.executemany("INSERT INTO metrics(paper_id,page,metric,value,unit,conditions,evidence) VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
                    ((paper_id, *row) for row in rows))
     return paper_id
 
@@ -181,7 +191,7 @@ def import_csv(db, stream, base):
 def metric_rows(db, account=None):
     rows = db.execute(
         sharing.PAPER_SCOPE +
-        "SELECT m.*, p.path AS paper FROM metrics m JOIN visible_papers p ON p.id=m.paper_id "
+        f"SELECT {METRIC_COLUMNS},p.path AS paper FROM metrics m JOIN visible_papers p ON p.id=m.paper_id "
         "WHERE p.id NOT IN (SELECT paper_id FROM archived_papers) "
         "ORDER BY m.paper_id, m.page, m.metric, m.value, m.unit, m.conditions, m.evidence",
         sharing.viewer_params(account),
@@ -194,13 +204,14 @@ def metric_rows(db, account=None):
 
 
 def metric_page(db, account=None, *, after=0, limit=500):
-    """Return a bounded, access-filtered page using SQLite's metric rowid."""
+    """Return a bounded, access-filtered page ordered by the metric cursor."""
+    cursor = "m.cursor_id" if isinstance(db, storage.PostgreSQLConnection) else "m.rowid"
     rows = db.execute(
         sharing.PAPER_SCOPE +
-        "SELECT m.rowid AS cursor, m.*, p.path AS paper FROM metrics m "
+        f"SELECT {cursor} AS cursor,{METRIC_COLUMNS},p.path AS paper FROM metrics m "
         "JOIN visible_papers p ON p.id=m.paper_id "
-        "WHERE m.rowid>:after AND p.id NOT IN (SELECT paper_id FROM archived_papers) "
-        "ORDER BY m.rowid LIMIT :limit",
+        f"WHERE {cursor}>:after AND p.id NOT IN (SELECT paper_id FROM archived_papers) "
+        f"ORDER BY {cursor} LIMIT :limit",
         sharing.viewer_params(account, after=after, limit=limit + 1),
     ).fetchall()
     more = len(rows) > limit
@@ -217,7 +228,7 @@ def paper_page(db, account=None, *, after=0, limit=100):
     rows = db.execute(
         sharing.PAPER_SCOPE +
         "SELECT id,path,doi,title,authors,year,venue,publisher,source,owner_id,audience, "
-        "sha256 IS NOT NULL AS has_pdf FROM visible_papers "
+        "CASE WHEN sha256 IS NOT NULL THEN 1 ELSE 0 END AS has_pdf FROM visible_papers "
         "WHERE id>:after AND id NOT IN (SELECT paper_id FROM archived_papers) "
         "ORDER BY id LIMIT :limit",
         sharing.viewer_params(account, after=after, limit=limit + 1),
@@ -233,7 +244,7 @@ def paper_page(db, account=None, *, after=0, limit=100):
 ACTIVE_PAPERS = "id NOT IN (SELECT paper_id FROM archived_papers)"
 PAPER_DETAIL_COLUMNS = (
     "id,path,doi,title,authors,year,venue,publisher,source,owner_id,audience,"
-    "sha256 IS NOT NULL AS has_pdf,"
+    "CASE WHEN sha256 IS NOT NULL THEN 1 ELSE 0 END AS has_pdf,"
     "COALESCE((SELECT allow_title FROM paper_metadata_checks WHERE paper_id=id),0) AS allow_title"
 )
 CATALOG_PAGE_SIZE = 100
@@ -268,7 +279,11 @@ def paper_catalog(db, account, *, query="", group=None, publisher="", from_year=
     active = sharing.PAPER_SCOPE + " SELECT {} FROM visible_papers WHERE " + ACTIVE_PAPERS
     filters = []
     terms = query.lower().split()
-    if terms:
+    postgres = isinstance(db, storage.PostgreSQLConnection)
+    if terms and postgres:
+        params["terms"] = terms
+        filters.append("paper_matches(title,authors,doi,venue,path,CAST(:terms AS text[]))")
+    elif terms:
         def matches(title, authors, doi, venue, path):
             text = " ".join(filter(None, (title, authors, doi, venue, _paper_filename(path)))).lower()
             return all(term in text for term in terms)
@@ -280,7 +295,7 @@ def paper_catalog(db, account, *, query="", group=None, publisher="", from_year=
                        "WHERE m.paper_id=visible_papers.id AND m.group_id=:group)")
     if publisher:
         filters.append("publisher=:publisher")
-    if from_year is not None or through_year is not None:
+    if not postgres and (from_year is not None or through_year is not None):
         db.create_function("publication_year", 1, _publication_year, deterministic=True)
     if from_year is not None:
         filters.append("publication_year(year)>=:from_year")
@@ -361,7 +376,7 @@ def snapshot(db, view="library", account=None, *, include_comments=True, documen
     if view == "library":
         paper_columns = "*"
     else:
-        paper_columns += ", sha256 IS NOT NULL AS has_pdf"
+        paper_columns += ", CASE WHEN sha256 IS NOT NULL THEN 1 ELSE 0 END AS has_pdf"
     if view == "paper-details":
         paper_columns = PAPER_DETAIL_COLUMNS
     data = {
@@ -413,12 +428,16 @@ def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id
     if before is not None:
         root_scope += " AND c.id<:before"
     root_order = " ORDER BY c.id DESC LIMIT :root_limit" if root_limit is not None else ""
+    json_ids = (
+        "SELECT CAST(value AS BIGINT) FROM jsonb_array_elements_text(CAST(:{param} AS jsonb)) AS ids(value)"
+        if isinstance(db, storage.PostgreSQLConnection) else "SELECT value FROM json_each(:{param})"
+    )
     items = [dict(row) for row in db.execute(
         sharing.PAPER_SCOPE + f""", root_comments AS (
             SELECT c.* FROM comments c WHERE {root_scope}
             AND c.parent_id IS NULL AND {comment_access_sql()}
-            AND (c.finding_id IS NULL OR c.finding_id IN (SELECT value FROM json_each(:finding_ids)))
-            AND (c.goal_id IS NULL OR c.goal_id IN (SELECT value FROM json_each(:goal_ids))){root_order}
+            AND (c.finding_id IS NULL OR c.finding_id IN ({json_ids.format(param='finding_ids')}))
+            AND (c.goal_id IS NULL OR c.goal_id IN ({json_ids.format(param='goal_ids')})){root_order}
         ), visible_comments AS (
             SELECT * FROM root_comments
             UNION ALL
@@ -504,7 +523,7 @@ def comment_target(db, account, location):
 def can_reply(db, paper_id, parent_id, account, document_id=None):
     rows = db.execute(
         sharing.PAPER_SCOPE + """, ancestors AS (
-            SELECT * FROM comments WHERE id=:parent AND paper_id IS :paper AND document_id IS :document AND deleted=0
+            SELECT * FROM comments WHERE id=:parent AND paper_id IS NOT DISTINCT FROM :paper AND document_id IS NOT DISTINCT FROM :document AND deleted=0
             UNION ALL SELECT c.* FROM comments c JOIN ancestors a ON c.id=a.parent_id
         )
         SELECT finding_id,goal_id, (""" + comment_access_sql() + """) AS visible FROM ancestors c""",
@@ -555,14 +574,14 @@ def save_comment(db, paper_id, body, account, comment_id=None, kind="user",
         cursor = db.execute(
             "INSERT INTO comments(id,paper_id,document_id,body,parent_id,doi_refs,audience,"
             "target_kind,target_id,target_position,finding_id,goal_id) "
-            "SELECT last_id,?,?,?,?,?,?,?,?,?,?,? FROM comment_id_sequence WHERE singleton=1",
+            "SELECT last_id,?,?,?,?,?,?,?,?,?,?,? FROM comment_id_sequence WHERE singleton=1 RETURNING id",
             (paper_id, document_id, body.strip(), parent_id, references or "[]", audience or "owner", *target, finding_id, goal_id),
         )
-        comment_id = cursor.lastrowid
+        comment_id = cursor.fetchone()[0]
         db.execute("INSERT INTO comment_authors VALUES (?,?,?)", (comment_id, account_id, kind))
     elif not can_reply(db, paper_id, comment_id, account, document_id) or db.execute(
         "UPDATE comments SET body=?,doi_refs=COALESCE(?,doi_refs),audience=COALESCE(?,audience), "
-        "updated=CURRENT_TIMESTAMP WHERE paper_id IS ? AND document_id IS ? AND id=? AND deleted=0 "
+        "updated=CURRENT_TIMESTAMP WHERE paper_id IS NOT DISTINCT FROM ? AND document_id IS NOT DISTINCT FROM ? AND id=? AND deleted=0 "
         "AND id IN (SELECT comment_id FROM comment_authors WHERE account_id=?)",
         (body.strip(), references, audience, paper_id, document_id, comment_id, account_id),
     ).rowcount == 0:
@@ -574,7 +593,7 @@ def save_comment(db, paper_id, body, account, comment_id=None, kind="user",
 def delete_comment(db, paper_id, comment_id, account_id, document_id=None):
     if db.execute(
         "UPDATE comments SET deleted=1,body='',doi_refs='[]',updated=CURRENT_TIMESTAMP "
-        "WHERE paper_id IS ? AND document_id IS ? AND id=? AND deleted=0 "
+        "WHERE paper_id IS NOT DISTINCT FROM ? AND document_id IS NOT DISTINCT FROM ? AND id=? AND deleted=0 "
         "AND id IN (SELECT comment_id FROM comment_authors WHERE account_id=?)",
         (paper_id, document_id, comment_id, account_id),
     ).rowcount == 0:
@@ -585,7 +604,7 @@ def set_archived(db, paper_id, archived):
     if not db.execute("SELECT id FROM papers WHERE id=?", (paper_id,)).fetchone():
         raise ValueError("Paper not found")
     if archived:
-        db.execute("INSERT OR IGNORE INTO archived_papers VALUES (?)", (paper_id,))
+        db.execute("INSERT INTO archived_papers VALUES (?) ON CONFLICT DO NOTHING", (paper_id,))
     else:
         db.execute("DELETE FROM archived_papers WHERE paper_id=?", (paper_id,))
 

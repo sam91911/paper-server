@@ -11,14 +11,14 @@ import logging
 import platform
 import re
 import shutil
-import sqlite3
 import subprocess
 from threading import Event, Thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import account_routes, accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, library, metadata_sync, paper_routes, sharing, tools_catalog
+from . import database as storage
+from . import account_routes, accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, library, metadata_sync, openapi, paper_routes, sharing, skills, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
 WEB_ROOT = Path(__file__).resolve().with_name("web")
@@ -28,6 +28,8 @@ ASSETS = {
     "/papers": PAGE,
     "/account": PAGE,
     "/documents": PAGE,
+    "/skills": ("skills.html", "text/html; charset=utf-8"),
+    "/assets/skills.js": ("skills.js", "text/javascript; charset=utf-8"),
     "/experiments": ("experiments.html", "text/html; charset=utf-8"),
     "/assets/experiments.js": ("experiments.js", "text/javascript; charset=utf-8"),
     "/assets/findings.js": ("findings.js", "text/javascript; charset=utf-8"),
@@ -151,10 +153,10 @@ class Handler(BaseHTTPRequestHandler):
                 flow = google_signin.consume(db, self.headers.get("Cookie"), state)
             claims = google_signin.verify(config, code, flow)
             with library.connect(self.server.database) as db:
-                db.execute("BEGIN IMMEDIATE")
+                storage.begin(db, write=True)
                 account_id = google_signin.account(db, claims)
                 token = accounts.start_session(db, account_id, self.session_token())
-        except (KeyError, ValueError, OSError, sqlite3.Error):
+        except storage.ERRORS + (KeyError, ValueError, OSError):
             self.redirect("/account?google=failed")
         else:
             self.redirect("/account", f"{accounts.COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; "
@@ -168,6 +170,10 @@ class Handler(BaseHTTPRequestHandler):
         route = url.path
         if route in ("/auth/google", "/auth/google/callback"):
             self.google_login(url)
+        elif route == "/api/openapi.json":
+            self.send_json(200, openapi.document(self.server.server_port))
+        elif route == "/api/skills" or route.startswith("/api/skills/"):
+            self.read_skills(url)
         elif route in ASSETS:
             filename, content_type = ASSETS[route]
             self.send_data(200, (WEB_ROOT / filename).read_bytes(), content_type)
@@ -178,14 +184,14 @@ class Handler(BaseHTTPRequestHandler):
         elif route in ("/api/paper-catalog", "/api/paper-detail", "/api/paper-archive", "/api/paper-comment-targets"):
             try:
                 with library.connect(self.server.database) as db:
-                    db.execute("BEGIN")
+                    storage.begin(db)
                     data = paper_routes.read_papers(self, db, url, self.current_account(db))
                 self.send_json(200, data)
             except sharing.AccessDenied:
                 self.send_json(404, {"error": "Paper not found or unavailable."})
             except ValueError as error:
                 self.send_json(400, {"error": str(error)})
-            except sqlite3.Error as error:
+            except storage.ERRORS as error:
                 LOG.error("Paper catalog read failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read the paper library."})
         elif route in ("/api/metric-page", "/api/paper-page"):
@@ -196,11 +202,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 with library.connect(self.server.database) as db:
-                    db.execute("BEGIN")
+                    storage.begin(db)
                     reader = library.metric_page if route == "/api/metric-page" else library.paper_page
                     data = reader(db, self.current_account(db), after=int(after))
                 self.send_json(200, data)
-            except sqlite3.Error as error:
+            except storage.ERRORS as error:
                 LOG.error("Page read failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read library page."})
         elif route in ("/api/paper-comments", "/api/document-comments"):
@@ -216,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 with library.connect(self.server.database) as db:
-                    db.execute("BEGIN")
+                    storage.begin(db)
                     account = self.current_account(db)
                     comments = library.comment_snapshot(db, account, documents=is_document,
                                                         document_id=int(value) if is_document else None,
@@ -224,13 +230,13 @@ class Handler(BaseHTTPRequestHandler):
                                                         before=int(before) if before else None, root_limit=50)
                 roots = [item["id"] for item in comments if item["parent_id"] is None]
                 self.send_json(200, {"comments": comments, "next_before": min(roots) if len(roots) == 50 else None})
-            except sqlite3.Error as error:
+            except storage.ERRORS as error:
                 LOG.error("Comment read failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read comments."})
         elif route in ("/api/experiments", "/api/experiment-detail", "/api/research-tools", "/api/research-findings", "/api/research-goals"):
             try:
                 with library.connect(self.server.database) as db:
-                    db.execute("BEGIN")
+                    storage.begin(db)
                     account = self.require_account(db)
                     if route == "/api/research-tools":
                         data = {"tools": tools_catalog.list_tools(db, account), "host_tools": tools_catalog.host_tools()}
@@ -253,7 +259,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(404, {"error": "Research item unavailable."})
             except ValueError as error:
                 self.send_json(400, {"error": str(error)})
-            except sqlite3.Error as error:
+            except storage.ERRORS as error:
                 LOG.error("Research read failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read research data."})
         elif match := re.fullmatch(r"/research-versions/([1-9][0-9]{0,18})/file", route):
@@ -266,7 +272,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(401, {"error": "Sign in to continue."})
             except (sharing.AccessDenied, LookupError, OverflowError):
                 self.send_json(404, {"error": "File unavailable."})
-            except (sqlite3.Error, ValueError):
+            except storage.ERRORS + (ValueError,):
                 self.send_json(500, {"error": "Could not read this file."})
         elif route in ("/api/usernames", "/api/agent-options", "/api/document"):
             try:
@@ -291,13 +297,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(401, {"error": "Sign in to continue."})
             except LookupError:
                 self.send_json(404, {"error": "This document is unavailable."})
-            except sqlite3.Error as error:
+            except storage.ERRORS as error:
                 LOG.error("Database read failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read the library database"})
         elif route in ("/api/library", "/api/compare", "/api/paper-details", "/api/account", "/api/documents"):
             try:
                 with library.connect(self.server.database) as db:
-                    db.execute("BEGIN")
+                    storage.begin(db)
                     account = self.current_account(db)
                     if route == "/api/account":
                         data = {"account": account, "google_available": self.google_available()}
@@ -312,7 +318,7 @@ class Handler(BaseHTTPRequestHandler):
                         data = library.snapshot(db, view=route.rsplit("/", 1)[-1], account=account,
                                                 include_comments=include_comments)
                 self.send_json(200, data)
-            except sqlite3.Error as error:
+            except storage.ERRORS as error:
                 LOG.error("Database snapshot failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read the library database"})
         else:
@@ -324,14 +330,14 @@ class Handler(BaseHTTPRequestHandler):
         writer.writerow(library.FIELDS)
         try:
             with library.connect(self.server.database) as db:
-                db.execute("BEGIN")
+                storage.begin(db)
                 account = self.current_account(db)
                 for row in library.metric_rows(db, account):
                     writer.writerow(
                         row[field] if field in ("page", "value") else spreadsheet_text(row[field])
                         for field in library.FIELDS
                     )
-        except sqlite3.Error as error:
+        except storage.ERRORS as error:
             LOG.error("Metrics export failed (%s)", type(error).__name__)
             self.send_json(500, {"error": "Could not export the metrics database"})
             return
@@ -341,7 +347,7 @@ class Handler(BaseHTTPRequestHandler):
     def serve_pdf(self, paper_id, *, download=False):
         try:
             with library.connect(self.server.database) as db:
-                db.execute("BEGIN")
+                storage.begin(db)
                 paper = sharing.paper_for(db, paper_id, self.current_account(db))
             if not paper["sha256"]:
                 self.send_json(404, {"error": "No verified PDF for this paper. Import the PDF first."})
@@ -354,7 +360,7 @@ class Handler(BaseHTTPRequestHandler):
         except (OverflowError, sharing.AccessDenied):
             self.send_json(404, {"error": "Paper not found or unavailable"})
             return
-        except (sqlite3.Error, OSError) as error:
+        except storage.ERRORS + (OSError,) as error:
             LOG.error("PDF read failed (%s)", type(error).__name__)
             self.send_json(500, {"error": "Could not read the local PDF"})
             return
@@ -367,6 +373,34 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_data(200, payload, "application/pdf",
                            pdf_download=Path(paper["path"]).name if download else None)
+
+    def read_skills(self, url):
+        try:
+            with library.connect(self.server.database) as db:
+                storage.begin(db)
+                account = self.require_account(db)
+                if url.path == "/api/skills":
+                    params = parse_qs(url.query, keep_blank_values=True)
+                    archived = params.get("archived", ["0"])[0]
+                    if archived not in ("0", "1"):
+                        raise ValueError("Use archived=0 or archived=1.")
+                    data = skills.list_skills(
+                        db, account, query=params.get("q", [""])[0], tag=params.get("tag", [""])[0],
+                        after=skills.query_id(params.get("after", [""])[0], optional=True), archived=archived == "1",
+                    )
+                else:
+                    skill_id = skills.query_id(url.path.removeprefix("/api/skills/"))
+                    data = {"skill": skills.detail(db, account, skill_id)}
+            self.send_json(200, data)
+        except accounts.SignInRequired:
+            self.send_json(401, {"error": "Sign in to continue."})
+        except LookupError:
+            self.send_json(404, {"error": "Skill unavailable."})
+        except ValueError as error:
+            self.send_json(400, {"error": str(error)})
+        except storage.ERRORS as error:
+            LOG.error("Skill read failed (%s)", type(error).__name__)
+            self.send_json(500, {"error": "Could not read skills."})
 
     def do_POST(self):
         if not self.origin_allowed():
@@ -397,7 +431,7 @@ class Handler(BaseHTTPRequestHandler):
                     if type(paper_id) is not int:
                         raise ValueError("Select a paper")
                     with library.connect(self.server.database) as db:
-                        db.execute("BEGIN")
+                        storage.begin(db)
                         account = self.current_account(db)
                         if account is None or account["role"] != "user":
                             raise sharing.AccessDenied
@@ -415,7 +449,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, matches)
                 return
             with library.connect(self.server.database) as db:
-                db.execute("BEGIN IMMEDIATE")
+                storage.begin(db, write=True)
                 result = self.update(db, data)
             self.send_json(200, {"ok": True, **(result or {})})
         except accounts.SignInRequired:
@@ -428,15 +462,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(403, {"error": "Only the account that posted this comment can change it."})
         except (ValueError, KeyError, OverflowError) as error:
             self.send_json(400, {"error": str(error)})
-        except sqlite3.IntegrityError:
+        except storage.INTEGRITY_ERRORS:
             self.send_json(409, {"error": "A group already exists or a selected record is missing"})
-        except sqlite3.Error as error:
+        except storage.ERRORS as error:
             LOG.error("Database update failed (%s)", type(error).__name__)
             self.send_json(500, {"error": "Could not update the library database"})
         except RuntimeError as error:
             self.send_json(502, {"error": str(error)})
         except LookupError:
-            self.send_json(404, {"error": "Unknown route"})
+            self.send_json(404, {"error": "Skill unavailable." if self.path == "/api/skills" else "Unknown route"})
 
     def upload_research_file(self):
         if self.headers.get_content_type() != "application/octet-stream":
@@ -456,7 +490,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(payload) != size:
                 raise ValueError("Incomplete upload.")
             with library.connect(self.server.database) as db:
-                db.execute("BEGIN IMMEDIATE")
+                storage.begin(db, write=True)
                 item_id = experiments.save_item(db, self.require_account(db), metadata, payload)
             self.send_json(200, {"ok": True, "id": item_id})
         except accounts.SignInRequired:
@@ -467,7 +501,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(409, {"error": str(error)})
         except (ValueError, KeyError, OverflowError) as error:
             self.send_json(400, {"error": str(error)})
-        except (sqlite3.Error, OSError) as error:
+        except storage.ERRORS + (OSError,) as error:
             LOG.error("Research upload failed (%s)", type(error).__name__)
             self.send_json(500, {"error": "Could not save this file."})
 
@@ -506,11 +540,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(422, {"error": "Could not extract this PDF. Check that it opens and is unlocked."})
         except FileNotFoundError:
             self.send_json(500, {"error": "The server could not open a local file or run pdftotext"})
-        except (sqlite3.Error, OSError) as error:
+        except storage.ERRORS + (OSError,) as error:
             LOG.error("PDF import failed (%s)", type(error).__name__)
             self.send_json(500, {"error": "Could not save the local PDF import"})
 
     def update(self, db, data):
+        if self.path == "/api/skills":
+            return {"skill": skills.save(db, self.require_account(db), data)}
         if self.path == "/api/research-goals":
             return goals.update(db, self.require_account(db), data)
         if self.path == "/api/research-findings":
@@ -535,7 +571,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database", type=Path, default=Path("papers.sqlite3"))
+    parser.add_argument("--database", type=Path)
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--import-csv", type=Path, help="Import a metrics CSV and exit")
     modes = parser.add_mutually_exclusive_group()
@@ -546,13 +582,15 @@ def main():
     modes.add_argument("--register-tool", nargs=2, metavar=("USERNAME", "CONFIG_JSON"), help="Register a pinned tool owned by USERNAME")
     args = parser.parse_args()
     try:
-        library.initialize(args.database)
+        database = storage.configuration(args.database)
+        library.initialize(database)
         if args.set_tool_approver:
-            with library.connect(args.database) as db:
+            with library.connect(database) as db:
+                storage.begin(db, write=True)
                 account = db.execute(f"SELECT a.id,{accounts.ROLE_SQL.format(alias='a')} AS role FROM accounts a WHERE username=?", (args.set_tool_approver,)).fetchone()
                 if not account or account['role'] != 'user':
                     raise ValueError("Approvers must be trusted human accounts.")
-                db.execute("INSERT OR IGNORE INTO tool_approvers VALUES (?)", (account['id'],))
+                db.execute("INSERT INTO tool_approvers VALUES (?) ON CONFLICT DO NOTHING", (account['id'],))
             print("Tool approver saved.")
             return
         if args.register_tool:
@@ -560,7 +598,8 @@ def main():
             config = json.loads(Path(config_file).read_text(encoding="utf-8"))
             if not isinstance(config, dict):
                 raise ValueError("Tool configuration must be an object.")
-            with library.connect(args.database) as db:
+            with library.connect(database) as db:
+                storage.begin(db, write=True)
                 owner = db.execute("SELECT id FROM accounts WHERE username=?", (username,)).fetchone()
                 if not owner:
                     raise ValueError("Tool owner not found.")
@@ -568,13 +607,15 @@ def main():
             print(f"Registered tool {tool_id}.")
             return
         if args.invite_human:
-            with library.connect(args.database) as db:
+            with library.connect(database) as db:
+                storage.begin(db, write=True)
                 token = accounts.create_invite(db, args.invite_human)
             print(f"Invitation for {args.invite_human} (valid for 24 hours): {token}")
             return
         if args.create_account or args.set_account_role:
             username, role = args.create_account or args.set_account_role
-            with library.connect(args.database) as db:
+            with library.connect(database) as db:
+                storage.begin(db, write=True)
                 if args.create_account:
                     password = getpass.getpass("Password: ")
                     if password != getpass.getpass("Confirm password: "):
@@ -586,14 +627,15 @@ def main():
             return
         if args.import_csv:
             with args.import_csv.open(encoding="utf-8-sig", newline="") as stream:
-                with library.connect(args.database) as db:
+                with library.connect(database) as db:
+                    storage.begin(db, write=True)
                     count = library.import_csv(db, stream, args.import_csv.absolute().parent)
             print(f"Imported metrics for {count} paper path(s).")
             return
         if not shutil.which("pdftotext"):
             LOG.warning("pdftotext is unavailable; PDF import and text extraction will fail")
         with ThreadingHTTPServer(("127.0.0.1", args.port), Handler) as server:
-            server.database = args.database.absolute()
+            server.database = database
             server.google_config = google_signin.configuration(server.server_port)
             stop = Event()
             worker = Thread(target=metadata_sync.run, args=(server.database, stop), daemon=True)
@@ -605,7 +647,7 @@ def main():
                 pass
             finally:
                 stop.set()
-    except (sqlite3.Error, csv.Error, ValueError, OSError, EOFError) as error:
+    except storage.ERRORS + (csv.Error, ValueError, OSError, EOFError) as error:
         parser.exit(1, f"Paper library: {error}\n")
 
 

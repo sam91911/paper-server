@@ -3,11 +3,11 @@
 import hashlib
 import logging
 import re
-import sqlite3
 import subprocess
 import time
 from pathlib import Path
 
+from . import database as storage
 from . import crossref, library
 
 LOG = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ def set_title_lookup(db, paper_id, allow):
     db.execute(
         "INSERT INTO paper_metadata_checks(paper_id,allow_title) VALUES (?,?) "
         "ON CONFLICT(paper_id) DO UPDATE SET allow_title=excluded.allow_title,next_check=0",
-        (paper_id, allow),
+        (paper_id, int(allow)),
     )
 
 
@@ -108,7 +108,7 @@ def check_paper(database, paper):
         match = None
         delay = ERROR_SECONDS
     with library.connect(database) as db:
-        db.execute("BEGIN IMMEDIATE")
+        storage.begin(db, write=True)
         current = current_paper(db, paper["id"])
         if current is None or dict(current) != dict(paper):
             return
@@ -135,6 +135,6 @@ def run(database, stop):
                     return
                 check_paper(database, paper)
                 stop.wait(1)
-        except sqlite3.Error:
+        except storage.ERRORS:
             LOG.exception("Could not check missing paper metadata")
         stop.wait(30)

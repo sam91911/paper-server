@@ -11,10 +11,11 @@ dependencies = []
 
 [project.optional-dependencies]
 google = ["google-auth[requests]>=2,<3"]
+postgres = ["psycopg[binary]>=3.2,<4"]
 
 [tool.setuptools.packages.find]
 include = ["paper_app*", "paper_client*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-paper_app = ["web/*.html", "web/*.css", "web/*.js"]
+paper_app = ["web/*.html", "web/*.css", "web/*.js", "sql/*.sql"]

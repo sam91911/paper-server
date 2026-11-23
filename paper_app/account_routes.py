@@ -1,5 +1,6 @@
 """Account session and application key HTTP operations."""
 
+from . import database as storage
 from . import accounts, library
 
 
@@ -8,7 +9,7 @@ def update_session(handler, data):
         raise accounts.SignInRequired
     token = handler.session_token()
     with library.connect(handler.server.database) as db:
-        db.execute("BEGIN IMMEDIATE")
+        storage.begin(db, write=True)
         if handler.path == "/api/sign-out":
             accounts.sign_out(db, token)
             account, token = None, ""

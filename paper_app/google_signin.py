@@ -11,6 +11,7 @@ from http.cookies import CookieError, SimpleCookie
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from . import database as storage
 from . import accounts
 
 COOKIE = "paper_google"
@@ -74,7 +75,7 @@ def consume(db, cookie_header, state):
         or len(state) != 43 or not hmac.compare_digest(cookie.value, state)):
         raise ValueError("Google sign-in could not be verified.")
     key = accounts.token_hash(state)
-    db.execute("BEGIN IMMEDIATE")
+    storage.begin(db, write=True)
     flow = db.execute(
         "SELECT verifier,nonce FROM google_flows WHERE state_hash=? AND expires>?",
         (key, int(time.time())),
