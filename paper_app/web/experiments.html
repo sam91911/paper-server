@@ -1,7 +1,145 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Experiments</title><link rel="stylesheet" href="/assets/style.css"></head>
-<body><main><h1>Experiments</h1><p><a href="/">Compare</a> · <a href="/papers">Papers</a> · <a href="/documents">Documents</a> · <a href="/skills">Skills</a> · <a href="/account">Account</a></p><p id="status" role="status"></p><button type="button" id="retry-experiment-load" hidden>Retry loading</button>
-<section><h2>Experiments</h2><label>Choose experiment <select id="experiments"><option value="">Choose</option></select></label><form id="experiment-form"><h3>New experiment</h3><label>Title <input name="title" required maxlength="160"></label><label>Description <textarea name="description"></textarea></label><label>Paper ID (optional) <input name="paper_id" type="number" min="1"></label><label>Research document ID (optional) <input name="research_document_id" type="number" min="1"></label><label>Audience <select name="audience" class="audience"></select></label><button>Save experiment</button></form></section>
-<section id="detail" hidden><h2 id="experiment-title"></h2><p id="experiment-description"></p><p id="experiment-workspace"></p><form id="experiment-workspace-form" hidden><label>Research document ID <input name="research_document_id" type="number" min="1"></label><button>Update research document link</button></form><form id="run-form"><h3 id="run-form-heading">New run</h3><label>Title <input name="title" required></label><label>Description <textarea name="description"></textarea></label><label>Methods <textarea name="methods"></textarea></label><label>Settings <textarea name="settings"></textarea></label><label>Status <select name="status"><option value="planned">Planned</option><option value="running">Running</option><option value="complete">Complete</option><option value="failed">Failed</option></select></label><label>Audience <select name="audience" class="audience"></select></label><button>Save run</button><button type="button" id="cancel-run-edit" class="secondary" hidden>Cancel edit</button></form><h3>Runs</h3><div id="runs"></div>
-<form id="item-form"><h3>New artifact or version</h3><label>Existing item ID (for new version) <input name="id" type="number" min="1"></label><label>Current revision (for new version) <input name="revision" type="number" min="1"></label><label>Run <select name="run_id" id="run-select"><option value="">Experiment level</option></select></label><label>Type <select name="kind"><option value="code">Code</option><option value="environment">Environment</option><option value="equipment">Equipment</option><option value="tool_record">Tool record</option><option value="data">Data</option></select></label><label>Title <input name="title" required></label><label>Description <textarea name="description"></textarea></label><label>External location <input name="external_ref"></label><label>Upload (up to 100 MiB) <input name="file" type="file"></label><label>Audience <select name="audience" class="audience"></select></label><button>Save artifact</button></form><h3>Artifacts and versions</h3><div id="items"></div>
-<form id="grant-form"><h3>Share</h3><label>Type <select name="kind"><option value="experiment">Experiment</option><option value="run">Run</option><option value="item">Artifact</option></select></label><label>ID <input name="id" type="number" min="1" required></label><label>Readers (usernames, comma separated) <input name="readers"></label><label>Editors (usernames, comma separated) <input name="editors"></label><button>Update sharing</button></form></section>
-<section><h2>Tools</h2><p id="tools-status" role="status"></p><div id="tools"></div><h3>Host capabilities</h3><div id="host-tools"></div></section></main><script src="/assets/api.js"></script><script src="/assets/experiments.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Experiments · Paper Library</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <header class="page-header"><h1>Experiments</h1></header>
+  <main class="page-content">
+    <p id="status" role="status"></p>
+    <button type="button" id="retry-experiment-load" class="secondary" hidden>Retry loading</button>
+    <section aria-labelledby="experiment-picker-heading">
+      <h2 id="experiment-picker-heading">Find an experiment</h2>
+      <label class="experiment-picker">Choose experiment
+        <select id="experiments"><option value="">Choose</option></select>
+      </label>
+      <details id="new-experiment">
+        <summary>New experiment</summary>
+        <form id="experiment-form" class="experiment-form">
+          <label>Title <input name="title" required maxlength="160"></label>
+          <label>Description <textarea name="description" rows="3"></textarea></label>
+          <div class="metadata-fields">
+            <label>Paper ID (optional) <input name="paper_id" type="number" min="1"></label>
+            <label>Research document ID (optional) <input name="research_document_id" type="number" min="1"></label>
+            <label>Audience <select name="audience" class="audience"></select></label>
+          </div>
+          <div><button>Save experiment</button></div>
+        </form>
+      </details>
+    </section>
+
+    <section id="detail" aria-labelledby="experiment-title" hidden>
+      <h2 id="experiment-title"></h2>
+      <p id="experiment-description"></p>
+      <p id="experiment-workspace"></p>
+      <form id="experiment-workspace-form" class="filters" hidden>
+        <label>Research document ID <input name="research_document_id" type="number" min="1"></label>
+        <button>Update research document link</button>
+      </form>
+
+      <div class="experiment-group">
+        <h3>Runs</h3>
+        <div id="runs" class="experiment-records"></div>
+        <form id="run-form" class="experiment-form">
+          <h4 id="run-form-heading">New run</h4>
+          <label>Title <input name="title" required></label>
+          <label>Description <textarea name="description" rows="3"></textarea></label>
+          <div class="metadata-fields">
+            <label>Methods <textarea name="methods" rows="3"></textarea></label>
+            <label>Settings <textarea name="settings" rows="3"></textarea></label>
+          </div>
+          <div class="metadata-fields">
+            <label>Status
+              <select name="status">
+                <option value="planned">Planned</option>
+                <option value="running">Running</option>
+                <option value="complete">Complete</option>
+                <option value="failed">Failed</option>
+              </select>
+            </label>
+            <label>Audience <select name="audience" class="audience"></select></label>
+          </div>
+          <div>
+            <button>Save run</button>
+            <button type="button" id="cancel-run-edit" class="secondary" hidden>Cancel edit</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="experiment-group">
+        <h3>Artifacts and versions</h3>
+        <div id="items" class="experiment-records"></div>
+        <form id="item-form" class="experiment-form">
+          <h4>New artifact or version</h4>
+          <label>Title <input name="title" required></label>
+          <label>Description <textarea name="description" rows="3"></textarea></label>
+          <div class="metadata-fields">
+            <label>Run
+              <select name="run_id" id="run-select"><option value="">Experiment level</option></select>
+            </label>
+            <label>Type
+              <select name="kind">
+                <option value="code">Code</option>
+                <option value="environment">Environment</option>
+                <option value="equipment">Equipment</option>
+                <option value="tool_record">Tool record</option>
+                <option value="data">Data</option>
+              </select>
+            </label>
+            <label>Audience <select name="audience" class="audience"></select></label>
+          </div>
+          <div class="metadata-fields">
+            <label>External location <input name="external_ref"></label>
+            <label>Upload (up to 100 MiB) <input name="file" type="file"></label>
+          </div>
+          <div class="metadata-fields">
+            <label>Existing item ID (for new version) <input name="id" type="number" min="1"></label>
+            <label>Current revision (for new version) <input name="revision" type="number" min="1"></label>
+          </div>
+          <div><button>Save artifact</button></div>
+        </form>
+      </div>
+
+      <form id="grant-form" class="experiment-form experiment-group">
+        <h3>Share</h3>
+        <div class="metadata-fields">
+          <label>Type
+            <select name="kind">
+              <option value="experiment">Experiment</option>
+              <option value="run">Run</option>
+              <option value="item">Artifact</option>
+            </select>
+          </label>
+          <label>ID <input name="id" type="number" min="1" required></label>
+        </div>
+        <div class="metadata-fields">
+          <label>Readers (usernames, comma separated) <input name="readers"></label>
+          <label>Editors (usernames, comma separated) <input name="editors"></label>
+        </div>
+        <div><button>Update sharing</button></div>
+      </form>
+    </section>
+
+    <section aria-labelledby="tools-heading">
+      <h2 id="tools-heading">Tools</h2>
+      <p id="tools-status" role="status"></p>
+      <div id="tools"></div>
+      <h3>Host capabilities</h3>
+      <div id="host-tools"></div>
+    </section>
+  </main>
+  <nav class="bottom-nav" aria-label="Library pages">
+    <a href="/">Compare</a>
+    <a href="/papers">Papers</a>
+    <a href="/documents">Documents</a>
+    <a href="/experiments" aria-current="page">Experiments</a>
+    <a href="/skills">Skills</a>
+    <a href="/account">Account</a>
+  </nav>
+  <script src="/assets/api.js"></script>
+  <script src="/assets/experiments.js"></script>
+</body>
+</html>

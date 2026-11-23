@@ -72,12 +72,42 @@ class PostgreSQLTests(unittest.TestCase):
         self.assertEqual(metrics[-1]["evidence"], long_evidence)
         self.api("/api/paper-access", cookie=cookie, data={"paper_id": paper, "audience": "local", "allow_title": True})
         self.assertEqual(self.api(f"/api/paper-detail?paper_id={paper}", key=local)["paper"]["title"], "Long methods")
+        metric = self.api(f"/api/paper-metrics?paper_id={paper}", key=local)["metrics"][0]
+        self.assertFalse(metric["can_edit"])
+        self.api("/api/metric-editors", cookie=cookie, data={
+            "action": "grant", "username": "local-agent", "metric_id": metric["id"],
+        })
+        correction = {field: metric[field] for field in ("revision", "page", "metric", "unit", "conditions", "evidence")}
+        correction.update(metric_id=metric["id"], value="3", reason="Verified source table.")
+        self.api("/api/paper-metrics", key=local, data=correction)
+        self.api("/api/paper-metrics", key=local, data=correction, expected=409)
+        self.assertEqual(self.api("/api/metric-page", key=local)["metrics"][0]["value"], "3")
+        self.assertIn("3", [row["value"] for row in self.api("/api/compare", key=local)["metrics"]])
+        history = self.api(f"/api/metric-history?metric_id={metric['id']}", cookie=cookie)
+        self.assertEqual(history["original"]["value"], "1")
+        self.assertEqual(history["editors"], ["local-agent"])
+        removal = {"metric_id": metric["id"], "revision": 2, "action": "remove", "reason": "Baseline from prior work."}
+        self.assertTrue(self.api("/api/paper-metrics", key=local, data=removal)["removed"])
+        self.assertEqual([row["value"] for row in self.api("/api/metric-page", key=local)["metrics"]], ["2"])
+        self.assertFalse(self.api("/api/paper-metrics", key=local, data={
+            **removal, "revision": 3, "action": "restore", "reason": "Verified this paper's result.",
+        })["removed"])
 
         document = self.api("/api/documents", key=local, data={"title": "Notes", "markdown": "Notes", "audience": "all"})
         document_id = document["document_id"]
         self.assertEqual(self.api(f"/api/document?id={document_id}", key=cloud)["document"]["markdown"], "Notes")
         owner_doc = self.api("/api/documents", cookie=cookie,
                              data={"title": "Workspace", "markdown": "Baseline", "audience": "all"})["document_id"]
+        queued = self.api("/api/reviews", cookie=cookie, data={
+            "action": "create", "kind": "document", "target_id": owner_doc, "agent": "local-agent",
+            "agent_role": "local", "post": True,
+        })["review"]
+        self.assertEqual(self.api("/api/reviews", key=local)["reviews"], [queued])
+        result = self.api("/api/reviews", key=local, data={
+            "action": "complete", "id": queued["id"], "status": "complete", "response": "Verify the baseline.",
+        })["review"]
+        self.assertEqual(self.api(f"/api/reviews?id={queued['id']}", cookie=cookie)["review"], result)
+        self.assertIsNotNone(result["comment_id"])
         finding = self.api("/api/research-findings", key=local, data={"document_id": owner_doc, "statement": "Control",
                           "evidence": [{"kind": "document", "id": owner_doc, "start": 1, "end": 1, "revision": 1}]})["id"]
         goal = self.api("/api/research-goals", key=local, data={"action": "propose", "document_id": owner_doc,
@@ -138,6 +168,21 @@ class PostgreSQLTests(unittest.TestCase):
         })["skill"]
         with library.connect(source) as db:
             original_pdf = Path(db.execute("SELECT path FROM papers WHERE id=?", (pilot["paper"],)).fetchone()[0])
+            library.store(db, original_pdf, ((1, "manual check", "4", "W", "", ""),))
+            owner_id = db.execute("SELECT id FROM accounts WHERE username=?", (pilot["human_username"],)).fetchone()[0]
+            cookie = accounts.start_session(db, owner_id, None)
+        agent_username = self.api("/api/account", target=source, key=key)["account"]["username"]
+        metric_path = f"/api/paper-metrics?paper_id={pilot['paper']}"
+        original_metrics = self.api(metric_path, target=source, key=key)["metrics"]
+        metric_id = next(row["id"] for row in original_metrics if row["metric"] == "manual check")
+        self.api("/api/metric-editors", target=source, cookie=cookie, data={
+            "action": "grant", "username": agent_username, "metric_id": metric_id,
+        })
+        self.api("/api/paper-metrics", target=source, key=key, data={
+            "metric_id": metric_id, "revision": 1, "value": "5", "reason": "Reviewed the source.",
+        })
+        history_path = f"/api/metric-history?metric_id={metric_id}"
+        expected_history = self.api(history_path, target=source, cookie=cookie)
         original_bytes = original_pdf.read_bytes()
         original_pdf.unlink()
         with self.assertRaisesRegex(ValueError, "Could not copy the PDF"):
@@ -152,6 +197,9 @@ class PostgreSQLTests(unittest.TestCase):
         self.assertEqual(self.api(goals_path, key=key), expected_goals)
         self.assertEqual(self.api(comment_path, key=key), expected_comments)
         self.assertEqual(self.api(f"/api/skills/{migrated_skill['id']}", key=key)["skill"], migrated_skill)
+        self.assertEqual(self.api(history_path, cookie=cookie), expected_history)
+        edited = next(row for row in self.api(metric_path, key=key)["metrics"] if row["id"] == metric_id)
+        self.assertEqual((edited["value"], edited["can_edit"]), ("5", True))
         self.assertEqual(self.api(f"/papers/{pilot['paper']}/source.pdf", key=key), original_bytes)
         self.assertTrue(original_pdf.exists())
         self.assertEqual(integrity.check(self.target), {"database_ok": True, "missing": [], "changed": [],

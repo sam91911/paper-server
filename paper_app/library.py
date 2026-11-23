@@ -10,10 +10,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import database as storage
-from . import accounts, experiments, findings, goals, google_signin, sharing, skills, tools_catalog
+from . import accounts, experiments, findings, goals, google_signin, metrics, sharing, skills, tools_catalog
 
 FIELDS = ("paper", "page", "metric", "value", "unit", "conditions", "evidence")
-METRIC_COLUMNS = "m.paper_id,m.page,m.metric,m.value,m.unit,m.conditions,m.evidence"
 METADATA = ("doi", "title", "authors", "year", "venue", "publisher", "source")
 
 COMMENT_COLUMNS = (
@@ -37,6 +36,15 @@ CREATE TABLE IF NOT EXISTS {table} (
     CHECK ((paper_id IS NULL) != (document_id IS NULL))
 );
 """
+METRIC_SCHEMA = """
+CREATE TABLE IF NOT EXISTS metrics (
+    cursor_id INTEGER PRIMARY KEY,
+    paper_id INTEGER NOT NULL REFERENCES papers(id), page INTEGER NOT NULL,
+    metric TEXT NOT NULL, value TEXT NOT NULL, unit TEXT NOT NULL,
+    conditions TEXT NOT NULL, evidence TEXT NOT NULL,
+    UNIQUE (paper_id, page, metric, value, unit, conditions, evidence)
+);
+"""
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS papers (
     id INTEGER PRIMARY KEY, path TEXT NOT NULL, sha256 TEXT UNIQUE,
@@ -57,12 +65,7 @@ CREATE TABLE IF NOT EXISTS archived_papers (
 CREATE TABLE IF NOT EXISTS paper_paths (
     path TEXT PRIMARY KEY, paper_id INTEGER NOT NULL REFERENCES papers(id)
 );
-CREATE TABLE IF NOT EXISTS metrics (
-    paper_id INTEGER NOT NULL REFERENCES papers(id), page INTEGER NOT NULL,
-    metric TEXT NOT NULL, value TEXT NOT NULL, unit TEXT NOT NULL,
-    conditions TEXT NOT NULL, evidence TEXT NOT NULL,
-    PRIMARY KEY (paper_id, page, metric, value, unit, conditions, evidence)
-);
+""" + METRIC_SCHEMA + """
 CREATE TABLE IF NOT EXISTS comment_id_sequence (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1), last_id INTEGER NOT NULL
 );
@@ -97,13 +100,15 @@ def connect(path):
 
 
 def initialize(path):
+    from . import reviews
+
     with connect(path) as db:
         if isinstance(path, storage.PostgreSQL):
             storage.initialize_postgres(db)
             return
         db.executescript(SCHEMA + COMMENT_SCHEMA.format(table="comments") + accounts.SCHEMA
                          + sharing.SCHEMA + google_signin.SCHEMA + experiments.SCHEMA + tools_catalog.SCHEMA
-                         + skills.SCHEMA)
+                         + skills.SCHEMA + reviews.SCHEMA)
         # Existing comments have a mandatory paper_id. Rebuild with the same IDs
         # so authors, grants, reply links, and anchors survive the migration.
         db.execute("PRAGMA foreign_keys=OFF")
@@ -117,9 +122,20 @@ def initialize(path):
             db.execute(f"INSERT INTO comments_new({existing}) SELECT {existing} FROM comments")
             db.execute("DROP TABLE comments")
             db.execute("ALTER TABLE comments_new RENAME TO comments")
-        for statement in (*findings.SCHEMA, *goals.SCHEMA):
+        if "cursor_id" not in {row["name"] for row in db.execute("PRAGMA table_info(metrics)")}:
+            # Preserve metric page cursors and give corrections a durable foreign key.
+            db.execute("ALTER TABLE metrics RENAME TO old_metrics")
+            db.execute(METRIC_SCHEMA)
+            db.execute(
+                "INSERT INTO metrics(cursor_id,paper_id,page,metric,value,unit,conditions,evidence) "
+                "SELECT rowid,paper_id,page,metric,value,unit,conditions,evidence FROM old_metrics"
+            )
+            db.execute("DROP TABLE old_metrics")
+        db.execute("CREATE INDEX IF NOT EXISTS metrics_paper_cursor ON metrics(paper_id,cursor_id)")
+        for statement in (*findings.SCHEMA, *goals.SCHEMA, *metrics.SCHEMA):
             db.execute(statement)
         for table, name, definition in (
+            ("metric_corrections", "removed", metrics.REMOVED_COLUMN),
             ("experiments", "research_document_id", "INTEGER REFERENCES documents(id)"),
             ("experiment_runs", "methods", "TEXT NOT NULL DEFAULT ''"),
             ("experiment_runs", "settings", "TEXT NOT NULL DEFAULT ''"),
@@ -191,9 +207,10 @@ def import_csv(db, stream, base):
 def metric_rows(db, account=None):
     rows = db.execute(
         sharing.PAPER_SCOPE +
-        f"SELECT {METRIC_COLUMNS},p.path AS paper FROM metrics m JOIN visible_papers p ON p.id=m.paper_id "
-        "WHERE p.id NOT IN (SELECT paper_id FROM archived_papers) "
-        "ORDER BY m.paper_id, m.page, m.metric, m.value, m.unit, m.conditions, m.evidence",
+        f"SELECT {metrics.COLUMNS},p.path AS paper FROM metrics m{metrics.LATEST}"
+        "JOIN visible_papers p ON p.id=m.paper_id "
+        f"WHERE {metrics.ACTIVE} AND p.id NOT IN (SELECT paper_id FROM archived_papers) "
+        "ORDER BY m.paper_id, page, metric, value, unit, conditions, evidence",
         sharing.viewer_params(account),
     )
     for row in rows:
@@ -205,13 +222,12 @@ def metric_rows(db, account=None):
 
 def metric_page(db, account=None, *, after=0, limit=500):
     """Return a bounded, access-filtered page ordered by the metric cursor."""
-    cursor = "m.cursor_id" if isinstance(db, storage.PostgreSQLConnection) else "m.rowid"
     rows = db.execute(
         sharing.PAPER_SCOPE +
-        f"SELECT {cursor} AS cursor,{METRIC_COLUMNS},p.path AS paper FROM metrics m "
+        f"SELECT m.cursor_id AS cursor,{metrics.COLUMNS},p.path AS paper FROM metrics m{metrics.LATEST}"
         "JOIN visible_papers p ON p.id=m.paper_id "
-        f"WHERE {cursor}>:after AND p.id NOT IN (SELECT paper_id FROM archived_papers) "
-        f"ORDER BY {cursor} LIMIT :limit",
+        f"WHERE m.cursor_id>:after AND {metrics.ACTIVE} AND p.id NOT IN (SELECT paper_id FROM archived_papers) "
+        "ORDER BY m.cursor_id LIMIT :limit",
         sharing.viewer_params(account, after=after, limit=limit + 1),
     ).fetchall()
     more = len(rows) > limit

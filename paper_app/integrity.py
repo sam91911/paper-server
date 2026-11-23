@@ -1,11 +1,14 @@
 """Read-only checks for PDF and uploaded research artifact integrity."""
 import argparse
 import hashlib
-import sqlite3
-from contextlib import closing
 from pathlib import Path
 
 from . import database as storage, library
+
+
+def file_sha256(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def bad_artifacts(db):
@@ -38,7 +41,7 @@ def check(database):
         database_ok = True
     else:
         database = database.resolve(strict=True)
-        with closing(sqlite3.connect(f'{database.as_uri()}?mode=ro', uri=True)) as db:
+        with storage.read_sqlite(database) as db:
             rows = db.execute('SELECT id,path,sha256 FROM papers WHERE sha256 IS NOT NULL').fetchall()
             sqlite_ok = db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
             foreign_keys_ok = not db.execute('PRAGMA foreign_key_check').fetchone()
@@ -51,8 +54,7 @@ def check(database):
         path = Path(path).absolute()
         referenced.add(path)
         try:
-            with path.open('rb') as stream:
-                actual = hashlib.file_digest(stream, 'sha256').hexdigest()
+            actual = file_sha256(path)
         except OSError:
             missing.append(paper_id)
             continue

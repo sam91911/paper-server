@@ -378,6 +378,11 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
 #issued-key-label { margin-top: 1rem; }
 .document-location { font-weight: 650; }
 
+.metric-form { display: grid; gap: .75rem; margin-top: 1rem; max-width: 50rem; }
+.metric-form fieldset { display: grid; gap: .75rem; min-width: 0; margin: 0; padding: 0; border: 0; }
+.metric-form textarea { min-height: 4rem; }
+#metric-revisions p { padding-bottom: .75rem; border-bottom: 1px solid var(--line); }
+
 .recipient-field { position: relative; min-width: 0; }
 .recipient-options {
   position: absolute;
@@ -404,19 +409,29 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
 #agent-dialog::backdrop { background: #132b3c88; }
 .agent-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
 .agent-toolbar h2, .agent-toolbar button { margin: 0; }
-#agent-dialog textarea { min-height: 5rem; font-family: ui-monospace, monospace; }
 #agent-dialog .inline-check { margin: .8rem 0; }
+#agent-review-result { padding: .75rem 1rem; border-radius: .55rem; background: var(--soft); }
 
 .goal-brief-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.skill-form { display: grid; gap: .9rem; max-width: 50rem; }
+.skill-form, .experiment-form { display: grid; gap: .9rem; max-width: 50rem; }
 .skill-results { padding-left: 0; list-style: none; }
 .skill-results li + li { margin-top: .7rem; }
 .skill-results p { margin: .25rem 0; }
 .skill-markdown { white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem; background: var(--soft); }
+
+.experiment-picker { max-width: 50rem; }
+.experiment-group { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.experiment-group > h3, .experiment-form > h4 { margin: 0; }
+.experiment-group > .experiment-form { margin-top: .75rem; }
+.experiment-form textarea { min-height: 4.5rem; }
+.experiment-records { display: grid; gap: .6rem; margin: .75rem 0 1rem; overflow-wrap: anywhere; }
+.experiment-records:empty, #experiment-workspace:empty, #experiment-description:empty { display: none; }
+.experiment-records > * { padding: .75rem 1rem; border-radius: .6rem; background: var(--soft); }
+.experiment-records h4 { margin: 0; }
 
 @media (max-width: 32rem) {
   .bottom-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }

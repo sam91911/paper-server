@@ -145,7 +145,7 @@ function activate(context) {
 
   register("openDocument", async () => {
     const session = await connection();
-    const { documents } = await session.send("/api/documents");
+    const { documents } = await session.send("/api/documents?comments=none&content=summary");
     const choices = documents.map(item => ({
       label: item.title, description: item.owner_id === session.account.id ? "Editable" : "Read only", item,
     }));

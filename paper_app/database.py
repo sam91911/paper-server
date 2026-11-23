@@ -3,7 +3,7 @@
 import os
 import re
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -46,6 +46,11 @@ def pdf_directory(target):
         return target.pdf_dir
     path = Path(target).absolute()
     return path.with_name(path.name + ".pdfs")
+
+
+def read_sqlite(path):
+    """Open an existing SQLite file read-only and close it on context exit."""
+    return closing(sqlite3.connect(f"{path.resolve(strict=True).as_uri()}?mode=ro", uri=True))
 
 
 def begin(db, *, write=False):

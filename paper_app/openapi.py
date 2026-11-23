@@ -146,6 +146,26 @@ SCHEMAS = {
 
 COMMENTS_PAGE = obj({"comments": array(ref("Comment")), "next_before": nullable(ID)}, ("comments", "next_before"))
 SKILL_DETAIL = obj({"skill": ref("Skill")}, ("skill",))
+REVIEW_KIND = enum("paper", "document", "thread")
+AI_ROLE = enum("local", "cloud")
+REVIEW = obj({
+    "id": ID, "kind": REVIEW_KIND, "target_id": ID, "position": nullable(ID), "post": BOOLEAN,
+    "status": enum("pending", "complete", "failed"), "response": STRING, "comment_id": nullable(ID),
+    "agent": STRING, "agent_role": AI_ROLE,
+    "thread": array(obj({"id": ID, "body": STRING}, ("id", "body"))),
+}, ("id", "kind", "target_id", "position", "post", "status", "response", "comment_id", "agent", "agent_role"))
+REVIEW_DETAIL = obj({"review": REVIEW}, ("review",))
+REVIEW_LIST = obj({"reviews": array(REVIEW)}, ("reviews",))
+METRIC_FIELDS = {"page": ID, "metric": STRING, "value": STRING, "unit": STRING,
+                 "conditions": STRING, "evidence": STRING}
+PAPER_METRIC = obj({"id": ID, "paper_id": ID, "revision": ID, "can_edit": BOOLEAN, "removed": BOOLEAN, **METRIC_FIELDS},
+                   ("id", "paper_id", "revision", "can_edit", "removed", *METRIC_FIELDS))
+METRIC_HISTORY = obj({
+    "original": obj(METRIC_FIELDS, METRIC_FIELDS),
+    "corrections": array(obj({"revision": ID, "editor": STRING, "reason": STRING, "created": STRING, "removed": BOOLEAN, **METRIC_FIELDS},
+                             ("revision", "editor", "reason", "created", "removed", *METRIC_FIELDS))),
+    "next_before": nullable(ID), "editors": array(STRING),
+}, ("original", "corrections", "next_before"))
 CROSSREF = array(obj({**METADATA, "short_venue": STRING, "venue_group": STRING}))
 PATHS = {
     "/api/account": {"get": operation("Check the current account",
@@ -167,6 +187,32 @@ PATHS = {
         obj({"metrics": array(obj({"paper_id": ID, "page": ID, "paper": STRING, "metric": STRING, "value": STRING,
                                    "unit": STRING, "conditions": STRING, "evidence": STRING})), "next_after": nullable(ID)},
             ("metrics", "next_after")), params=(AFTER,))},
+    "/api/paper-metrics": {
+        "get": operation("List a paper's metrics with current revisions and edit permissions",
+            obj({"metrics": array(PAPER_METRIC), "next_after": nullable(ID),
+                 "can_manage_editors": BOOLEAN, "can_claim_paper": BOOLEAN},
+                ("metrics", "next_after", "can_manage_editors", "can_claim_paper")),
+            params=(PAPER_ID, AFTER, param("removed", enum("0", "1"), description="Use 1 to list removed metrics."))),
+        "post": operation("Correct, remove, or restore a metric you have permission to edit",
+            acknowledgement("metric_id", "revision", "removed", metric_id=ID, revision=ID, removed=BOOLEAN),
+            body=obj({"metric_id": ID, "revision": ID, "reason": STRING, "action": enum("correct", "remove", "restore"), **METRIC_FIELDS},
+                     ("metric_id", "revision", "reason")),
+            description="Requires paper access and ownership or an explicit grant. Trusted humans can edit legacy unowned metrics. The default action is correct and requires a changed field. Remove and restore require only the ID, revision, action, and reason. A stale revision returns 409."),
+    },
+    "/api/metric-history": {"get": operation("Read the extracted values and correction history",
+        METRIC_HISTORY, params=(param("metric_id", ID, required=True), BEFORE),
+        description="Only the paper owner receives the list of named editors.")},
+    "/api/metric-editors": {"post": operation("Grant or revoke edit access to one metric as its paper owner",
+        acknowledgement(), body=obj({"metric_id": ID, "username": STRING, "action": enum("grant", "revoke")},
+                                    ("metric_id", "username", "action")),
+        description="An editor still needs permission to view the paper.")},
+    "/api/claim-paper": {"post": operation("Take ownership of a legacy unowned paper as a trusted human",
+        acknowledgement(), body=obj({"paper_id": ID}, ("paper_id",)),
+        description="The library preserves the paper's trusted-human read access.")},
+    "/api/detect-paper-metrics": {"post": operation("Detect metrics from the verified PDF of a paper you manage",
+        obj({"metrics": COUNT, "has_text": BOOLEAN}, ("metrics", "has_text")),
+        body=obj({"paper_id": ID, "keywords": array(STRING)}, ("paper_id",)),
+        description="Keywords are literal nearby phrases. Leave them empty to use the default detector. Existing revisions and removals are preserved.")},
     "/api/search-papers": {"post": operation("Search Crossref", CROSSREF,
         body=obj({"topic": STRING, "keywords": array(STRING), "publisher": STRING, "year_from": nullable(ID),
                   "year_to": nullable(ID)}, ("topic",)))},
@@ -175,7 +221,8 @@ PATHS = {
         body=BINARY, request_type="application/pdf",
         params=(param("X-Paper-Filename", STRING, location="header", required=True, description="Percent-encoded PDF filename."),
                 param("X-Paper-Audience", AUDIENCE, location="header"),
-                param("X-Paper-Recipients", STRING, location="header", description="Percent-encoded JSON array of usernames.")))},
+                param("X-Paper-Recipients", STRING, location="header", description="Percent-encoded JSON array of usernames."),
+                param("X-Paper-Metric-Keywords", STRING, location="header", description="Percent-encoded JSON array of up to 20 literal keyword phrases.")))},
     "/papers/{paper_id}/source.pdf": {"get": operation("Download a visible PDF", BINARY,
         params=(param("paper_id", ID, location="path", required=True), param("download", enum("1"))),
         response_type="application/pdf")},
@@ -255,6 +302,29 @@ PATHS = {
         body=BINARY, request_type="application/octet-stream")},
     "/research-versions/{version_id}/file": {"get": operation("Download a visible uploaded artifact version", BINARY,
         params=(param("version_id", ID, location="path", required=True),), response_type="application/octet-stream")},
+    "/api/review-agents": {"get": operation("List AI accounts eligible to access the review target",
+        obj({"agents": array(obj({"username": STRING, "display_name": STRING, "role": AI_ROLE},
+                                 ("username", "display_name", "role")))}, ("agents",)),
+        params=(param("kind", REVIEW_KIND, required=True), param("target_id", ID, required=True)),
+        description="Requires a human account with access to the target. Eligibility follows source sharing.")},
+    "/api/reviews": {
+        "get": operation("Read your review requests or pending AI assignments",
+            {"oneOf": [REVIEW_DETAIL, REVIEW_LIST]},
+            params=(param("id", ID, description="Return one request, including thread context for the assigned AI."),
+                    param("kind", REVIEW_KIND), param("target_id", ID)),
+            description="AI accounts receive up to 30 pending assignments in creation order. Human accounts receive up to 30 of their own requests, newest first. Supply kind and target_id together to filter by source."),
+        "post": operation("Request a review or return an assigned review result",
+            acknowledgement("review", review=REVIEW), body={"oneOf": [
+                obj({"action": enum("create"), "kind": REVIEW_KIND, "target_id": ID, "position": nullable(ID),
+                     "agent": STRING, "agent_role": AI_ROLE, "post": BOOLEAN},
+                    ("action", "kind", "target_id", "agent", "agent_role")),
+                obj({"action": enum("complete"), "id": ID, "status": enum("complete", "failed"), "response": STRING},
+                    ("action", "id", "status", "response")),
+            ]}),
+    },
+    "/api/skills/default": {"get": operation("Fetch the built-in guide to using the library API",
+        obj({"skill": obj({"id": enum("default"), "title": STRING, "description": STRING, "markdown": STRING,
+                           "tags": array(STRING)}, ("id", "title", "description", "markdown", "tags"))}, ("skill",)))},
     "/api/skills": {
         "get": operation("Find visible skills", obj({"skills": array(ref("SkillSummary")), "next_after": nullable(ID)},
                                                    ("skills", "next_after")),

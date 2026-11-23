@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
-from . import account_routes, accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, library, metadata_sync, openapi, paper_routes, sharing, skills, tools_catalog
+from . import account_routes, accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
 WEB_ROOT = Path(__file__).resolve().with_name("web")
@@ -172,6 +172,8 @@ class Handler(BaseHTTPRequestHandler):
             self.google_login(url)
         elif route == "/api/openapi.json":
             self.send_json(200, openapi.document(self.server.server_port))
+        elif route in ("/api/reviews", "/api/review-agents"):
+            self.read_reviews(url)
         elif route == "/api/skills" or route.startswith("/api/skills/"):
             self.read_skills(url)
         elif route in ASSETS:
@@ -181,12 +183,15 @@ class Handler(BaseHTTPRequestHandler):
             self.serve_pdf(int(match[1]), download=url.query == "download=1")
         elif route == "/exports/metrics.csv":
             self.export_metrics()
-        elif route in ("/api/paper-catalog", "/api/paper-detail", "/api/paper-archive", "/api/paper-comment-targets"):
+        elif route in ("/api/paper-catalog", "/api/paper-detail", "/api/paper-archive", "/api/paper-comment-targets",
+                       "/api/paper-metrics", "/api/metric-history"):
             try:
                 with library.connect(self.server.database) as db:
                     storage.begin(db)
                     data = paper_routes.read_papers(self, db, url, self.current_account(db))
                 self.send_json(200, data)
+            except accounts.SignInRequired:
+                self.send_json(401, {"error": "Sign in to continue."})
             except sharing.AccessDenied:
                 self.send_json(404, {"error": "Paper not found or unavailable."})
             except ValueError as error:
@@ -374,12 +379,40 @@ class Handler(BaseHTTPRequestHandler):
             self.send_data(200, payload, "application/pdf",
                            pdf_download=Path(paper["path"]).name if download else None)
 
+    def read_reviews(self, url):
+        try:
+            params = parse_qs(url.query, keep_blank_values=True)
+            with library.connect(self.server.database) as db:
+                storage.begin(db)
+                account = self.require_account(db)
+                kind = params.get("kind", [None])[0]
+                target_id = skills.query_id(params["target_id"][0]) if "target_id" in params else None
+                if url.path == "/api/review-agents":
+                    data = reviews.eligible_agents(db, account, kind, target_id)
+                else:
+                    review_id = skills.query_id(params["id"][0]) if "id" in params else None
+                    data = reviews.read(db, account, review_id=review_id, kind=kind, target_id=target_id)
+            self.send_json(200, data)
+        except accounts.SignInRequired:
+            self.send_json(401, {"error": "Sign in to continue."})
+        except LookupError:
+            self.send_json(404, {"error": "Review unavailable."})
+        except sharing.AccessDenied:
+            self.send_json(403, {"error": "This review target is unavailable."})
+        except ValueError as error:
+            self.send_json(400, {"error": str(error)})
+        except storage.ERRORS as error:
+            LOG.error("Review read failed (%s)", type(error).__name__)
+            self.send_json(500, {"error": "Could not read reviews."})
+
     def read_skills(self, url):
         try:
             with library.connect(self.server.database) as db:
                 storage.begin(db)
                 account = self.require_account(db)
-                if url.path == "/api/skills":
+                if url.path == "/api/skills/default":
+                    data = {"skill": skills.DEFAULT_SKILL}
+                elif url.path == "/api/skills":
                     params = parse_qs(url.query, keep_blank_values=True)
                     archived = params.get("archived", ["0"])[0]
                     if archived not in ("0", "1"):
@@ -448,6 +481,19 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 self.send_json(200, matches)
                 return
+            if self.path == "/api/detect-paper-metrics":
+                paper_id = data.get("paper_id")
+                if not reviews.valid_id(paper_id):
+                    raise ValueError("Choose a paper.")
+                keywords = pdf.detection_keywords(data.get("keywords", []))
+                try:
+                    result = pdf.detect_existing(self.server.database, paper_id, keywords,
+                                                 get_account=self.require_account, size_limit=MAX_PDF_BYTES)
+                except (subprocess.SubprocessError, OSError):
+                    self.send_json(422, {"error": "Could not read or extract the verified PDF."})
+                    return
+                self.send_json(200, result)
+                return
             with library.connect(self.server.database) as db:
                 storage.begin(db, write=True)
                 result = self.update(db, data)
@@ -470,7 +516,8 @@ class Handler(BaseHTTPRequestHandler):
         except RuntimeError as error:
             self.send_json(502, {"error": str(error)})
         except LookupError:
-            self.send_json(404, {"error": "Skill unavailable." if self.path == "/api/skills" else "Unknown route"})
+            errors = {"/api/skills": "Skill unavailable.", "/api/reviews": "Review unavailable."}
+            self.send_json(404, {"error": errors.get(self.path, "Unknown route")})
 
     def upload_research_file(self):
         if self.headers.get_content_type() != "application/octet-stream":
@@ -515,6 +562,8 @@ class Handler(BaseHTTPRequestHandler):
             audience = sharing.validate_audience(self.headers.get("X-Paper-Audience", "owner"))
             recipients_header = self.headers.get("X-Paper-Recipients")
             recipients = json.loads(unquote(recipients_header)) if recipients_header is not None else None
+            keyword_header = self.headers.get("X-Paper-Metric-Keywords")
+            keywords = pdf.detection_keywords(json.loads(unquote(keyword_header, errors="strict"))) if keyword_header else ()
             size = int(self.headers.get("Content-Length", "0"))
             filename = unquote(self.headers.get("X-Paper-Filename", ""), errors="strict")
             filename = filename.replace("\\", "/").rsplit("/", 1)[-1]
@@ -528,7 +577,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = self.rfile.read(size)
             if len(payload) != size or b"%PDF-" not in payload[:1024]:
                 raise ValueError("The upload is incomplete or is not a PDF")
-            result = import_pdf(self.server.database, filename, payload, account, audience, recipients)
+            result = import_pdf(self.server.database, filename, payload, account, audience, recipients, keywords=keywords)
             self.send_json(200, result)
         except accounts.SignInRequired:
             self.send_json(401, {"error": "Sign in to upload PDFs."})
@@ -545,6 +594,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(500, {"error": "Could not save the local PDF import"})
 
     def update(self, db, data):
+        if self.path == "/api/reviews":
+            account = self.require_account(db)
+            if data.get("action") == "create":
+                return reviews.create(db, account, data)
+            if data.get("action") == "complete":
+                return reviews.complete(db, account, data)
+            raise ValueError("Choose create or complete.")
         if self.path == "/api/skills":
             return {"skill": skills.save(db, self.require_account(db), data)}
         if self.path == "/api/research-goals":
@@ -563,18 +619,37 @@ class Handler(BaseHTTPRequestHandler):
             return document_routes.save(self, db, data)
         if self.path in ("/api/comments", "/api/delete-comment"):
             return comment_routes.update_comment(self, db, data)
-        if self.path not in ("/api/paper-access", "/api/metadata", "/api/memberships", "/api/archive-paper"):
+        if self.path not in ("/api/paper-access", "/api/metadata", "/api/memberships", "/api/archive-paper",
+                             "/api/paper-metrics", "/api/metric-editors", "/api/claim-paper"):
             raise LookupError
         return paper_routes.update_paper(self, db, data)
 
+
+
+def serve(database, port):
+    if not shutil.which("pdftotext"):
+        LOG.warning("pdftotext is unavailable; PDF import and text extraction will fail")
+    with ThreadingHTTPServer(("127.0.0.1", port), Handler) as server:
+        server.database = database
+        server.google_config = google_signin.configuration(server.server_port)
+        stop = Event()
+        worker = Thread(target=metadata_sync.run, args=(database, stop), daemon=True)
+        worker.start()
+        print(f"Paper library at http://127.0.0.1:{server.server_port}/", flush=True)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            stop.set()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", type=Path)
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--import-csv", type=Path, help="Import a metrics CSV and exit")
     modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--import-csv", type=Path, help="Import a metrics CSV and exit")
     modes.add_argument("--invite-human", metavar="EMAIL", help="Issue a one-time browser signup code")
     modes.add_argument("--create-account", nargs=2, metavar=("USERNAME", "ROLE"))
     modes.add_argument("--set-account-role", nargs=2, metavar=("USERNAME", "ROLE"))
@@ -614,12 +689,13 @@ def main():
             return
         if args.create_account or args.set_account_role:
             username, role = args.create_account or args.set_account_role
+            if args.create_account:
+                password = getpass.getpass("Password: ")
+                if password != getpass.getpass("Confirm password: "):
+                    raise ValueError("Passwords do not match.")
             with library.connect(database) as db:
                 storage.begin(db, write=True)
                 if args.create_account:
-                    password = getpass.getpass("Password: ")
-                    if password != getpass.getpass("Confirm password: "):
-                        raise ValueError("Passwords do not match.")
                     accounts.create_account(db, username, password, role)
                 else:
                     accounts.set_role(db, username, role)
@@ -632,21 +708,7 @@ def main():
                     count = library.import_csv(db, stream, args.import_csv.absolute().parent)
             print(f"Imported metrics for {count} paper path(s).")
             return
-        if not shutil.which("pdftotext"):
-            LOG.warning("pdftotext is unavailable; PDF import and text extraction will fail")
-        with ThreadingHTTPServer(("127.0.0.1", args.port), Handler) as server:
-            server.database = database
-            server.google_config = google_signin.configuration(server.server_port)
-            stop = Event()
-            worker = Thread(target=metadata_sync.run, args=(server.database, stop), daemon=True)
-            worker.start()
-            print(f"Paper library at http://127.0.0.1:{server.server_port}/", flush=True)
-            try:
-                server.serve_forever()
-            except KeyboardInterrupt:
-                pass
-            finally:
-                stop.set()
+        serve(database, args.port)
     except storage.ERRORS + (csv.Error, ValueError, OSError, EOFError) as error:
         parser.exit(1, f"Paper library: {error}\n")
 

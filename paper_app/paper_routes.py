@@ -3,7 +3,7 @@
 import re
 from urllib.parse import parse_qs
 
-from . import library, metadata_sync, sharing
+from . import accounts, library, metadata_sync, metrics, sharing
 
 
 def _positive_number(value, label):
@@ -21,6 +21,21 @@ def read_papers(handler, db, url, account):
 
     def field(key, default=""):
         return params.get(key, [default])[0]
+
+    if url.path in ("/api/paper-metrics", "/api/metric-history"):
+        if account is None:
+            raise accounts.SignInRequired
+        if url.path == "/api/metric-history":
+            before = field("before")
+            return metrics.history(db, account, _positive_number(field("metric_id"), "metric"),
+                                   _positive_number(before, "revision") if before else None)
+        after = field("after", "0")
+        removed = field("removed", "0")
+        if removed not in ("0", "1"):
+            raise ValueError("Use removed=0 or removed=1.")
+        return metrics.list_metrics(db, account, _positive_number(field("paper_id"), "paper"),
+                                    0 if after == "0" else _positive_number(after, "metric cursor"),
+                                    removed=removed == "1")
 
     if url.path == "/api/paper-detail":
         return library.paper_detail(db, account, _positive_number(field("paper_id"), "paper"))
@@ -52,6 +67,14 @@ def read_papers(handler, db, url, account):
 
 
 def update_paper(handler, db, data):
+    if handler.path in ("/api/paper-metrics", "/api/metric-editors", "/api/claim-paper"):
+        account = handler.require_account(db)
+        if handler.path == "/api/paper-metrics":
+            return metrics.correct(db, account, data)
+        if handler.path == "/api/metric-editors":
+            return metrics.set_editor(db, account, data)
+        return metrics.claim_paper(db, account, data.get("paper_id"))
+
     paper_id = data.get("paper_id")
     if type(paper_id) is not int:
         raise ValueError("Select a paper")

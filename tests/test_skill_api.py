@@ -5,7 +5,7 @@ import unittest
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from paper_app import accounts, library, server
 from paper_client import review
@@ -116,6 +116,14 @@ class SkillAPITests(unittest.TestCase):
 
 
 class ReviewSkillTests(unittest.TestCase):
+    def test_document_review_fetches_only_the_selected_document(self):
+        client = Mock()
+        client.get_json.return_value = {"document": {"title": "Methods", "markdown": "One\nTwo"}}
+        context, payload = review.document_context(client, 7, 2)
+        client.get_json.assert_called_once_with("/api/document?id=7")
+        self.assertEqual(context, "Document: Methods\n\nOne\nTwo")
+        self.assertEqual(payload, {"document_id": 7, "location": {"kind": "document", "id": 7, "position": 2}})
+
     def test_review_routes_use_explicit_skill(self):
         skill = {"title": "Quality checklist", "markdown": "Check the results.", "archived": False}
         for flags, mode in ((["--model", "local.gguf"], "review"), (["--cloud"], "cloud_review")):

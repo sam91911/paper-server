@@ -77,7 +77,8 @@ function showSkill(skill) {
   const owned = skill.owner_id === account.id;
   byId("skill-title").textContent = skill.title;
   byId("skill-description").textContent = skill.description;
-  byId("skill-meta").textContent = [`ID ${skill.id}`, ...skill.tags, ...(skill.archived ? ["Archived"] : [])].join(" · ");
+  byId("skill-meta").textContent = [skill.id === "default" ? "Built in" : `ID ${skill.id}`,
+    ...skill.tags, ...(skill.archived ? ["Archived"] : [])].join(" · ");
   byId("skill-markdown").textContent = skill.markdown;
   edit.hidden = !owned || skill.archived;
   archive.hidden = !owned;
@@ -139,6 +140,7 @@ search.addEventListener("submit", (event) => {
 });
 more.addEventListener("click", () => loadSkills(true));
 byId("new-skill").addEventListener("click", () => openEditor(null));
+byId("default-skill").addEventListener("click", () => openSkill("default"));
 edit.addEventListener("click", () => openEditor(selected));
 archive.addEventListener("click", () => {
   saveSkill({ action: selected.archived ? "restore" : "archive", id: selected.id, revision: selected.revision }, archive);
@@ -164,6 +166,7 @@ async function initialize() {
     if (account) {
       byId("skill-library").hidden = false;
       await loadSkills();
+      if (new URLSearchParams(location.search).get("skill") === "default") await openSkill("default");
     }
   } catch (error) {
     report(error);

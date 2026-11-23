@@ -12,6 +12,11 @@ cc-papers/
 .agents/
 __pycache__/
 *.py[cod]
+*.egg-info/
+/build/
+/dist/
+/paper_client/build/
+/paper_client/dist/
 
 # Isolated arXiv example library
 /.paper-demo/

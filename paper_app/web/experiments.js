@@ -4,6 +4,7 @@ const $ = id => document.getElementById(id);
 const picker = $("experiments");
 const detail = $("detail");
 const retryButton = $("retry-experiment-load");
+const newExperiment = $("new-experiment");
 const experimentForm = $("experiment-form");
 const runForm = $("run-form");
 const itemForm = $("item-form");
@@ -244,6 +245,7 @@ submit(experimentForm, fields => api("experiments", {
   paper_id: fields.paper_id.value ? Number(fields.paper_id.value) : null,
   research_document_id: fields.research_document_id.value ? Number(fields.research_document_id.value) : null,
 }), result => {
+  newExperiment.open = false;
   for (const form of detailForms) form.reset();
   editRun();
   return refreshExperiments(result.id, true);
@@ -323,6 +325,9 @@ async function loadTools() {
   }
 }
 
-if (requested?.has("document")) experimentForm.elements.research_document_id.value = requested.get("document");
+if (requested?.has("document")) {
+  experimentForm.elements.research_document_id.value = requested.get("document");
+  newExperiment.open = true;
+}
 refreshExperiments(Number(requested?.get("id")) || null);
 loadTools().catch(error => { $("tools-status").textContent = error.message; });

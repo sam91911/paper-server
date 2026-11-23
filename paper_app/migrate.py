@@ -7,15 +7,13 @@ import tempfile
 from contextlib import closing
 from pathlib import Path
 
-from . import backup, database, integrity, library
+from . import database, integrity, library
 
 
 def stage_source(source, snapshot):
-    source = source.resolve(strict=True)
     snapshot.touch(mode=0o600)
-    with closing(sqlite3.connect(f"{source.as_uri()}?mode=ro", uri=True)) as original:
-        with closing(sqlite3.connect(snapshot)) as copy:
-            original.backup(copy)
+    with database.read_sqlite(source) as original, closing(sqlite3.connect(snapshot)) as copy:
+        original.backup(copy)
     library.initialize(snapshot)
 
 
@@ -32,7 +30,7 @@ def stage_pdfs(db, staged, destination):
         except OSError as error:
             raise ValueError(f"Could not copy the PDF for paper {paper_id}.") from error
         copy.chmod(0o600)
-        if backup.digest(copy) != expected:
+        if integrity.file_sha256(copy) != expected:
             raise ValueError(f"PDF integrity check failed for paper {paper_id}.")
         final = str(destination / relative)
         db.execute("UPDATE papers SET path=? WHERE id=?", (final, paper_id))
@@ -63,10 +61,6 @@ def copy_tables(source, db):
         ).fetchone()
         rows = source.execute(f"SELECT * FROM {table}")
         columns = [column[0] for column in rows.description]
-        if name == "metrics":
-            # Preserve the order (and values) of current metric page cursors.
-            rows = source.execute("SELECT *,rowid FROM metrics ORDER BY rowid")
-            columns.append("cursor_id")
         field_names = ", ".join(map(quote, columns))
         markers = ", ".join("?" for _ in columns)
         # Initialization seeds the comment sequence; the copy supplies its value.

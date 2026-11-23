@@ -9,6 +9,7 @@ import platform
 import shutil
 import subprocess
 import tempfile
+import time
 from contextlib import suppress
 from pathlib import Path
 from urllib.error import HTTPError
@@ -29,6 +30,12 @@ INSTRUCTIONS = (
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, message, headers, new_url):
         return None
+
+
+class LibraryError(ValueError):
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
 
 
 class LibraryClient:
@@ -55,7 +62,7 @@ class LibraryClient:
                 message = json.loads(response).get("error")
             except (ValueError, AttributeError):
                 message = None
-            raise ValueError(message or f"Library returned HTTP {error.code}.") from error
+            raise LibraryError(message or f"Library returned HTTP {error.code}.", error.code) from error
         if len(contents) > limit:
             raise ValueError("The library response exceeds the expected size.")
         return contents
@@ -116,10 +123,7 @@ def review(model, context, *, skill=None):
 
 
 def document_context(client, document_id, line):
-    data = client.get_json("/api/documents")
-    document = next((item for item in data["documents"] if item["id"] == document_id), None)
-    if not document:
-        raise ValueError("This document is unavailable to the agent account.")
+    document = client.get_json(f"/api/document?id={document_id}")["document"]
     payload = {"document_id": document_id}
     content = document["markdown"]
     if line is not None:
@@ -154,14 +158,17 @@ def thread_context(client, comment_id):
     return context[:CONTEXT_LIMIT], {**host, "parent_id": comment_id}
 
 
+def pdf_context(client, paper_id, page):
+    pdf = client.request(f"/papers/{paper_id}/source.pdf", limit=PDF_LIMIT)
+    return f"PDF page {page}\n\n{page_text(pdf, page)}"
+
+
 def review_context(client, args):
     if args.thread:
         return thread_context(client, args.thread)
     if args.document:
         return document_context(client, args.document, args.line)
-    pdf = client.request(f"/papers/{args.paper_id}/source.pdf", limit=PDF_LIMIT)
-    text = page_text(pdf, args.page)
-    return f"PDF page {args.page}\n\n{text}", {
+    return pdf_context(client, args.paper_id, args.page), {
         "paper_id": args.paper_id,
         "location": {"kind": "pdf", "id": args.paper_id, "position": args.page},
     }
@@ -204,6 +211,56 @@ def cloud_review(context, *, skill=None):
     return comment.strip()
 
 
+def assignment_context(client, assignment):
+    source_id = assignment["target_id"]
+    position = assignment["position"]
+    if assignment["kind"] == "thread":
+        selected, *ancestors = assignment["thread"]
+        excerpts = [f"Selected comment: {selected['body']}"]
+        excerpts.extend(f"Parent comment: {item['body']}" for item in ancestors)
+        return "\n\n".join(excerpts)[:CONTEXT_LIMIT]
+    if assignment["kind"] == "document":
+        return document_context(client, source_id, position)[0]
+    return pdf_context(client, source_id, position)
+
+
+def complete_assignment(client, review_id, args, selection):
+    route = f"/api/reviews?id={review_id}"
+    assignment = client.get_json(route)["review"]
+    if assignment["status"] != "pending":
+        return
+    try:
+        context = assignment_context(client, assignment)
+        response = cloud_review(context, **selection) if args.cloud else review(args.model, context, **selection)
+        status = "complete"
+    except (OSError, ValueError, subprocess.SubprocessError, EOFError) as error:
+        print(f"Review #{review_id}: {error}")
+        response = "The reviewer could not process the source or run the model. Check the AI workstation."
+        status = "failed"
+    client.request("/api/reviews", {
+        "action": "complete", "id": review_id, "status": status, "response": response,
+    })
+    print(f"Review #{review_id}: {status}.", flush=True)
+
+
+def watch_reviews(client, args, selection):
+    print(f"Waiting for review requests on {client.base}. Press Ctrl+C to stop.", flush=True)
+    try:
+        while True:
+            try:
+                for assignment in client.get_json("/api/reviews")["reviews"]:
+                    try:
+                        complete_assignment(client, assignment["id"], args, selection)
+                    except LibraryError as error:
+                        if error.status not in (403, 404, 409):
+                            raise
+            except OSError as error:
+                print(f"Could not reach the library: {error}", flush=True)
+            time.sleep(3)
+    except KeyboardInterrupt:
+        return
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paper_id", type=int, nargs="?")
@@ -218,6 +275,7 @@ def main():
     parser.add_argument("--skill", type=int, help="Apply a visible library skill by ID")
     parser.add_argument("--post", action="store_true", help="Save the result as a comment")
     parser.add_argument("--check", action="store_true", help="Check local tools; no sign-in required")
+    parser.add_argument("--watch", action="store_true", help="Process review requests assigned to this account over the library API")
     parser.add_argument("--audience", choices=("owner", "users", "local", "all"), default="owner",
                         help="Comment audience when posting (default: owner)")
     args = parser.parse_args()
@@ -229,7 +287,12 @@ def main():
         print(f"Cloud endpoint and model: {'configured' if configured else 'not configured'}")
         return
     targets = [target for target in (args.paper_id, args.document, args.thread) if target is not None]
-    if len(targets) != 1 or not 0 < targets[0] < 2**63 or not 0 < args.port <= 65535:
+    if not 0 < args.port <= 65535:
+        parser.error("Choose a valid library API port.")
+    if args.watch:
+        if targets or args.post or args.line is not None or args.page != 1 or args.audience != "owner":
+            parser.error("With --watch, review targets and posting options come from the API.")
+    elif len(targets) != 1 or not 0 < targets[0] < 2**63:
         parser.error("Choose exactly one paper ID, --document ID, or --thread ID and a valid port.")
     if not 0 < args.page <= 1_000_000 or (args.line is not None and (not args.document or not 0 < args.line <= 1_000_000)):
         parser.error("Choose a valid PDF page or document line.")
@@ -250,13 +313,16 @@ def main():
             client.request("/api/sign-in", {"username": args.username, "password": getpass.getpass("Password: ")})
             password_session = client
         client.require_role("cloud" if args.cloud else "local")
-        context, payload = review_context(client, args)
         selection = {}
         if args.skill:
             skill = client.get_json(f"/api/skills/{args.skill}")["skill"]
             if skill["archived"]:
                 raise ValueError("Restore the archived skill before using it in a review.")
             selection["skill"] = skill
+        if args.watch:
+            watch_reviews(client, args, selection)
+            return
+        context, payload = review_context(client, args)
         comment = cloud_review(context, **selection) if args.cloud else review(args.model, context, **selection)
         if args.post:
             payload.update(body=comment, audience=args.audience)

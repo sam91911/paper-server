@@ -47,6 +47,7 @@
   <p id="pdf-sign-in"><a href="/account">Sign in to upload PDFs</a>.</p>
   <form id="pdf-import" hidden>
     <label>Add paper PDFs <input id="paper-pdf" type="file" accept=".pdf,application/pdf" multiple required></label>
+    <label>Metric keywords (comma-separated) <input name="metric_keywords" maxlength="1220" placeholder="e.g. peak power, PSNR"></label>
     <label>File access <select name="audience" class="audience-options"></select></label>
     <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
     <button id="import-pdf-button">Import and extract metrics</button>
@@ -138,6 +139,60 @@
     <details>
       <summary>Group membership</summary>
       <form id="membership"><div id="group-options"></div><button>Save groups</button></form>
+    </details>
+    <details id="paper-metrics">
+      <summary>Metric corrections</summary>
+      <p id="metric-correction-status" role="status"></p>
+      <form id="detect-paper-metrics" class="account-actions" hidden>
+        <label>Detection keywords (comma-separated) <input name="keywords" maxlength="1220" placeholder="e.g. peak power, PSNR"></label>
+        <button class="secondary">Detect metrics from PDF</button>
+      </form>
+      <form id="claim-metric-paper" hidden>
+        <p>Take ownership of this legacy paper to share it and assign metric editors.</p>
+        <button>Take ownership</button>
+      </form>
+      <div class="account-actions">
+        <label>Show <select id="metric-state"><option value="0">Active metrics</option><option value="1">Removed metrics</option></select></label>
+        <label>Metric <select id="metric-correction-picker"><option value="">Choose a metric</option></select></label>
+        <button id="more-paper-metrics" class="secondary" type="button" hidden>Load more metrics</button>
+        <button id="reload-paper-metrics" class="secondary" type="button">Refresh metrics</button>
+      </div>
+      <div id="metric-correction-detail" hidden>
+        <p id="metric-current" class="comment-body"></p>
+        <form id="metric-correction-form" class="metric-form" hidden>
+          <fieldset id="metric-correction-fields">
+            <div class="metadata-fields">
+              <label>Page <input name="page" type="number" min="1" required></label>
+              <label>Metric <input name="metric" maxlength="500" required></label>
+              <label>Value <input name="value" inputmode="decimal" maxlength="100" required></label>
+              <label>Unit <input name="unit" maxlength="200"></label>
+            </div>
+            <label>Conditions <textarea name="conditions" rows="2" maxlength="20000"></textarea></label>
+            <label>Evidence <textarea name="evidence" rows="2" maxlength="50000"></textarea></label>
+          </fieldset>
+          <label>Reason <textarea name="reason" rows="2" maxlength="2000" required></textarea></label>
+          <div>
+            <button id="save-metric-correction" name="action" value="correct">Save correction</button>
+            <button id="remove-metric" class="secondary" name="action" value="remove">Remove metric</button>
+            <button id="restore-metric" name="action" value="restore" hidden>Restore metric</button>
+          </div>
+        </form>
+        <details id="metric-correction-history">
+          <summary>Original values and correction history</summary>
+          <div id="metric-revisions"></div>
+          <button id="older-metric-revisions" class="secondary" type="button" hidden>Load older corrections</button>
+        </details>
+        <form id="metric-editors-form" class="metric-form" hidden>
+          <h3>Editors for this metric</h3>
+          <p id="metric-editor-names"></p>
+          <p>Each editor also needs access to this paper.</p>
+          <div class="metadata-fields">
+            <label>Account username <input name="username" maxlength="32" required></label>
+            <label>Access <select name="action"><option value="grant">Grant edit access</option><option value="revoke">Revoke edit access</option></select></label>
+          </div>
+          <div><button>Update editor access</button></div>
+        </form>
+      </div>
     </details>
     <details id="paper-comments">
       <summary id="comment-summary">Comments</summary>
@@ -417,25 +472,21 @@
     <button class="secondary">Close</button>
   </form>
   <p id="agent-target"></p>
-  <p id="agent-tools" role="status"></p>
-  <div class="document-fields">
-    <label>Agent <select id="agent-engine">
-      <option value="local">Local GGUF model</option>
-      <option value="cloud">Cloud model via API</option>
-    </select></label>
-    <label>Terminal <select id="agent-platform">
-      <option value="linux">Linux</option><option value="macos">macOS</option><option value="windows">Windows PowerShell</option>
-    </select></label>
-    <label id="agent-position-field"><span id="agent-position-label">PDF page</span>
-      <input id="agent-position" type="number" min="1" max="1000000">
-    </label>
-  </div>
-  <p id="agent-prerequisites"></p>
-  <label class="inline-check"><input id="agent-post" type="checkbox"> Post the response as a private comment</label>
-  <label>Command <textarea id="agent-command" rows="3" readonly spellcheck="false"></textarea></label>
-  <button type="button" id="copy-agent-command">Copy command</button>
-  <button type="button" id="copy-agent-check" class="secondary">Copy local tool check</button>
-  <p id="copy-agent-status" role="status"></p>
+  <form id="request-agent-review">
+    <div class="document-fields">
+      <label>AI account <select id="agent-username" required><option value="">Choose an AI account</option></select></label>
+      <label id="agent-position-field"><span id="agent-position-label">PDF page</span>
+        <input id="agent-position" type="number" min="1" max="1000000">
+      </label>
+    </div>
+    <p id="agent-availability" role="status"></p>
+    <p id="agent-cloud-note" hidden>The assigned account must confirm before sending review context to its cloud provider.</p>
+    <label class="inline-check"><input id="agent-post" type="checkbox"> Also post a comment visible only to the AI account</label>
+    <button id="send-agent-review">Request review</button>
+  </form>
+  <p id="agent-review-status" role="status"></p>
+  <p id="agent-review-result" class="comment-body" hidden></p>
+  <p><a href="/skills?skill=default">API skill for AI clients</a></p>
 </dialog>
 <script src="/assets/api.js"></script>
 <script src="/assets/metrics.js"></script>

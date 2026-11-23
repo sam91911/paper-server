@@ -164,6 +164,29 @@ class LibraryTests(unittest.TestCase):
 
 
 class BackupTests(unittest.TestCase):
+    def test_restore_verifies_the_staged_database_before_publishing(self):
+        from paper_app import backup
+        import shutil
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = root / 'library.sqlite3'
+            library.initialize(original)
+            archive = root / 'backup'
+            backup.create(original, archive)
+            restored = root / 'restored.sqlite3'
+            copyfile = shutil.copyfile
+
+            def append_bytes(source, target):
+                copyfile(source, target)
+                with target.open('ab') as stream:
+                    stream.write(b'added during copy')
+
+            with patch('paper_app.backup.shutil.copyfile', side_effect=append_bytes):
+                with self.assertRaisesRegex(ValueError, 'database integrity check failed'):
+                    backup.restore(archive, restored)
+            self.assertFalse(restored.exists())
+            self.assertFalse((root / 'restored.sqlite3.pdfs').exists())
+
     def test_backup_restore_and_tamper_detection(self):
         from paper_app import backup
         with tempfile.TemporaryDirectory() as temporary:

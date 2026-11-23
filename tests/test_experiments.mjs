@@ -34,7 +34,7 @@ function deferred() {
   return {promise, resolve, reject};
 }
 
-async function setup() {
+async function setup(search = '') {
   const elements = new Map();
   function get(id) {
     if (!elements.has(id)) elements.set(id, element());
@@ -82,7 +82,7 @@ async function setup() {
     calls.push({route, options});
     return {ok: true, json: async () => ({id: 4})};
   }
-  vm.runInNewContext(source, {document, api, fetch});
+  vm.runInNewContext(source, {document, api, fetch, location: {search}, URLSearchParams});
   await new Promise(resolve => setImmediate(resolve));
   const picker = get('experiments');
   function select(id) {
@@ -92,6 +92,12 @@ async function setup() {
   }
   return {get, calls, next, picker, select};
 }
+
+test('a research document link opens and prefills the new experiment form', async () => {
+  const {get} = await setup('?document=7');
+  assert.equal(get('new-experiment').open, true);
+  assert.equal(get('experiment-form').elements.research_document_id.value, '7');
+});
 
 for (const staleError of [false, true]) {
   test(`latest selection wins when the older request ${staleError ? 'fails' : 'succeeds'}`, async () => {

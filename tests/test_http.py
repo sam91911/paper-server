@@ -1,6 +1,7 @@
 import io
 import json
 import csv
+import re
 import tempfile
 import unittest
 from email.message import Message
@@ -89,7 +90,7 @@ class HttpTests(unittest.TestCase):
 
     def test_metric_pages_apply_paper_access(self):
         with library.connect(self.db) as db:
-            db.executemany('INSERT INTO metrics VALUES (?,?,?,?,?,?,?)',
+            db.executemany('INSERT INTO metrics(paper_id,page,metric,value,unit,conditions,evidence) VALUES (?,?,?,?,?,?,?)',
                            ((self.papers[0], i + 1, 'power', str(i), 'W', '', '') for i in range(510)))
         status, payload = self.get('/api/metric-page')
         self.assertEqual(status, 200)
@@ -205,7 +206,7 @@ class HttpTests(unittest.TestCase):
 
     def test_csv_export_scopes_and_escapes_cells(self):
         with library.connect(self.db) as db:
-            db.execute('INSERT INTO metrics VALUES (?,?,?,?,?,?,?)',
+            db.execute('INSERT INTO metrics(paper_id,page,metric,value,unit,conditions,evidence) VALUES (?,?,?,?,?,?,?)',
                        (self.papers[0], 1, '=formula', '3', 'W', '', 'evidence'))
         status, payload = self.get('/exports/metrics.csv')
         self.assertEqual(status, 200)
@@ -258,6 +259,21 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         for name in scripts:
             self.assertEqual(self.get('/assets/' + name)[0], 200)
+
+    def test_experiments_uses_the_library_page_layout(self):
+        status, experiments = self.get('/experiments')
+        self.assertEqual(status, 200)
+        self.assertIn(b'<header class="page-header"><h1>Experiments</h1></header>', experiments)
+        self.assertIn(b'<main class="page-content">', experiments)
+
+        def navigation(page):
+            return re.search(rb'<nav class="bottom-nav"[^>]*>(.*?)</nav>', page, re.S)[1]
+
+        experiment_nav = navigation(experiments)
+        self.assertIn(b'<a href="/experiments" aria-current="page">', experiment_nav)
+        self.assertEqual(experiment_nav.count(b'aria-current="page"'), 1)
+        self.assertEqual(re.findall(rb'href="([^"]+)"', experiment_nav),
+                         re.findall(rb'href="([^"]+)"', navigation(self.get('/skills')[1])))
 
     def test_document_comments_are_scoped_and_backward_compatible(self):
         account = {'id': 1, 'role': 'user', 'username': 'owner'}

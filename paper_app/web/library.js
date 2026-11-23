@@ -181,6 +181,7 @@ function showPaper() {
   viewer.dataset.paper = selectedId;
   paperPicker.title = selected ? selected.title || selected.path : "";
   element("paper-detail").hidden = !selected;
+  resetPaperMetrics(selected);
   lookupResults.replaceChildren();
   lookupForm.reset();
   if (!selected) return;
@@ -193,6 +194,7 @@ function showPaper() {
   element("download-paper-pdf").href = `${pdfURL}?download=1`;
   const ownsPaper = selected.owner_id === libraryData.account?.id;
   const canManage = selected.owner_id === null || ownsPaper;
+  element("detect-paper-metrics").hidden = !canManage || !selected.has_pdf;
   element("archive-paper").hidden = !canManage;
   element("membership").closest("details").hidden = !canManage || libraryData.account?.role !== "user";
   lookupPaperForm.hidden = !canManage || libraryData.account?.role !== "user";
@@ -743,7 +745,11 @@ metadataForm.addEventListener("input", () => {
   element("metadata-source").textContent = "Source: Manual";
 });
 
-async function importPaper(file, audience, recipients) {
+function metricKeywords(value) {
+  return value.split(/[,\n]/).map(phrase => phrase.trim()).filter(Boolean);
+}
+
+async function importPaper(file, audience, recipients, keywords) {
   const response = await fetch("/api/papers", {
     method: "POST",
     headers: {
@@ -751,6 +757,7 @@ async function importPaper(file, audience, recipients) {
       "X-Paper-Filename": encodeURIComponent(file.name),
       "X-Paper-Audience": audience,
       "X-Paper-Recipients": encodeURIComponent(JSON.stringify(recipients)),
+      "X-Paper-Metric-Keywords": encodeURIComponent(JSON.stringify(keywords)),
     },
     body: file,
   });
@@ -767,6 +774,7 @@ submit(element("pdf-import"), async () => {
   const upload = element("pdf-import").elements;
   const audience = upload.audience.value;
   const recipients = recipientNames(upload.recipients.value);
+  const keywords = metricKeywords(upload.metric_keywords.value);
   const report = element("import-results");
   report.replaceChildren();
   report.hidden = false;
@@ -777,7 +785,7 @@ submit(element("pdf-import"), async () => {
     for (const [index, file] of files.entries()) {
       libraryStatus.textContent = `Importing PDF ${index + 1} of ${files.length}…`;
       try {
-        const imported = await importPaper(file, audience, recipients);
+        const imported = await importPaper(file, audience, recipients, keywords);
         importedCount++;
         lastPaperId = imported.paper_id;
         const result = imported.has_text
@@ -1185,64 +1193,122 @@ function enhanceRecipients(input) {
 for (const field of document.querySelectorAll('input[name="recipients"]')) enhanceRecipients(field);
 
 const agentDialog = element("agent-dialog");
-const agentEngine = element("agent-engine");
-const agentPlatform = element("agent-platform");
+const agentAccount = element("agent-username");
+const agentAvailability = element("agent-availability");
 const agentPosition = element("agent-position");
 const agentPost = element("agent-post");
-const agentCommand = element("agent-command");
+const agentSubmit = element("send-agent-review");
+const agentStatus = element("agent-review-status");
+const agentResult = element("agent-review-result");
 let agentTarget;
+let agentView = 0;
+let agentPoll;
+let agentPending = false;
+const eligibleAgents = new Map();
 
-function refreshAgentCommand() {
-  const windows = agentPlatform.value === "windows";
-  const python = windows ? "py -3" : "python3";
-  element("copy-agent-check").dataset.command = `${python} -m paper_client --check`;
-  const port = Number(location.port) || 8765;
-  let target = agentTarget.kind === "paper" ? String(agentTarget.id) : `--${agentTarget.kind} ${agentTarget.id}`;
-  if (agentTarget.kind !== "thread" && agentPosition.value && !agentPosition.validity.valid) {
-    agentCommand.value = "";
-    element("copy-agent-command").disabled = true;
-    return;
+function syncAgentChoice() {
+  const selected = eligibleAgents.get(agentAccount.value);
+  agentSubmit.disabled = agentPending || !selected;
+  element("agent-cloud-note").hidden = selected?.role !== "cloud";
+}
+
+function showAgentReview(review, view) {
+  const pending = review.status === "pending";
+  agentPending = pending;
+  syncAgentChoice();
+  agentResult.hidden = pending;
+  agentResult.textContent = pending ? "" : review.response;
+  agentStatus.textContent = pending ? `Waiting for ${review.agent} to pick up review #${review.id}.`
+    : review.status === "failed" ? "The AI account could not complete the review."
+    : review.comment_id ? "Review complete. A private AI comment was posted." : "Review complete.";
+  if (pending) {
+    agentPoll = setTimeout(async () => {
+      try {
+        const data = await api(`reviews?id=${review.id}`);
+        if (view === agentView) showAgentReview(data.review, view);
+      } catch (error) {
+        if (view !== agentView) return;
+        agentStatus.textContent = error.message;
+        agentPending = false;
+        syncAgentChoice();
+      }
+    }, 3000);
   }
-  if (agentTarget.kind === "paper") target += ` --page ${agentPosition.valueAsNumber || 1}`;
-  if (agentTarget.kind === "document" && agentPosition.value) target += ` --line ${agentPosition.valueAsNumber}`;
-  const localModel = windows ? '"C:\\models\\model.gguf"' : '"/path/to/model.gguf"';
-  const options = agentEngine.value === "cloud" ? "--cloud" : `--model ${localModel}`;
-  agentCommand.value = `${python} -m paper_client ${target} --port ${port} ${options}${agentPost.checked ? " --post" : ""}`;
-  element("copy-agent-command").disabled = false;
-  element("agent-prerequisites").textContent = agentEngine.value === "cloud"
-    ? "Run on the computer with the paper client and a Cloud AI application key. Set PAPER_AI_CLOUD_URL and PAPER_AI_CLOUD_MODEL. The command asks before sending context to that provider."
-    : "Run on the computer with the paper client and a Local AI application key. Replace the model path with your GGUF file. Install llama-completion, and use pdftotext for PDFs.";
 }
 
 async function openAgent(kind, id, label, position = "") {
   if (!libraryData.account) {
-    libraryStatus.textContent = "Sign in to prepare an AI review.";
+    libraryStatus.textContent = "Sign in to request an AI review.";
     return;
   }
-  agentTarget = { kind, id };
+  const view = ++agentView;
+  agentTarget = {kind, target_id: id};
   element("agent-target").textContent = label;
   element("agent-position-field").hidden = kind === "thread";
   element("agent-position-label").textContent = kind === "document" ? "Source line (optional)" : "PDF page";
   agentPosition.value = position || (kind === "paper" ? "1" : "");
   agentPost.checked = false;
-  const platform = String(navigator.userAgentData?.platform || navigator.platform).toLowerCase();
-  agentPlatform.value = platform.includes("win") ? "windows" : platform.includes("mac") ? "macos" : "linux";
-  element("copy-agent-status").textContent = "";
-  element("agent-tools").textContent = "Checking installed tools on the library server…";
-  refreshAgentCommand();
+  agentResult.hidden = true;
+  agentResult.textContent = "";
+  agentStatus.textContent = "";
+  const previous = agentAccount.value;
+  eligibleAgents.clear();
+  agentAccount.replaceChildren();
+  add(agentAccount, "option", "Choose an AI account").value = "";
+  agentPending = false;
+  syncAgentChoice();
+  agentAvailability.textContent = "Checking eligible AI accounts…";
   agentDialog.showModal();
   try {
-    const tools = await api("agent-options");
-    const serverOs = tools.server_os === "Darwin" ? "macOS" : tools.server_os;
-    element("agent-tools").textContent = `Server host (${serverOs}): llama-completion ${tools.llama ? "available" : "missing"}, pdftotext ${tools.pdf_text ? "available" : "missing"}. A browser cannot inspect installed tools on a different computer.`;
+    const query = new URLSearchParams(agentTarget);
+    const [data, availability] = await Promise.all([api(`reviews?${query}`), api(`review-agents?${query}`)]);
+    if (view !== agentView) return;
+    const latest = data.reviews[0];
+    for (const agent of availability.agents) {
+      eligibleAgents.set(agent.username, agent);
+      const account = agent.display_name ? `${agent.display_name} (@${agent.username})` : agent.username;
+      add(agentAccount, "option", `${account} · ${roleLabels[agent.role]}`).value = agent.username;
+    }
+    agentAccount.value = [latest?.agent, previous].find(username => eligibleAgents.has(username))
+      ?? (availability.agents.length === 1 ? availability.agents[0].username : "");
+    agentAvailability.textContent = availability.agents.length ? "" : "Share this item and its sources with an AI account to request a review.";
+    if (latest) showAgentReview(latest, view);
+    else syncAgentChoice();
   } catch (error) {
-    element("agent-tools").textContent = error.message;
+    if (view !== agentView) return;
+    agentAvailability.textContent = error.message;
   }
 }
 
-for (const field of [agentEngine, agentPlatform, agentPosition, agentPost]) {
-  field.addEventListener("input", refreshAgentCommand);
-}
+agentAccount.addEventListener("change", syncAgentChoice);
+agentDialog.addEventListener("close", () => {
+  ++agentView;
+  clearTimeout(agentPoll);
+});
+element("request-agent-review").addEventListener("submit", async event => {
+  event.preventDefault();
+  const agent = eligibleAgents.get(agentAccount.value);
+  if (!agent || agentPending) return;
+  const view = agentView;
+  agentPending = true;
+  syncAgentChoice();
+  agentStatus.textContent = "Requesting review…";
+  try {
+    const data = await api("reviews", {
+      action: "create", ...agentTarget,
+      agent: agent.username,
+      agent_role: agent.role,
+      position: agentPosition.value ? agentPosition.valueAsNumber : null,
+      post: agentPost.checked,
+    });
+    if (view === agentView) showAgentReview(data.review, view);
+  } catch (error) {
+    if (view !== agentView) return;
+    agentStatus.textContent = error.message;
+    agentPending = false;
+    syncAgentChoice();
+  }
+});
 element("review-paper").addEventListener("click", () => {
   const paper = selectedPaper();
   if (paper?.has_pdf) {
@@ -1254,22 +1320,200 @@ element("review-document").addEventListener("click", () => {
   const document = selectedDocument();
   if (document) openAgent("document", document.id, document.title);
 });
-element("copy-agent-command").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(agentCommand.value);
-    element("copy-agent-status").textContent = "Command copied.";
-  } catch {
-    agentCommand.select();
-    element("copy-agent-status").textContent = "Command selected. Copy it with your keyboard.";
-  }
-});
 
-element("copy-agent-check").addEventListener("click", async event => {
-  const command = event.currentTarget.dataset.command;
-  try {
-    await navigator.clipboard.writeText(command);
-    element("copy-agent-status").textContent = "Tool check command copied.";
-  } catch {
-    element("copy-agent-status").textContent = command;
+const metricPanel = element("paper-metrics");
+const metricState = element("metric-state");
+const metricPicker = element("metric-correction-picker");
+const metricStatus = element("metric-correction-status");
+const metricForm = element("metric-correction-form");
+const metricEditors = element("metric-editors-form");
+const metricClaim = element("claim-metric-paper");
+const metricMore = element("more-paper-metrics");
+const metricHistory = element("metric-revisions");
+const metricOlder = element("older-metric-revisions");
+const metricFields = ["page", "metric", "value", "unit", "conditions", "evidence"];
+let metricListing;
+let metricHistoryBefore;
+let metricHistoryRequest = 0;
+
+function metricLabel(metric) {
+  return `Page ${metric.page} · ${metric.metric} · ${metric.value} ${metric.unit}`.trim();
+}
+
+function metricDescription(metric) {
+  return [metricLabel(metric), metric.conditions, metric.evidence].filter(Boolean).join("\n");
+}
+
+function resetPaperMetrics(paper) {
+  const samePaper = paper?.id === metricListing?.paperId && libraryData.account?.id === metricListing?.accountId;
+  if (!samePaper) {
+    metricPanel.open = false;
+    metricState.value = "0";
   }
+  if (!metricPanel.open) metricListing = null;
+  else reloadPaperMetrics();
+}
+
+function metricListingCurrent(listing) {
+  return metricListing === listing && selectedPaper()?.id === listing.paperId;
+}
+
+async function listPaperMetrics(listing, append = false) {
+  if (listing.loading) return;
+  listing.loading = true;
+  metricMore.disabled = true;
+  metricStatus.textContent = "Loading metrics…";
+  try {
+    const cursor = append ? `&after=${listing.next}` : "";
+    const scope = listing.removed ? "&removed=1" : "";
+    const data = await api(`paper-metrics?paper_id=${listing.paperId}${scope}${cursor}`);
+    if (!metricListingCurrent(listing)) return;
+    for (const metric of data.metrics) {
+      listing.records.set(String(metric.id), metric);
+      add(metricPicker, "option", metricLabel(metric).slice(0, 180)).value = metric.id;
+    }
+    listing.next = data.next_after;
+    metricMore.hidden = listing.next === null;
+    metricClaim.hidden = !data.can_claim_paper;
+    metricStatus.textContent = listing.records.size ? "" : listing.removed ? "No removed metrics." : "No active metrics.";
+  } catch (error) {
+    if (metricListingCurrent(listing)) metricStatus.textContent = error.message;
+  } finally {
+    listing.loading = false;
+    if (metricListingCurrent(listing)) metricMore.disabled = false;
+  }
+}
+
+function reloadPaperMetrics() {
+  const paper = selectedPaper();
+  if (!paper) return;
+  metricPicker.replaceChildren();
+  add(metricPicker, "option", "Choose a metric").value = "";
+  element("metric-correction-detail").hidden = true;
+  metricClaim.hidden = true;
+  metricMore.hidden = true;
+  metricListing = {paperId: paper.id, accountId: libraryData.account?.id, records: new Map(),
+    next: null, removed: metricState.value === "1"};
+  return listPaperMetrics(metricListing);
+}
+
+async function loadMetricHistory(listing, metric, append = false) {
+  const request = ++metricHistoryRequest;
+  metricOlder.disabled = true;
+  try {
+    const cursor = append ? `&before=${metricHistoryBefore}` : "";
+    const data = await api(`metric-history?metric_id=${metric.id}${cursor}`);
+    if (request !== metricHistoryRequest || !metricListingCurrent(listing)) return;
+    if (!append) {
+      metricHistory.replaceChildren();
+      add(metricHistory, "p", `Original (revision 1)\n${metricDescription(data.original)}`, "comment-body");
+      metricEditors.hidden = !data.editors;
+      element("metric-editor-names").textContent = data.editors?.join(", ") || "No named editors.";
+    }
+    for (const record of data.corrections) {
+      add(metricHistory, "p",
+        `Revision ${record.revision}${record.removed ? " (removed)" : ""} · ${record.editor} · ${record.created} UTC\n${metricDescription(record)}\nReason: ${record.reason}`,
+        "comment-body");
+    }
+    metricHistoryBefore = data.next_before;
+    metricOlder.hidden = metricHistoryBefore === null;
+  } catch (error) {
+    if (request === metricHistoryRequest && metricListingCurrent(listing)) metricStatus.textContent = error.message;
+  } finally {
+    if (request === metricHistoryRequest && metricListingCurrent(listing)) metricOlder.disabled = false;
+  }
+}
+
+function showPaperMetric() {
+  ++metricHistoryRequest;
+  const listing = metricListing;
+  const metric = listing?.records.get(metricPicker.value);
+  element("metric-correction-detail").hidden = !metric;
+  if (!metric) return;
+  element("metric-current").textContent = `${metricDescription(metric)}\nRevision ${metric.revision}${metric.removed ? " (removed)" : ""}`;
+  metricForm.hidden = !metric.can_edit;
+  element("metric-correction-fields").hidden = Boolean(metric.removed);
+  element("metric-correction-fields").disabled = Boolean(metric.removed);
+  element("save-metric-correction").hidden = Boolean(metric.removed);
+  element("remove-metric").hidden = Boolean(metric.removed);
+  element("restore-metric").hidden = !metric.removed;
+  metricEditors.hidden = true;
+  metricOlder.hidden = true;
+  metricHistory.replaceChildren();
+  for (const field of metricFields) metricForm.elements[field].value = metric[field];
+  metricForm.elements.reason.value = "";
+  return loadMetricHistory(listing, metric);
+}
+
+metricPanel.addEventListener("toggle", () => {
+  if (metricPanel.open && !metricListing) reloadPaperMetrics();
 });
+metricPicker.addEventListener("change", () => {
+  metricStatus.textContent = "";
+  showPaperMetric();
+});
+element("reload-paper-metrics").addEventListener("click", reloadPaperMetrics);
+metricState.addEventListener("change", reloadPaperMetrics);
+metricMore.addEventListener("click", () => listPaperMetrics(metricListing, true));
+metricOlder.addEventListener("click", () => {
+  const metric = metricListing?.records.get(metricPicker.value);
+  if (metric) loadMetricHistory(metricListing, metric, true);
+});
+submit(metricClaim, async () => {
+  const listing = metricListing;
+  await api("claim-paper", {paper_id: listing.paperId});
+  if (metricListingCurrent(listing)) await loadSelectedPaper();
+}, metricStatus);
+submit(element("detect-paper-metrics"), async event => {
+  const listing = metricListing;
+  const {keywords} = event.currentTarget.elements;
+  const data = await api("detect-paper-metrics", {paper_id: listing.paperId, keywords: metricKeywords(keywords.value)});
+  if (!metricListingCurrent(listing)) return;
+  await reloadPaperMetrics();
+  if (selectedPaper()?.id === listing.paperId) {
+    metricStatus.textContent = data.has_text ? `${data.metrics} matching metric candidate(s) processed.` : "The PDF has no extractable text.";
+  }
+}, metricStatus);
+submit(metricForm, async event => {
+  const listing = metricListing;
+  const metric = listing.records.get(metricPicker.value);
+  const action = event.submitter?.value || (metric.removed ? "restore" : "correct");
+  const values = {};
+  if (action === "correct") {
+    for (const field of metricFields) {
+      const input = metricForm.elements[field].value;
+      if (input !== String(metric[field])) values[field] = field === "page" ? Number(input) : input.trim();
+    }
+  }
+  const data = await api("paper-metrics", {
+    action, metric_id: metric.id, revision: metric.revision, ...values, reason: metricForm.elements.reason.value,
+  });
+  if (!metricListingCurrent(listing)) return;
+  if (action !== "correct") {
+    await reloadPaperMetrics();
+    if (selectedPaper()?.id === listing.paperId) {
+      metricStatus.textContent = data.removed ? "Metric removed." : "Metric restored.";
+    }
+    return;
+  }
+  Object.assign(metric, values, {revision: data.revision});
+  const option = Array.from(metricPicker.options).find(option => option.value === String(metric.id));
+  option.textContent = metricLabel(metric).slice(0, 180);
+  if (metricPicker.value === String(metric.id)) {
+    metricStatus.textContent = "Correction saved.";
+    await showPaperMetric();
+  }
+}, metricStatus);
+submit(metricEditors, async () => {
+  const listing = metricListing;
+  const metric = listing.records.get(metricPicker.value);
+  await api("metric-editors", {
+    metric_id: metric.id, username: metricEditors.elements.username.value,
+    action: metricEditors.elements.action.value,
+  });
+  if (metricListingCurrent(listing) && metricPicker.value === String(metric.id)) {
+    metricEditors.elements.username.value = "";
+    metricStatus.textContent = "Editor access updated.";
+    await loadMetricHistory(listing, metric);
+  }
+}, metricStatus);
