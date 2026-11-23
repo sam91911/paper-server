@@ -9,7 +9,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import accounts, experiments, google_signin, sharing, tools_catalog
+from . import accounts, experiments, findings, goals, google_signin, sharing, tools_catalog
 
 FIELDS = ("paper", "page", "metric", "value", "unit", "conditions", "evidence")
 METADATA = ("doi", "title", "authors", "year", "venue", "publisher", "source")
@@ -107,6 +107,20 @@ def initialize(path):
             db.execute(f"INSERT INTO comments_new({existing}) SELECT {existing} FROM comments")
             db.execute("DROP TABLE comments")
             db.execute("ALTER TABLE comments_new RENAME TO comments")
+        for statement in (*findings.SCHEMA, *goals.SCHEMA):
+            db.execute(statement)
+        for table, name, definition in (
+            ("experiments", "research_document_id", "INTEGER REFERENCES documents(id)"),
+            ("experiment_runs", "methods", "TEXT NOT NULL DEFAULT ''"),
+            ("experiment_runs", "settings", "TEXT NOT NULL DEFAULT ''"),
+            ("comments", "finding_id", "INTEGER REFERENCES research_findings(id)"),
+            ("comments", "goal_id", "INTEGER REFERENCES research_goals(id)"),
+        ):
+            if name not in {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+        db.execute("CREATE INDEX IF NOT EXISTS comments_finding ON comments(finding_id) WHERE finding_id IS NOT NULL")
+        db.execute("CREATE INDEX IF NOT EXISTS comments_goal ON comments(goal_id) WHERE goal_id IS NOT NULL")
+        db.execute("CREATE INDEX IF NOT EXISTS experiments_document ON experiments(research_document_id)")
         db.execute("CREATE INDEX IF NOT EXISTS comments_parent ON comments(parent_id)")
         db.execute("CREATE INDEX IF NOT EXISTS comments_paper_root ON comments(paper_id, parent_id)")
         db.execute("CREATE INDEX IF NOT EXISTS comments_document_root ON comments(document_id, parent_id)")
@@ -216,6 +230,126 @@ def paper_page(db, account=None, *, after=0, limit=100):
     return {"papers": page, "next_after": page[-1]["id"] if more else None}
 
 
+ACTIVE_PAPERS = "id NOT IN (SELECT paper_id FROM archived_papers)"
+PAPER_DETAIL_COLUMNS = (
+    "id,path,doi,title,authors,year,venue,publisher,source,owner_id,audience,"
+    "sha256 IS NOT NULL AS has_pdf,"
+    "COALESCE((SELECT allow_title FROM paper_metadata_checks WHERE paper_id=id),0) AS allow_title"
+)
+CATALOG_PAGE_SIZE = 100
+
+
+def _paper_filename(path):
+    return re.split(r"[/\\]", path)[-1]
+
+
+def _catalog_summaries(rows):
+    return [dict(row, path=_paper_filename(row["path"])) for row in rows]
+
+
+def _publication_year(value):
+    value = value.strip()
+    try:
+        if re.fullmatch(r"0(?:[xX][0-9a-fA-F]+|[bB][01]+|[oO][0-7]+)", value):
+            number = float(int(value, 0))
+        elif re.fullmatch(r"[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", value):
+            number = float(value)
+        else:
+            return None
+    except (ValueError, OverflowError):
+        return None
+    return number if number and math.isfinite(number) else None
+
+
+def paper_catalog(db, account, *, query="", group=None, publisher="", from_year=None,
+                  through_year=None, page=1, facets=False):
+    params = sharing.viewer_params(account, group=group, publisher=publisher,
+                                   from_year=from_year, through_year=through_year)
+    active = sharing.PAPER_SCOPE + " SELECT {} FROM visible_papers WHERE " + ACTIVE_PAPERS
+    filters = []
+    terms = query.lower().split()
+    if terms:
+        def matches(title, authors, doi, venue, path):
+            text = " ".join(filter(None, (title, authors, doi, venue, _paper_filename(path)))).lower()
+            return all(term in text for term in terms)
+
+        db.create_function("paper_matches", 5, matches, deterministic=True)
+        filters.append("paper_matches(title,authors,doi,venue,path)")
+    if group is not None:
+        filters.append(":role='user' AND EXISTS (SELECT 1 FROM memberships m "
+                       "WHERE m.paper_id=visible_papers.id AND m.group_id=:group)")
+    if publisher:
+        filters.append("publisher=:publisher")
+    if from_year is not None or through_year is not None:
+        db.create_function("publication_year", 1, _publication_year, deterministic=True)
+    if from_year is not None:
+        filters.append("publication_year(year)>=:from_year")
+    if through_year is not None:
+        filters.append("publication_year(year)<=:through_year")
+
+    filtered = active + "".join(f" AND {condition}" for condition in filters)
+    total, = db.execute(active.format("COUNT(*)"), params).fetchone()
+    count = db.execute(filtered.format("COUNT(*)"), params).fetchone()[0] if filters else total
+    page = min(page, max(1, (count + CATALOG_PAGE_SIZE - 1) // CATALOG_PAGE_SIZE))
+    rows = db.execute(
+        filtered.format("id,path,title") + " ORDER BY path,id LIMIT :size OFFSET :offset",
+        dict(params, size=CATALOG_PAGE_SIZE, offset=(page - 1) * CATALOG_PAGE_SIZE),
+    )
+    data = {"papers": _catalog_summaries(rows), "count": count, "total": total, "page": page}
+    if facets:
+        data["account"] = account
+        data["groups"] = []
+        if account and account["role"] == "user":
+            data["groups"] = [dict(row) for row in db.execute("SELECT * FROM groups ORDER BY name")]
+        data["publishers"] = [row[0] for row in db.execute(
+            active.format("DISTINCT publisher") + " AND publisher<>'' ORDER BY publisher", params,
+        )]
+    return data
+
+
+def paper_detail(db, account, paper_id):
+    params = sharing.viewer_params(account, paper_id=paper_id)
+    row = db.execute(
+        sharing.PAPER_SCOPE + f" SELECT {PAPER_DETAIL_COLUMNS} FROM visible_papers "
+        f"WHERE id=:paper_id AND {ACTIVE_PAPERS}", params,
+    ).fetchone()
+    if row is None:
+        raise sharing.AccessDenied
+    paper = dict(row)
+    memberships = []
+    if account and account["role"] == "user":
+        memberships = [row[0] for row in db.execute(
+            "SELECT group_id FROM memberships WHERE paper_id=? ORDER BY group_id", (paper_id,),
+        )]
+    else:
+        paper["path"] = _paper_filename(paper["path"])
+    sharing.attach_recipients(db, "paper", [paper], account)
+    return {"paper": paper, "group_ids": memberships}
+
+
+def paper_comment_targets(db, account):
+    return {
+        "papers": _catalog_summaries(db.execute(
+            sharing.PAPER_SCOPE + " SELECT id,path,title FROM visible_papers "
+            f"WHERE sha256 IS NOT NULL AND {ACTIVE_PAPERS} ORDER BY path,id",
+            sharing.viewer_params(account),
+        )),
+        "documents": sharing.documents_for(db, account, targets_only=True),
+    }
+
+
+def _archived_rows(db, account):
+    return db.execute(
+        sharing.PAPER_SCOPE + " SELECT id,path,title,owner_id FROM visible_papers "
+        "JOIN archived_papers ON id=paper_id WHERE owner_id IS NULL OR owner_id=:viewer ORDER BY path",
+        sharing.viewer_params(account),
+    )
+
+
+def paper_archive(db, account):
+    return {"papers": _catalog_summaries(_archived_rows(db, account))}
+
+
 def snapshot(db, view="library", account=None, *, include_comments=True, document_summaries=False):
     def rows(query):
         return [dict(row) for row in db.execute(sharing.PAPER_SCOPE + query, sharing.viewer_params(account))]
@@ -229,7 +363,7 @@ def snapshot(db, view="library", account=None, *, include_comments=True, documen
     else:
         paper_columns += ", sha256 IS NOT NULL AS has_pdf"
     if view == "paper-details":
-        paper_columns += ", COALESCE((SELECT allow_title FROM paper_metadata_checks WHERE paper_id=id),0) AS allow_title"
+        paper_columns = PAPER_DETAIL_COLUMNS
     data = {
         "papers": rows(f"SELECT {paper_columns} FROM visible_papers "
                        "WHERE id NOT IN (SELECT paper_id FROM archived_papers) ORDER BY path"),
@@ -250,10 +384,7 @@ def snapshot(db, view="library", account=None, *, include_comments=True, documen
     if view == "paper-details":
         sharing.attach_recipients(db, "paper", data["papers"], account)
         data["document_targets"] = sharing.documents_for(db, account, targets_only=True)
-        data["archived_papers"] = rows(
-            "SELECT id, path, title, owner_id FROM visible_papers JOIN archived_papers ON id=paper_id "
-            "WHERE owner_id IS NULL OR owner_id=:viewer ORDER BY path"
-        )
+        data["archived_papers"] = [dict(row) for row in _archived_rows(db, account)]
         if not is_human:
             for paper in data["archived_papers"]:
                 paper["path"] = Path(paper["path"]).name
@@ -265,6 +396,11 @@ def snapshot(db, view="library", account=None, *, include_comments=True, documen
 
 
 def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id=None, before=None, root_limit=None):
+    finding_ids = []
+    goal_ids = []
+    if documents:
+        finding_ids = [item["id"] for item in findings.visible(db, account, document_id, discussions_only=True)]
+        goal_ids = goals.discussion_ids(db, account, document_id)
     root_scope = (
         "c.document_id IN (SELECT id FROM visible_documents)" if documents else
         "c.paper_id IN (SELECT id FROM visible_papers) "
@@ -280,7 +416,9 @@ def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id
     items = [dict(row) for row in db.execute(
         sharing.PAPER_SCOPE + f""", root_comments AS (
             SELECT c.* FROM comments c WHERE {root_scope}
-            AND c.parent_id IS NULL AND {comment_access_sql()}{root_order}
+            AND c.parent_id IS NULL AND {comment_access_sql()}
+            AND (c.finding_id IS NULL OR c.finding_id IN (SELECT value FROM json_each(:finding_ids)))
+            AND (c.goal_id IS NULL OR c.goal_id IN (SELECT value FROM json_each(:goal_ids))){root_order}
         ), visible_comments AS (
             SELECT * FROM root_comments
             UNION ALL
@@ -293,7 +431,8 @@ def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id
         FROM visible_comments c LEFT JOIN comment_authors a ON a.comment_id=c.id
         LEFT JOIN accounts u ON a.account_id=u.id ORDER BY c.id
         """,
-        sharing.viewer_params(account, paper_filter=paper_id, document_filter=document_id, before=before, root_limit=root_limit),
+        sharing.viewer_params(account, paper_filter=paper_id, document_filter=document_id, before=before,
+                              root_limit=root_limit, finding_ids=json.dumps(finding_ids), goal_ids=json.dumps(goal_ids)),
     )]
     sharing.attach_recipients(db, "comment", items, account, "author_id")
     for comment in items:
@@ -363,19 +502,30 @@ def comment_target(db, account, location):
 
 
 def can_reply(db, paper_id, parent_id, account, document_id=None):
-    return db.execute(
+    rows = db.execute(
         sharing.PAPER_SCOPE + """, ancestors AS (
             SELECT * FROM comments WHERE id=:parent AND paper_id IS :paper AND document_id IS :document AND deleted=0
             UNION ALL SELECT c.* FROM comments c JOIN ancestors a ON c.id=a.parent_id
         )
-        SELECT COUNT(*) > 0 AND COUNT(*) = SUM(CASE WHEN """ + comment_access_sql() + """ THEN 1 ELSE 0 END)
-        FROM ancestors c""",
+        SELECT finding_id,goal_id, (""" + comment_access_sql() + """) AS visible FROM ancestors c""",
         sharing.viewer_params(account, paper=paper_id, document=document_id, parent=parent_id),
-    ).fetchone()[0]
+    ).fetchall()
+    if not rows or not all(row["visible"] for row in rows):
+        return False
+    for row in rows:
+        try:
+            if row["finding_id"] is not None:
+                findings.require_finding(db, account, document_id, row["finding_id"])
+            if row["goal_id"] is not None:
+                goals.require_goal(db, account, document_id, row["goal_id"])
+        except sharing.AccessDenied:
+            return False
+    return True
 
 
 def save_comment(db, paper_id, body, account, comment_id=None, kind="user",
-                 parent_id=None, doi_refs=None, audience=None, location=None, recipients=None, document_id=None):
+                 parent_id=None, doi_refs=None, audience=None, location=None, recipients=None, document_id=None,
+                 finding_id=None, goal_id=None):
     account_id = account["id"]
     if account["role"] in ("local", "cloud"):
         kind = "ai"
@@ -386,6 +536,15 @@ def save_comment(db, paper_id, body, account, comment_id=None, kind="user",
         raise ValueError("Enter a comment of up to 20,000 characters")
     if comment_id is not None and location is not None:
         raise ValueError("The location of a posted comment is fixed.")
+    if finding_id is not None or goal_id is not None:
+        if document_id is None or comment_id is not None or parent_id is not None:
+            raise ValueError("Start a new document thread to discuss a finding or goal.")
+        if finding_id is not None and goal_id is not None:
+            raise ValueError("Choose a finding or a goal for the discussion.")
+        if goal_id is not None:
+            goals.require_goal(db, account, document_id, goal_id)
+        else:
+            findings.require_finding(db, account, document_id, finding_id)
     if comment_id is None:
         target = comment_target(db, account, location)
         if kind not in ("user", "ai"):
@@ -395,9 +554,9 @@ def save_comment(db, paper_id, body, account, comment_id=None, kind="user",
         db.execute("UPDATE comment_id_sequence SET last_id=last_id+1 WHERE singleton=1")
         cursor = db.execute(
             "INSERT INTO comments(id,paper_id,document_id,body,parent_id,doi_refs,audience,"
-            "target_kind,target_id,target_position) "
-            "SELECT last_id,?,?,?,?,?,?,?,?,? FROM comment_id_sequence WHERE singleton=1",
-            (paper_id, document_id, body.strip(), parent_id, references or "[]", audience or "owner", *target),
+            "target_kind,target_id,target_position,finding_id,goal_id) "
+            "SELECT last_id,?,?,?,?,?,?,?,?,?,?,? FROM comment_id_sequence WHERE singleton=1",
+            (paper_id, document_id, body.strip(), parent_id, references or "[]", audience or "owner", *target, finding_id, goal_id),
         )
         comment_id = cursor.lastrowid
         db.execute("INSERT INTO comment_authors VALUES (?,?,?)", (comment_id, account_id, kind))

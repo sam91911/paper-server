@@ -6,6 +6,7 @@ import unittest
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlencode
 
 from paper_app import accounts, library, server
 
@@ -116,6 +117,92 @@ class HttpTests(unittest.TestCase):
         self.assertIsNone(second['next_after'])
         self.assertEqual(json.loads(self.get('/api/paper-page', False)[1])['papers'], [])
 
+    def test_paper_catalog_combines_filters_and_clamps_numbered_pages(self):
+        with library.connect(self.db) as db:
+            db.execute("UPDATE papers SET title='Énergie 光學%',authors='Ada',venue='Optics',"
+                       "year='2021',publisher='Example' WHERE id=1")
+            db.execute("UPDATE papers SET title='Énergie 光學', authors='Ada',year='2020unknown',"
+                       "publisher='Hidden Archive' WHERE id=2")
+            db.execute("INSERT INTO archived_papers VALUES (2)")
+            db.execute("INSERT INTO groups VALUES (1,'Optics')")
+            db.execute("INSERT INTO memberships VALUES (1,1)")
+            # Duplicate paths must have a stable tie-breaker across pages.
+            db.executemany("INSERT INTO papers (path,year) VALUES (?,?)", [('/tmp/z.pdf', 'n/a')] * 105)
+            db.execute("INSERT INTO paper_access SELECT id,1,'owner' FROM papers WHERE id>2")
+        catalog = "/api/paper-catalog?"
+        fields = dict(q="ÉNERGIE adA 光學% one.pdf", group=1, publisher="Example",
+                      from_year=2020, through_year=2022, facets=1)
+        status, payload = self.get(catalog + urlencode(fields))
+        self.assertEqual(status, 200)
+        result = json.loads(payload)
+        self.assertEqual(result['papers'], [{'id': 1, 'path': 'one.pdf', 'title': 'Énergie 光學%'}])
+        self.assertEqual((result['count'], result['total'], result['page']), (1, 106, 1))
+        self.assertEqual(result['publishers'], ['Example'])
+        self.assertEqual(result['groups'], [{'id': 1, 'name': 'Optics'}])
+        first = json.loads(self.get(catalog + 'page=1')[1])
+        last = json.loads(self.get(catalog + 'page=999')[1])
+        self.assertEqual(len(first['papers']), 100)
+        self.assertEqual(last['page'], 2)
+        self.assertEqual([p['id'] for p in first['papers'] + last['papers']], [1, *range(3, 108)])
+        for query in ('q=no-match', 'group=99', 'from_year=2022', 'q=%25%25'):
+            empty = json.loads(self.get(catalog + query + '&page=9')[1])
+            self.assertEqual((empty['papers'], empty['count'], empty['page']), ([], 0, 1))
+        for query in ('page=0', 'group=-2', 'from_year=2025&through_year=2020', 'through_year=abc'):
+            self.assertEqual(self.get(catalog + query)[0], 400)
+
+    def test_bounded_paper_reads_preserve_access_and_lazy_lists(self):
+        owner_token = self.token
+        with library.connect(self.db) as db:
+            db.execute("INSERT INTO accounts(username,password_hash,salt,trusted) VALUES ('reader',X'00',X'00',0)")
+            reader_token = accounts.start_session(db, 2, None)
+            db.execute("UPDATE papers SET sha256='pdf1',publisher='Shared' WHERE id=1")
+            db.execute("UPDATE papers SET sha256='pdf2',publisher='Private' WHERE id=2")
+            db.execute("INSERT INTO item_grants VALUES ('paper',1,2)")
+            db.execute("INSERT INTO groups VALUES (1,'Owner group')")
+            db.execute("INSERT INTO memberships VALUES (1,1)")
+            db.execute("INSERT INTO paper_metadata_checks (paper_id,allow_title) VALUES (1,1)")
+            db.execute("INSERT INTO documents (id,owner_id,audience,title,markdown) "
+                       "VALUES (1,1,'owner','Shared document',''),(2,1,'owner','Private document','')")
+            db.execute("INSERT INTO item_grants VALUES ('document',1,2)")
+            db.execute("INSERT INTO archived_papers VALUES (2)")
+
+        def get_data(route, auth=True):
+            status, payload = self.get(route, auth)
+            self.assertEqual(status, 200)
+            return json.loads(payload)
+
+        catalog = '/api/paper-catalog?facets=1'
+        detail = '/api/paper-detail?paper_id=1'
+        targets = '/api/paper-comment-targets'
+        archive = '/api/paper-archive'
+        self.assertEqual(get_data(catalog, False)['publishers'], [])
+        self.assertEqual(self.get(detail, False)[0], 404)
+        self.assertEqual(get_data(targets, False), {'papers': [], 'documents': []})
+        self.assertEqual(get_data(archive)['papers'][0]['id'], 2)
+        self.assertEqual(self.get('/api/paper-detail?paper_id=2')[0], 404)
+        owner_detail = get_data(detail)
+        self.assertEqual(owner_detail['paper']['recipients'], ['reader'])
+        self.assertEqual(owner_detail['paper']['allow_title'], 1)
+        self.assertEqual(owner_detail['group_ids'], [1])
+
+        self.token = reader_token
+        listing = get_data(catalog)
+        self.assertEqual(listing['publishers'], ['Shared'])
+        self.assertEqual(listing['groups'], [])
+        self.assertEqual(get_data(catalog + '&group=1')['count'], 0)
+        result = get_data(detail)
+        self.assertEqual(result['paper']['path'], 'one.pdf')
+        self.assertNotIn('recipients', result['paper'])
+        self.assertEqual(result['group_ids'], [])
+        self.assertEqual(get_data(archive), {'papers': []})
+        self.assertEqual([paper['id'] for paper in get_data(targets)['papers']], [1])
+        self.assertEqual(get_data(targets)['documents'], [{'id': 1, 'title': 'Shared document'}])
+
+        self.token = owner_token
+        self.assertEqual(self.request('/api/archive-paper', data={'paper_id': 2, 'archived': False})[0], 200)
+        self.assertEqual(get_data(archive), {'papers': []})
+        self.assertEqual(get_data('/api/paper-detail?paper_id=2')['paper']['id'], 2)
+
     def test_csv_export_scopes_and_escapes_cells(self):
         with library.connect(self.db) as db:
             db.execute('INSERT INTO metrics VALUES (?,?,?,?,?,?,?)',
@@ -166,7 +253,7 @@ class HttpTests(unittest.TestCase):
     def test_page_scripts_are_available_in_dependency_order(self):
         status, body = self.get('/')
         self.assertEqual(status, 200)
-        scripts = ['api.js', 'metrics.js', 'library.js', 'documents.js', 'boot.js']
+        scripts = ['api.js', 'metrics.js', 'library.js', 'documents.js', 'findings.js', 'goals.js', 'boot.js']
         positions = [body.index(f'/assets/{name}'.encode()) for name in scripts]
         self.assertEqual(positions, sorted(positions))
         for name in scripts:

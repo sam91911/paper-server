@@ -406,3 +406,8 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
 .agent-toolbar h2, .agent-toolbar button { margin: 0; }
 #agent-dialog textarea { min-height: 5rem; font-family: ui-monospace, monospace; }
 #agent-dialog .inline-check { margin: .8rem 0; }
+
+.goal-brief-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

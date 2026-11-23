@@ -8,6 +8,12 @@ from . import accounts, sharing
 
 MAX_FILE_BYTES = 100 * 1024 * 1024
 KINDS = ('code', 'environment', 'equipment', 'tool_record', 'data')
+VERSION_BATCH_SIZE = 500
+GRANT_SCOPES = {
+    'experiment': ('experiments', 'id'),
+    'run': ('experiment_runs', 'experiment_id'),
+    'item': ('research_items', 'experiment_id'),
+}
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS experiments (
  id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES accounts(id), title TEXT NOT NULL,
@@ -67,9 +73,10 @@ def allowed(db, kind, row, account, *, edit=False):
         return True
     if _grant(db, kind, row['id'], account, edit=edit):
         return True
-    if edit:
-        return False
-    role, audience = account['role'], row['audience']
+    return not edit and _audience_allows(row['audience'], account['role'])
+
+
+def _audience_allows(audience, role):
     return ((audience == 'users' and role == 'user') or
             (audience == 'local' and role in ('user', 'local')) or
             (audience == 'all' and role in ('user', 'local', 'cloud')) or
@@ -77,8 +84,18 @@ def allowed(db, kind, row, account, *, edit=False):
 
 
 def require_experiment(db, experiment_id, account, *, edit=False):
-    row = db.execute('SELECT * FROM experiments WHERE id=?', (experiment_id,)).fetchone()
-    if not row or not allowed(db, 'experiment', row, account, edit=edit):
+    row = db.execute("""
+        SELECT e.*, b.id AS goal_brief_id FROM experiments e
+        LEFT JOIN research_goal_briefs b ON b.experiment_id=e.id WHERE e.id=?
+    """, (experiment_id,)).fetchone()
+    if not row or not account:
+        raise sharing.AccessDenied
+    if row['goal_brief_id'] is not None:
+        from . import goals
+        goals.experiment_scope(db, account, experiment_id)
+        if not edit:
+            return row
+    if not allowed(db, 'experiment', row, account, edit=edit):
         raise sharing.AccessDenied
     return row
 
@@ -117,13 +134,38 @@ def set_grants(db, kind, item_id, actor, row, readers, editors):
                    ((kind, item_id, i, int(i in editor_ids)) for i in sorted(set(reader_ids + editor_ids))))
 
 
-def grant_names(db, kind, row, account):
-    if not account or row['owner_id'] != account['id']:
-        return {}
-    grants = db.execute('SELECT a.username,g.can_edit FROM research_grants g JOIN accounts a ON a.id=g.account_id '
-                        'WHERE g.kind=? AND g.item_id=? ORDER BY a.username', (kind, row['id'])).fetchall()
-    return {'readers': [x['username'] for x in grants if not x['can_edit']],
-            'editors': [x['username'] for x in grants if x['can_edit']]}
+def _read_grants(db, kind, account, experiment_id=None):
+    """Collect the viewer's direct grants and the sharing names they own."""
+    table, scope_column = GRANT_SCOPES[kind]
+    scope = '' if experiment_id is None else f' AND r.{scope_column}=:experiment_id'
+    rows = db.execute(
+        'SELECT g.item_id,g.account_id,g.can_edit,r.owner_id,a.username '
+        f'FROM research_grants g JOIN {table} r ON r.id=g.item_id '
+        'JOIN accounts a ON a.id=g.account_id '
+        'WHERE g.kind=:kind AND (r.owner_id=:viewer OR g.account_id=:viewer)'
+        + scope + ' ORDER BY a.username',
+        {'kind': kind, 'viewer': account['id'], 'experiment_id': experiment_id},
+    )
+    direct = {}
+    names = {}
+    for row in rows:
+        item_id = row['item_id']
+        if row['account_id'] == account['id']:
+            direct[item_id] = bool(row['can_edit'])
+        if row['owner_id'] == account['id']:
+            groups = names.setdefault(item_id, {'readers': [], 'editors': []})
+            groups['editors' if row['can_edit'] else 'readers'].append(row['username'])
+    return direct, names
+
+
+def _visible_rows(rows, account, grants, *, inherited=False):
+    direct, names = grants
+    for row in rows:
+        if row['owner_id'] == account['id']:
+            yield dict(row, **names.get(row['id'], {'readers': [], 'editors': []}))
+        elif (row['id'] in direct or _audience_allows(row['audience'], account['role'])
+              or (inherited and row['goal_brief_id'] is not None)):
+            yield dict(row)
 
 
 def _audience(value):
@@ -131,32 +173,43 @@ def _audience(value):
 
 
 def save_experiment(db, account, data):
-    title = validate_text(data.get('title'), 'a title', 160, required=True)
-    description = validate_text(data.get('description', ''), 'a description', 20000)
-    audience = _audience(data.get('audience'))
-    paper_id = data.get('paper_id')
-    if paper_id is not None:
+    item_id = data.get('id')
+    row = require_experiment(db, item_id, account, edit=True) if item_id is not None else None
+    title = validate_text(data.get('title', row['title'] if row else None), 'a title', 160, required=True)
+    description = validate_text(data.get('description', row['description'] if row else ''), 'a description', 20000)
+    audience = _audience(data.get('audience', row['audience'] if row else None))
+    paper_id = data.get('paper_id', row['paper_id'] if row else None)
+    if 'paper_id' in data and paper_id is not None:
         if type(paper_id) is not int:
             raise ValueError('Choose a paper.')
         sharing.paper_for(db, paper_id, account)
-    item_id = data.get('id')
+    document_id = data.get('research_document_id', row['research_document_id'] if row else None)
+    if row and row['goal_brief_id'] is not None and document_id != row['research_document_id']:
+        raise ValueError('This experiment belongs to a confirmed research brief.')
+    if 'research_document_id' in data and document_id is not None:
+        if type(document_id) is not int or not 0 < document_id < 2**63:
+            raise ValueError('Choose a research document.')
+        if not sharing.document_for(db, account, document_id):
+            raise sharing.AccessDenied
     if item_id is None:
-        item_id = db.execute('INSERT INTO experiments(owner_id,title,description,paper_id,audience) VALUES (?,?,?,?,?)',
-                             (account['id'], title, description, paper_id, audience)).lastrowid
+        item_id = db.execute(
+            'INSERT INTO experiments(owner_id,title,description,paper_id,audience,research_document_id) VALUES (?,?,?,?,?,?)',
+            (account['id'], title, description, paper_id, audience, document_id),
+        ).lastrowid
     else:
-        row = require_experiment(db, item_id, account, edit=True)
         if data.get('revision') != row['revision']:
             raise sharing.EditConflict('This experiment changed. Reload it before saving.')
         if audience != row['audience'] and account['id'] != row['owner_id']:
             raise sharing.AccessDenied
-        db.execute('UPDATE experiments SET title=?,description=?,paper_id=?,audience=?,revision=revision+1,updated=CURRENT_TIMESTAMP WHERE id=?',
-                   (title, description, paper_id, audience, item_id))
+        db.execute('UPDATE experiments SET title=?,description=?,paper_id=?,audience=?,research_document_id=?,'
+                   'revision=revision+1,updated=CURRENT_TIMESTAMP WHERE id=?',
+                   (title, description, paper_id, audience, document_id, item_id))
     return item_id
 
 
 def save_run(db, account, data):
     experiment_id = data.get('experiment_id')
-    require_experiment(db, experiment_id, account, edit=True)
+    experiment = require_experiment(db, experiment_id, account, edit=True)
     title = validate_text(data.get('title'), 'a title', 160, required=True)
     description = validate_text(data.get('description', ''), 'a description', 20000)
     status = data.get('status', 'planned')
@@ -164,18 +217,34 @@ def save_run(db, account, data):
         raise ValueError('Choose a valid run status.')
     audience = _audience(data.get('audience'))
     run_id = data.get('id')
+    row = require_run(db, run_id, account, edit=True) if run_id is not None else None
+    brief = None
+    if row is None and experiment['goal_brief_id'] is not None:
+        brief = db.execute("SELECT approach,conditions FROM research_goal_briefs WHERE id=?",
+                           (experiment['goal_brief_id'],)).fetchone()
+    if row:
+        default_methods, default_settings = row['methods'], row['settings']
+    elif brief:
+        default_methods, default_settings = brief['approach'], brief['conditions']
+    else:
+        default_methods = default_settings = ''
+    methods = validate_text(data.get('methods', default_methods), 'methods', 20000)
+    settings = validate_text(data.get('settings', default_settings), 'settings', 20000)
     if run_id is None:
-        return db.execute('INSERT INTO experiment_runs(experiment_id,owner_id,title,description,status,audience) VALUES (?,?,?,?,?,?)',
-                          (experiment_id, account['id'], title, description, status, audience)).lastrowid
-    row = require_run(db, run_id, account, edit=True)
+        return db.execute(
+            'INSERT INTO experiment_runs(experiment_id,owner_id,title,description,status,audience,methods,settings)'
+            ' VALUES (?,?,?,?,?,?,?,?)',
+            (experiment_id, account['id'], title, description, status, audience, methods, settings),
+        ).lastrowid
     if row['experiment_id'] != experiment_id:
         raise sharing.AccessDenied
     if data.get('revision') != row['revision']:
         raise sharing.EditConflict('This run changed. Reload it before saving.')
     if audience != row['audience'] and account['id'] != row['owner_id']:
         raise sharing.AccessDenied
-    db.execute('UPDATE experiment_runs SET title=?,description=?,status=?,audience=?,revision=revision+1,updated=CURRENT_TIMESTAMP WHERE id=?',
-               (title, description, status, audience, run_id))
+    db.execute('UPDATE experiment_runs SET title=?,description=?,status=?,audience=?,methods=?,settings=?,'
+               'revision=revision+1,updated=CURRENT_TIMESTAMP WHERE id=?',
+               (title, description, status, audience, methods, settings, run_id))
     return run_id
 
 
@@ -218,30 +287,71 @@ def save_item(db, account, data, content=None):
     return item_id
 
 
-def visible_experiments(db, account):
-    return [dict(row, **grant_names(db, 'experiment', row, account))
-            for row in db.execute('SELECT * FROM experiments ORDER BY id DESC')
-            if allowed(db, 'experiment', row, account)]
+def visible_experiments(db, account, document_id=None):
+    if not account:
+        return []
+    grants = _read_grants(db, 'experiment', account)
+    rows = db.execute(sharing.PAPER_SCOPE + '''
+        SELECT e.*, d.id AS visible_document, b.id AS goal_brief_id FROM experiments e
+        LEFT JOIN visible_documents d ON d.id=e.research_document_id
+        LEFT JOIN research_goal_briefs b ON b.experiment_id=e.id
+        WHERE (:document IS NULL OR d.id=:document) ORDER BY e.id DESC
+    ''', sharing.viewer_params(account, document=document_id))
+    results = []
+    for experiment in _visible_rows(rows, account, grants, inherited=True):
+        if experiment.pop('goal_brief_id') is not None:
+            from . import goals
+            try:
+                goals.experiment_scope(db, account, experiment['id'])
+            except sharing.AccessDenied:
+                continue
+        experiment['research_document_id'] = experiment.pop('visible_document')
+        results.append(experiment)
+    return results
 
 
 def detail(db, account, experiment_id):
     experiment = require_experiment(db, experiment_id, account)
-    runs = [dict(row, **grant_names(db, 'run', row, account))
-            for row in db.execute('SELECT * FROM experiment_runs WHERE experiment_id=? ORDER BY id DESC', (experiment_id,))
-            if allowed(db, 'run', row, account)]
+    can_edit = allowed(db, 'experiment', experiment, account, edit=True)
+    experiment_data = dict(experiment)
+    brief_id = experiment_data.pop('goal_brief_id')
+    brief = None
+    if brief_id is not None:
+        brief = dict(db.execute("SELECT id,goal_id,stage,approach,conditions FROM research_goal_briefs WHERE id=?",
+                               (brief_id,)).fetchone())
+    document_id = experiment['research_document_id']
+    if document_id is not None and not sharing.document_for(db, account, document_id):
+        experiment_data['research_document_id'] = None
+    if experiment['owner_id'] == account['id']:
+        _, names = _read_grants(db, 'experiment', account, experiment_id)
+        experiment_data.update(names.get(experiment_id, {'readers': [], 'editors': []}))
+    run_grants = _read_grants(db, 'run', account, experiment_id)
+    run_rows = db.execute('SELECT * FROM experiment_runs WHERE experiment_id=? ORDER BY id DESC', (experiment_id,))
+    runs = list(_visible_rows(run_rows, account, run_grants))
+    for run in runs:
+        run['can_edit'] = can_edit and (run['owner_id'] == account['id'] or run_grants[0].get(run['id'], False))
+        if brief_id is not None:
+            run['brief_id'] = brief_id
     visible_run_ids = {run['id'] for run in runs}
-    items = []
-    for row in db.execute('SELECT * FROM research_items WHERE experiment_id=? ORDER BY id DESC', (experiment_id,)):
-        if row['run_id'] is not None and row['run_id'] not in visible_run_ids:
-            continue
-        if not allowed(db, 'item', row, account):
-            continue
-        item = dict(row, **grant_names(db, 'item', row, account))
-        item['versions'] = [dict(version) for version in db.execute(
-            'SELECT id,number,creator_id,description,filename,external_ref,sha256,created, '
-            'length(content) AS size FROM research_versions WHERE item_id=? ORDER BY number DESC', (row['id'],))]
-        items.append(item)
-    return {'experiment': dict(experiment, **grant_names(db, 'experiment', experiment, account)), 'runs': runs, 'items': items}
+    item_grants = _read_grants(db, 'item', account, experiment_id)
+    item_rows = db.execute('SELECT * FROM research_items WHERE experiment_id=? ORDER BY id DESC', (experiment_id,))
+    items = {item['id']: dict(item, versions=[]) for item in _visible_rows(
+        (row for row in item_rows if row['run_id'] is None or row['run_id'] in visible_run_ids),
+        account, item_grants,
+    )}
+    item_ids = list(items)
+    for start in range(0, len(item_ids), VERSION_BATCH_SIZE):
+        batch = item_ids[start:start + VERSION_BATCH_SIZE]
+        placeholders = ','.join('?' for _ in batch)
+        for row in db.execute(
+            'SELECT item_id,id,number,creator_id,description,filename,external_ref,sha256,created, '
+            f'length(content) AS size FROM research_versions WHERE item_id IN ({placeholders}) '
+            'ORDER BY item_id,number DESC', batch,
+        ):
+            version = dict(row)
+            items[version.pop('item_id')]['versions'].append(version)
+    return {'experiment': experiment_data, 'runs': runs, 'items': list(items.values()),
+            'can_edit': can_edit, 'brief': brief}
 
 
 def version_content(db, account, version_id):

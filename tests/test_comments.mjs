@@ -12,16 +12,18 @@ function element(id) {
 let selected = {id: 1};
 let pending = [];
 let renders = [];
-const data = {comments: []};
+const data = {comments: [], account: {id: 1}};
+const commentForm = {hidden: false};
 const context = {libraryData: data, commentLoadSequence: 0, nextCommentBefore: null,
-  element, selectedPaper: () => selected,
+  element, selectedPaper: () => selected, commentForm, commentDrafts: new Map(),
   api: route => new Promise(resolve => pending.push({route, resolve})),
-  showPaper: () => renders.push('paper'), renderPaperComments: item => renders.push(item.id),
+  showReplyTarget() {}, renderPaperComments: item => renders.push(item.id),
   libraryStatus: {textContent: ''}};
 vm.createContext(context);
 vm.runInContext(code, context);
 const first = context.loadPaperComments();
-assert.equal(controls.get('paper-detail').hidden, true);
+assert.equal(commentForm.hidden, true);
+assert.equal(controls.get('paper-comments-status').textContent, 'Loading comments…');
 assert.equal(pending[0].route, 'paper-comments?paper_id=1');
 // A slower request for the previous selection must not replace the new result.
 selected = {id: 2};
@@ -32,6 +34,7 @@ pending[0].resolve({comments: [{id: 10}], next_before: null});
 await first;
 assert.deepEqual(data.comments, [{id: 20}]);
 assert.equal(controls.get('older-comments').hidden, false);
+assert.equal(commentForm.hidden, false);
 const button = controls.get('older-comments');
 const older = button.click({currentTarget: button});
 assert.equal(button.disabled, true);
@@ -41,5 +44,5 @@ await older;
 assert.deepEqual(Array.from(data.comments, item => item.id), [15, 20]);
 assert.equal(button.hidden, true);
 assert.equal(button.disabled, false);
-assert.deepEqual(renders, ['paper', 2]);
+assert.deepEqual(renders, [2, 2]);
 console.log('Comment loading and pagination passed');

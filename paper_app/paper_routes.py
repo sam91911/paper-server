@@ -1,6 +1,54 @@
 """Paper access, metadata, archive, and group HTTP operations."""
 
+import re
+from urllib.parse import parse_qs
+
 from . import library, metadata_sync, sharing
+
+
+def _positive_number(value, label):
+    if not re.fullmatch(r"[1-9][0-9]{0,18}", value) or int(value) >= 2**63:
+        raise ValueError(f"Choose a valid {label}.")
+    return int(value)
+
+
+def read_papers(handler, db, url, account):
+    if url.path == "/api/paper-archive":
+        return library.paper_archive(db, account)
+    if url.path == "/api/paper-comment-targets":
+        return library.paper_comment_targets(db, account)
+    params = parse_qs(url.query, keep_blank_values=True)
+
+    def field(key, default=""):
+        return params.get(key, [default])[0]
+
+    if url.path == "/api/paper-detail":
+        return library.paper_detail(db, account, _positive_number(field("paper_id"), "paper"))
+
+    query = field("q")
+    publisher = field("publisher")
+    if len(query) > 500 or len(publisher) > 4000:
+        raise ValueError("Paper search or publisher is too long.")
+    years = []
+    for key in ("from_year", "through_year"):
+        value = field(key)
+        if value and not re.fullmatch(r"[1-9][0-9]{3}", value):
+            raise ValueError("Enter a valid publication year range.")
+        years.append(int(value) if value else None)
+    from_year, through_year = years
+    if from_year is not None and through_year is not None and from_year > through_year:
+        raise ValueError("Enter a valid publication year range.")
+
+    group = field("group")
+    facets = field("facets") == "1"
+    result = library.paper_catalog(
+        db, account, query=query, group=_positive_number(group, "group") if group else None,
+        publisher=publisher, from_year=from_year, through_year=through_year,
+        page=_positive_number(field("page", "1"), "page"), facets=facets,
+    )
+    if facets:
+        result["google_available"] = handler.google_available()
+    return result
 
 
 def update_paper(handler, db, data):

@@ -25,6 +25,7 @@ def update_comment(handler, db, data):
         db, paper_id, data.get("body"), account, comment_id, kind=data.get("kind", "user"),
         parent_id=data.get("parent_id"), doi_refs=data.get("doi_refs"),
         audience=data.get("audience"), location=data.get("location"),
-        recipients=data.get("recipients"), document_id=document_id,
+        recipients=data.get("recipients"), document_id=document_id, finding_id=data.get("finding_id"),
+        goal_id=data.get("goal_id"),
     )
     return {"comment_id": comment_id}

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { Blob } from 'node:buffer';
 
-const files = ['api.js', 'metrics.js', 'library.js', 'documents.js', 'boot.js'];
+const files = ['api.js', 'metrics.js', 'library.js', 'documents.js', 'findings.js', 'goals.js', 'boot.js'];
 const sources = files.map(name => fs.readFileSync(new URL(`../paper_app/web/${name}`, import.meta.url), 'utf8'));
 
 for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Papers'], ['/documents', 'Markdown documents'], ['/account', 'Account']]) {
@@ -19,7 +19,8 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
   const document = {title: '', getElementById(id) {if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id);},
     querySelectorAll() {return [];}, createElement() {return makeElement();}};
   const response = {account: null, papers: [], groups: [], memberships: [], metrics: [], comments: [],
-    documents: [], archived_papers: [], document_targets: [], google_available: false};
+    documents: [], archived_papers: [], document_targets: [], google_available: false,
+    publishers: [], count: 0, total: 0, page: 1};
   const context = {document, location: {pathname: path, search: '', href: `http://127.0.0.1:8765${path}`}, URLSearchParams,
     localStorage: {getItem() {return null;}}, history: {replaceState() {}}, navigator: {},
     fetch: async () => ({ok: true, json: async () => response}),

@@ -1,12 +1,30 @@
 # Local paper library
 
-Requires Python 3.11 or newer and Poppler's `pdftotext`.
+## Project goal
+
+Build a research server that helps researchers answer two questions: **What matters now? What should we do next?** Bring literature, discussion, design, and experimentation into one workflow so researchers can move quickly from a promising idea to evidence about whether it is achievable.
+
+- **Identify what matters.** Synthesize papers and documents to surface open questions, conflicting results, and gaps in the evidence. Use threaded comments and references to brainstorm directions and explain why a question is worth pursuing now.
+- **Test feasibility early.** Define what success would look like and choose the smallest experiment that could inform the next decision. Use AI to help design a prototype or experiment, carry it out, and analyze the results under explicit conditions.
+- **Decide what to do next.** Compare results with published baselines and earlier runs. Link conclusions to source passages, methods, and outputs so researchers can judge the evidence and decide whether to refine the goal, complete the design and run a larger experiment, or pursue another direction.
+
+### Research data management
+
+The server must apply the CIA triad to papers, documents, discussions, and experiment records throughout the research workflow.
+
+- **Confidentiality.** Limit access to authorized researchers and AI agents. Respect sharing decisions and revocations when reading, citing, exporting, or sending research material to an AI provider.
+- **Integrity.** Track who contributed or changed a record and which source or artifact version supports each finding. Detect unexpected changes to stored files and flag citations that need review.
+- **Availability.** Keep research records accessible to authorized collaborators and recoverable after failures. Back up the database and managed files together, and verify that a restore recovers both the records and their evidence links.
+
+## Getting started
+
+Requires Python 3.11 or newer and Poppler's `pdftotext`. Citing PDF pages also uses Poppler's `pdfinfo`.
 
 ```sh
 ./run_paper_server.sh /path/to/papers.sqlite3
 ```
 
-Use the bottom bar to switch between [Compare](http://127.0.0.1:8765/), [Papers](http://127.0.0.1:8765/papers), [Documents](http://127.0.0.1:8765/documents), and [Account](http://127.0.0.1:8765/account). Press Ctrl+C to stop the server.
+Use the bottom bar to switch between [Compare](http://127.0.0.1:8765/), [Papers](http://127.0.0.1:8765/papers), [Documents](http://127.0.0.1:8765/documents), [Experiments](http://127.0.0.1:8765/experiments), and [Account](http://127.0.0.1:8765/account). Press Ctrl+C to stop the server.
 
 Anyone can select **Create a human account** on the **Account** page. New members can create their own items and read items shared with their username. An optional invitation gives access to trusted-human audiences. The operator can also change the tier later. Use `local` or `cloud` for AI accounts and `member` for access by direct sharing only.
 
@@ -66,6 +84,69 @@ python3 -m paper_app.server --database /path/to/papers.sqlite3 --import-csv /pat
 
 Keep the SQLite file and its sibling `.pdfs/` directory together when backing up the library. Extracted metrics can include values from cited baselines and can miss values shown only in figures. Check the source before ranking papers.
 
+## Research workflow
+
+1. Create a Markdown document for literature notes and add **Research findings** backed by PDF pages, Markdown line ranges, or uploaded artifact versions. Check published baselines against the source page.
+2. Open **What to do next** to propose a goal with a reason to pursue it now, a specific uncertainty, and supporting findings. Researchers and AI agents can propose and discuss goals. The human workspace owner sets priorities and selects goals for testing. Priority 1 is highest, and ties follow proposal order.
+3. Draft a feasibility brief for a selected goal. Specify the approach, baseline finding, success criterion, measurement conditions, and budget. The workspace owner confirms the brief to create a linked experiment. Use **Copy brief** to hand the Markdown to your external tools. The confirmed brief and baseline revision stay linked to each run.
+4. Run the experiment externally. Record the methods, settings, and status in **Experiments**, then upload the output and cite the exact version from a run finding. Numeric findings use a metric, decimal value, unit, and measurement conditions.
+5. Return to the goal to record a decision. The server compares numeric results when the metric, unit, and conditions match. A failed run, incompatible measurement, or changed baseline is inconclusive. The workspace owner records the rationale and chooses another iteration, promotion to a full design brief, or setting the goal aside. The full design draft carries forward the earlier evidence and can be revised before confirmation.
+
+Goal records and linked experiments follow current workspace and evidence access. The original per-run and artifact permissions still apply. Explicit experiment editor grants let collaborators record runs. Use **Discuss goal** or the finding’s **Discuss** action to start a scoped thread. If an edited Markdown source flags a citation for review, check the current line range and update the citation revision.
+
+### Synthetic pilot
+
+Create a separate library and start the server. The generator prints the test username and password, a local AI application key, the workspace path, and the finding IDs.
+
+```sh
+pilot_dir=$(mktemp -d)
+python3 -m scripts.research_pilot --goals "$pilot_dir/pilot.sqlite3"
+./run_paper_server.sh "$pilot_dir/pilot.sqlite3"
+```
+
+Sign in with the printed human credentials and open the printed workspace path on `http://127.0.0.1:8765`. From the conclusion, open the mock methods PDF and inspect the two CSV run outputs. In **Compare findings**, compare the published 80% baseline with the 90% full benchmark result for a 10 percentage-point difference. Compare the same baseline with the 100% clean-scan result to see the conditions mismatch. Look for the agent’s qualitative O/0 observation and the human discussion attached to the conclusion.
+
+Open the printed goal workflow path to see the two AI proposals ranked by the researcher. The clean-only run has an inconclusive decision. The comparable ten-scan run met the criterion and opened a draft full design brief. Run the generator without `--goals` to start with the findings alone and walk through the goal workflow manually.
+
+To participate as the local AI account, send its printed application key as `Authorization: Bearer <key>`. Set `PILOT_KEY` to the key before running these examples. The fresh pilot creates document `1`, baseline `1`, full-run finding `2`, and initial discussion comment `1`.
+
+```sh
+curl -H "Authorization: Bearer $PILOT_KEY" \
+  'http://127.0.0.1:8765/api/research-findings?document_id=1'
+curl -H "Authorization: Bearer $PILOT_KEY" \
+  'http://127.0.0.1:8765/api/research-findings?document_id=1&left=1&right=2'
+curl -H "Authorization: Bearer $PILOT_KEY" -H 'Content-Type: application/json' \
+  -d '{"document_id":1,"parent_id":1,"body":"Test scans containing both O and 0.","audience":"local"}' \
+  'http://127.0.0.1:8765/api/comments'
+```
+
+`POST /api/research-findings` accepts `document_id`, `statement`, `kind` (`observation`, `baseline`, or `run_result`), and an `evidence` array. Use `{"kind":"pdf","id":1,"page":1}` for a PDF, `{"kind":"document","id":1,"start":2,"end":2,"revision":1}` for Markdown, and `{"kind":"run_artifact","id":1}` for an uploaded run artifact version. Send `metric`, `value` as a decimal string, `unit`, and `conditions` together for numeric findings. For baselines, include a PDF citation and `"verified_baseline":true` after checking the source. To edit a finding you authored, include its `id` and current `revision`. To start a thread, send the finding’s ID as `finding_id` with the new document comment.
+
+### Goal API
+
+Read visible goals, supporting findings, and copyable brief Markdown with `GET /api/research-goals?document_id=1`. An external agent can read the findings and submit a proposal using its own application key.
+
+```sh
+curl -H "Authorization: Bearer $PILOT_KEY" \
+  'http://127.0.0.1:8765/api/research-goals?document_id=1'
+curl -H "Authorization: Bearer $PILOT_KEY" -H 'Content-Type: application/json' \
+  -d '{"document_id":1,"action":"propose","question":"Do O and 0 errors warrant a dedicated check?","rationale":"The full run found one such error.","uncertainty":"How frequent is the error across samples?","evidence_ids":[4]}' \
+  'http://127.0.0.1:8765/api/research-goals'
+```
+
+Send an `action` and `document_id` with every goal write. After proposal, include the `goal_id`. Start a goal thread with `goal_id` on a new document comment, then reply using its `parent_id`.
+
+| Action | Additional fields |
+| --- | --- |
+| `propose` | `question`, `rationale`, `uncertainty`, `evidence_ids` (supporting finding IDs) |
+| `draft` | `approach`, `baseline_id` (finding ID), `criterion`, `conditions`, `budget` |
+| `rank` | `revision`, `priority`, `selected` (boolean) |
+| `confirm` | `revision`, `brief_id` |
+| `decide` | `revision`, `brief_id`, `run_id`, `result_id` (finding ID), `outcome` (`met`, `missed`, or `inconclusive`), `next_step` (`iterate`, `design`, or `set_aside`), `rationale` |
+| `revise_design` | `revision`, `brief_id`, and the same brief fields as `draft` |
+
+The `revision` is the current goal revision. Rank, confirm, decide, and design revision require the human workspace owner. Authors can update source locations in findings that a goal or brief already cites. Use a follow-up finding when the evidence targets change.
+
 ## Local demo
 
 Run `./run_paper_server.sh .paper-demo/papers.sqlite3` to open the populated example library. Use the credentials in `.paper-demo/accounts.txt`. The trusted human account can open the **Mobile vision benchmark reading notes** document and preview its local PDF links. The demo includes restricted PDFs so the local AI and cloud AI accounts see different results.
@@ -92,7 +173,7 @@ python3 -m paper_app.backup create /path/to/papers.sqlite3 /path/to/backup
 python3 -m paper_app.backup restore /path/to/backup /path/to/restored.sqlite3
 ```
 
-The command holds a SQLite write lock while copying the database and verified PDF files, so imports and other writes wait until the backup finishes. It checks each stored PDF's SHA-256 when creating and restoring the backup and checks SQLite integrity on restore. Keep the backup private: it contains account credentials and library content. Test the restored library before relying on a backup. CSV-only records can refer to external files; those files are not included and must be backed up separately. External processes that modify PDF files outside the app are not coordinated by the database lock.
+The command holds a SQLite write lock while copying the database and verified PDF files, so imports and other writes wait until the backup finishes. It verifies SHA-256 hashes for managed PDFs and uploaded artifact versions when creating and restoring a backup. The SQLite snapshot includes research goals, briefs, decisions, and uploaded artifacts. Keep the backup private because it contains account credentials and library content. Test the restored library before relying on a backup. Back up externally referenced files separately.
 
 ## Development
 
@@ -112,4 +193,6 @@ To check database integrity and find missing, changed, or unreferenced managed P
 
 API clients that do not need a complete metric snapshot can read `GET /api/metric-page`, then follow each non-null `next_after` value with `?after=<value>`. Each page contains up to 500 accessible rows. Cursors are intended for a single traversal; concurrent edits can change later pages, so use the complete snapshot or a backup when a consistent point-in-time view is required. The comparison page currently loads the full metric dataset to support global filtering, sorting and trade-off analysis, but renders its chart and source table in pages of 100 rows.
 
-`GET /api/paper-page` offers the same cursor pattern for accessible, unarchived papers, in pages of up to 100. The browser paper picker filters the complete accessible paper list and displays 100 choices per page. Document text and paper or document discussions are fetched only when selected; discussions load up to 50 root threads at a time.
+`GET /api/paper-page` offers the same cursor pattern for accessible, unarchived papers, in pages of up to 100. The browser paper picker uses `GET /api/paper-catalog` for numbered pages and filters. It accepts `q`, `group`, `publisher`, `from_year`, `through_year`, and `page`, plus `facets=1` to include the account and filter options. The browser fetches paper metadata on selection and loads location choices and archived papers when their sections are opened. Document text and discussions are fetched when their items are selected, and discussions load up to 50 root threads at a time.
+
+Run `python3 -m scripts.benchmark_snapshots --papers 10000 --comments-per-paper 1 --catalog` to compare the browser's startup JSON request counts, response sizes and database read times with and without a preselected paper.

@@ -12,6 +12,8 @@ const paperGroupFilter = element("paper-group-filter");
 const paperPublisherFilter = element("paper-publisher-filter");
 const paperYearFrom = element("paper-year-from");
 const paperYearTo = element("paper-year-to");
+const paperComments = element("paper-comments");
+const paperArchive = element("paper-archive");
 const groupPicker = element("library-group");
 const metadataForm = element("metadata");
 const lookupPaperForm = element("lookup-paper");
@@ -26,7 +28,17 @@ let lookupSequence = 0;
 let commentLoadSequence = 0;
 let nextCommentBefore = null;
 const paperPageSize = 100;
-let paperPage = 0;
+let paperPage = 1;
+let paperCatalog = null;
+let paperCatalogSequence = 0;
+let paperCatalogTimer;
+let paperLibraryRevision = 0;
+let paperSelection = "";
+let paperSelectionSequence = 0;
+let paperDetails = null;
+let paperTargets = null;
+let paperTargetRequest = null;
+let paperArchiveRequest = null;
 let libraryData;
 let metadataSource = "";
 const commentDrafts = new Map();
@@ -97,7 +109,7 @@ function setMetadata(data) {
 }
 
 function selectedPaper() {
-  return libraryData?.papers.find(item => item.id === Number(paperPicker.value));
+  return paperDetails?.paper;
 }
 
 function groupMembers(value) {
@@ -162,7 +174,6 @@ element("view-paper-pdf").addEventListener("click", () => {
 });
 
 function showPaper() {
-  lookupSequence++;
   const selected = selectedPaper();
   const viewer = element("paper-pdf-viewer");
   const selectedId = selected ? String(selected.id) : "";
@@ -203,22 +214,14 @@ function showPaper() {
   commentForm.elements.doi_refs.value = draft?.doiRefs || "";
   commentForm.elements.audience.value = draft?.audience || "owner";
   commentForm.elements.recipients.value = draft?.recipients || "";
-  const locations = [
-    ...libraryData.papers.filter(paper => paper.has_pdf)
-      .map(paper => [`pdf:${paper.id}`, `PDF · ${paper.title || paperFilename(paper)}`]),
-    ...libraryData.document_targets.map(doc => [`document:${doc.id}`, `Document · ${doc.title}`]),
-  ];
-  setOptions(commentForm.elements.target, locations, "No location");
-  commentForm.elements.target.value = draft?.target || "";
-  if (commentForm.elements.target.selectedIndex < 0) commentForm.elements.target.value = "";
+  showPaperTargets(draft?.target, draft?.targetLabel);
   commentForm.elements.position.value = draft?.position || "";
   showPositionField();
   showReplyTarget(draft?.parentId);
   showSavedMetadata(selected);
   setMetadata(selected);
   lookupForm.elements.query.value = selected.doi;
-  const memberships = new Set(libraryData.memberships
-    .filter(item => item.paper_id === selected.id).map(item => item.group_id));
+  const memberships = new Set(paperDetails.group_ids);
   const choices = element("group-options");
   choices.replaceChildren();
   for (const group of libraryData.groups) {
@@ -232,6 +235,7 @@ function showPaper() {
   if (!libraryData.groups.length) add(choices, "p", "Create a group to assign this paper.");
 
   renderPaperComments(selected);
+  if (paperComments.open) loadPaperTargets();
 }
 
 function renderPaperComments(selected) {
@@ -271,6 +275,14 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
     else if (comment.author_kind === "ai") author = `AI · recorded by ${author}`;
     add(article, "strong", author);
     add(article, "p", `Updated ${comment.updated} UTC · ${audienceLabels[comment.audience] || "Item access"}`, "comment-time");
+    if (comment.finding_id) {
+      add(article, "a", `Finding #${comment.finding_id}`).href =
+        `/documents?document=${comment.document_id}&finding=${comment.finding_id}`;
+    }
+    if (comment.goal_id) {
+      add(article, "a", `Goal #${comment.goal_id}`).href =
+        `/documents?document=${comment.document_id}&goal=${comment.goal_id}`;
+    }
     if (comment.target_kind === "pdf") {
       const label = `PDF page ${comment.target_position}`;
       inlinePdfLink(add(article, "a", label), area,
@@ -338,9 +350,8 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
   }
 }
 
-function showArchive() {
+function showArchive(papers) {
   const archive = element("archived-papers");
-  const papers = libraryData.archived_papers;
   archive.replaceChildren();
   element("archive-summary").textContent = `Archived papers (${papers.length})`;
   if (!papers.length) add(archive, "p", "No archived papers.");
@@ -358,9 +369,9 @@ function showArchive() {
 
 function rememberPaperSelection() {
   const url = new URL(location.href);
-  if (paperPicker.value) url.searchParams.set("paper", paperPicker.value);
+  if ((url.searchParams.get("paper") || "") !== paperSelection) url.searchParams.delete("page");
+  if (paperSelection) url.searchParams.set("paper", paperSelection);
   else url.searchParams.delete("paper");
-  if (new URLSearchParams(location.search).get("paper") !== paperPicker.value) url.searchParams.delete("page");
   history.replaceState(null, "", url);
 }
 
@@ -368,45 +379,237 @@ function paperFilename(item) {
   return item.path.split(/[\\/]/).pop();
 }
 
-function updatePaperOptions(selected = paperPicker.value) {
-  const terms = paperSearch.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const members = groupMembers(paperGroupFilter.value);
+function readPaperFilters() {
+  const query = paperSearch.value.trim();
+  const group = paperGroupFilter.value;
   const publisher = paperPublisherFilter.value;
-  const fromYear = paperYearFrom.value ? paperYearFrom.valueAsNumber : null;
-  const throughYear = paperYearTo.value ? paperYearTo.valueAsNumber : null;
+  const fromYear = paperYearFrom.value ? String(paperYearFrom.valueAsNumber) : "";
+  const throughYear = paperYearTo.value ? String(paperYearTo.valueAsNumber) : "";
   const invalidYears = !paperYearFrom.validity.valid || !paperYearTo.validity.valid
-    || (fromYear !== null && throughYear !== null && fromYear > throughYear);
-  const papers = libraryData.papers.filter(item => {
-    if (invalidYears || (members && !members.has(item.id))) return false;
-    if (publisher && item.publisher !== publisher) return false;
-    const year = Number(item.year);
-    if ((fromYear !== null && (!year || year < fromYear))
-        || (throughYear !== null && (!year || year > throughYear))) return false;
-    const text = [item.title, item.authors, item.doi, item.venue, paperFilename(item)]
-      .filter(Boolean).join(" ").toLowerCase();
-    return terms.every(term => text.includes(term));
-  });
-  const pages = Math.max(1, Math.ceil(papers.length / paperPageSize));
-  paperPage = Math.max(0, Math.min(paperPage, pages - 1));
-  const displayed = papers.slice(paperPage * paperPageSize, (paperPage + 1) * paperPageSize);
-  const options = displayed.map(item => [item.id, item.title || paperFilename(item)]);
-  const current = libraryData.papers.find(item => String(item.id) === selected);
-  if (current && !displayed.includes(current)) {
-    options.unshift([current.id, `${current.title || paperFilename(current)} (selected)`]);
+    || (fromYear && throughYear && Number(fromYear) > Number(throughYear));
+  return {query, group, publisher, fromYear, throughYear, invalidYears};
+}
+
+function renderPaperOptions() {
+  const papers = paperCatalog?.papers || [];
+  const options = papers.map(item => [item.id, item.title || paperFilename(item)]);
+  const selected = selectedPaper();
+  if (paperSelection && !papers.some(item => String(item.id) === paperSelection)) {
+    const label = selected ? selected.title || paperFilename(selected) : "Selected paper";
+    options.unshift([paperSelection, `${label} (selected)`]);
   }
-  element("paper-page-status").textContent = `Page ${paperPage + 1} of ${pages}`;
-  element("paper-page-previous").disabled = paperPage === 0;
-  element("paper-page-next").disabled = paperPage + 1 >= pages;
-  setOptions(paperPicker, options, papers.length ? "Choose a paper" : "No matching papers");
-  if (current) paperPicker.value = selected;
+  setOptions(paperPicker, options, papers.length || !paperCatalog ? "Choose a paper" : "No matching papers");
+  paperPicker.value = paperSelection;
+}
+
+function renderPaperPage(result, filters) {
+  paperCatalog = result;
+  paperPage = result.page;
+  const pages = Math.max(1, Math.ceil(result.count / paperPageSize));
+  element("paper-page-status").textContent = `Page ${paperPage} of ${pages}`;
+  element("paper-page-previous").disabled = paperPage === 1;
+  element("paper-page-next").disabled = paperPage >= pages;
+  const {query, group, publisher, fromYear, throughYear, invalidYears} = filters;
   element("paper-search-status").textContent = invalidYears ? "Enter a valid publication year range."
-    : (terms.length || members || publisher || fromYear !== null || throughYear !== null)
-      ? `${papers.length} of ${libraryData.papers.length} papers match.` : "";
+    : query || group || publisher || fromYear || throughYear
+      ? `${result.count} of ${result.total} papers match.` : "";
+  renderPaperOptions();
+}
+
+function paperCatalogLoading() {
+  element("paper-page-previous").disabled = true;
+  element("paper-page-next").disabled = true;
+  element("paper-catalog-retry").hidden = true;
+  element("paper-search-status").textContent = "Loading papers…";
+}
+
+async function loadPaperCatalog(facets = false) {
+  const sequence = ++paperCatalogSequence;
+  const filters = readPaperFilters();
+  const {query, group, publisher, fromYear, throughYear, invalidYears} = filters;
+  paperCatalogLoading();
+  if (invalidYears && !facets) {
+    renderPaperPage({...paperCatalog, papers: [], count: 0, page: 1}, filters);
+    return true;
+  }
+  const params = new URLSearchParams({page: String(paperPage)});
+  for (const [key, value] of Object.entries({
+    q: query, group, publisher, from_year: invalidYears ? "" : fromYear,
+    through_year: invalidYears ? "" : throughYear, facets: facets ? "1" : "",
+  })) {
+    if (value) params.set(key, value);
+  }
+  try {
+    const result = await api(`paper-catalog?${params}`);
+    if (sequence !== paperCatalogSequence) return false;
+    if (facets) {
+      if (libraryData?.account?.id !== result.account?.id) commentDrafts.clear();
+      libraryData = {account: result.account, google_available: result.google_available, groups: result.groups, comments: []};
+      showAccount();
+      setOptions(paperPublisherFilter, result.publishers.map(name => [name, name]), "All publishers");
+      setOptions(paperGroupFilter, result.groups.map(item => [item.id, item.name]), "All groups");
+      if (publisher !== paperPublisherFilter.value || group !== paperGroupFilter.value) {
+        paperPage = 1;
+        return loadPaperCatalog();
+      }
+    }
+    renderPaperPage(invalidYears ? {...result, papers: [], count: 0, page: 1} : result, filters);
+    return true;
+  } catch (error) {
+    if (sequence !== paperCatalogSequence) return false;
+    element("paper-search-status").textContent = error.message;
+    element("paper-catalog-retry").hidden = false;
+    return false;
+  }
+}
+
+function refreshPaperFilters(debounce = false) {
+  if (!paperCatalog) return;
+  clearTimeout(paperCatalogTimer);
+  paperPage = 1;
+  if (!debounce) return loadPaperCatalog();
+  ++paperCatalogSequence;
+  paperCatalogLoading();
+  paperCatalogTimer = setTimeout(() => loadPaperCatalog(), 250);
+}
+
+async function loadSelectedPaper() {
+  const sequence = ++paperSelectionSequence;
+  ++lookupSequence;
+  const id = paperSelection;
+  paperDetails = null;
+  element("paper-detail").hidden = true;
+  const status = element("paper-detail-status");
+  const retry = element("paper-detail-retry");
+  status.textContent = "";
+  retry.hidden = true;
+  if (element("paper-pdf-viewer").dataset.paper !== id) closePdf("paper");
+  if (!id) return;
+
+  status.textContent = "Loading paper…";
+  try {
+    const result = await api(`paper-detail?paper_id=${encodeURIComponent(id)}`);
+    if (sequence !== paperSelectionSequence) return;
+    paperDetails = result;
+    libraryData.comments = [];
+    nextCommentBefore = null;
+    element("older-comments").hidden = true;
+    status.textContent = "";
+    renderPaperOptions();
+    showPaper();
+
+    const params = new URLSearchParams(location.search);
+    const requestedPage = Number(params.get("page"));
+    const selected = result.paper;
+    if (params.get("paper") === id && selected.has_pdf && Number.isSafeInteger(requestedPage)
+        && requestedPage > 0 && element("paper-pdf-viewer").hidden) {
+      viewPdf("paper", `${paperPDFURL(selected.id)}#page=${requestedPage}`, selected.title || paperFilename(selected));
+    }
+    await loadPaperComments();
+  } catch (error) {
+    if (sequence !== paperSelectionSequence) return;
+    status.textContent = error.message;
+    if (error.status === 404 || error.status === 400) {
+      paperSelection = "";
+      rememberPaperSelection();
+      renderPaperOptions();
+    } else {
+      retry.hidden = false;
+    }
+  }
+}
+
+function showPaperTargets(target = "", label = "") {
+  const options = [...(paperTargets || [])];
+  if (target && !paperTargets?.has(target)) {
+    const title = label || (paperTargets ? target : "Selected location");
+    const unavailable = paperTargets && !title.endsWith(" (unavailable)");
+    options.unshift([target, unavailable ? `${title} (unavailable)` : title]);
+  }
+  setOptions(commentForm.elements.target, options, "No location");
+  commentForm.elements.target.value = target;
+  showPositionField();
+}
+
+function loadPaperTargets() {
+  if (paperTargetRequest || !libraryData?.account) return paperTargetRequest;
+  const revision = paperLibraryRevision;
+  const status = element("paper-targets-status");
+  const retry = element("paper-targets-retry");
+  status.textContent = "Loading locations…";
+  retry.hidden = true;
+  paperTargetRequest = api("paper-comment-targets").then(result => {
+    if (revision !== paperLibraryRevision) return;
+    paperTargets = new Map([
+      ...result.papers.map(paper => [`pdf:${paper.id}`, `PDF · ${paper.title || paperFilename(paper)}`]),
+      ...result.documents.map(doc => [`document:${doc.id}`, `Document · ${doc.title}`]),
+    ]);
+    const field = commentForm.elements.target;
+    if (selectedPaper()) showPaperTargets(field.value, field.selectedOptions[0]?.textContent);
+    status.textContent = "";
+  }).catch(error => {
+    if (revision !== paperLibraryRevision) return;
+    paperTargetRequest = null;
+    status.textContent = error.message;
+    retry.hidden = false;
+  });
+  return paperTargetRequest;
+}
+
+function loadPaperArchive() {
+  if (paperArchiveRequest) return paperArchiveRequest;
+  const revision = paperLibraryRevision;
+  const status = element("paper-archive-status");
+  const retry = element("paper-archive-retry");
+  status.textContent = "Loading archived papers…";
+  retry.hidden = true;
+  paperArchiveRequest = api("paper-archive").then(result => {
+    if (revision !== paperLibraryRevision) return;
+    showArchive(result.papers);
+    status.textContent = "";
+  }).catch(error => {
+    if (revision !== paperLibraryRevision) return;
+    paperArchiveRequest = null;
+    status.textContent = error.message;
+    retry.hidden = false;
+  });
+  return paperArchiveRequest;
+}
+
+const paperFilters = [paperSearch, paperGroupFilter, paperPublisherFilter, paperYearFrom, paperYearTo];
+
+async function loadPapersPage(paperId) {
+  const revision = ++paperLibraryRevision;
+  ++paperSelectionSequence;
+  ++commentLoadSequence;
+  ++lookupSequence;
+  clearTimeout(paperCatalogTimer);
+  paperCatalog = null;
+  paperDetails = null;
+  paperTargets = paperTargetRequest = paperArchiveRequest = null;
+  paperSelection = paperId === undefined
+    ? new URLSearchParams(location.search).get("paper") || "" : String(paperId);
+  if (paperId !== undefined) rememberPaperSelection();
+  element("paper-detail").hidden = true;
+  element("paper-detail-status").textContent = "";
+  element("paper-detail-retry").hidden = true;
+  element("archived-papers").replaceChildren();
+  element("archive-summary").textContent = "Archived papers";
+  for (const item of ["paper-targets", "paper-archive"]) {
+    element(`${item}-status`).textContent = "";
+    element(`${item}-retry`).hidden = true;
+  }
+  for (const control of [...paperFilters, paperPicker]) control.disabled = true;
+  renderPaperOptions();
+  if (!await loadPaperCatalog(true) || revision !== paperLibraryRevision) return;
+  for (const control of [...paperFilters, paperPicker]) control.disabled = false;
+  await Promise.all([loadSelectedPaper(), paperArchive.open ? loadPaperArchive() : null]);
 }
 
 async function loadLibrary(paperId) {
   const previousAccount = libraryData?.account?.id;
-  const route = papersPage ? "paper-details?comments=none" : accountPage ? "account" : documentsPage ? "documents?comments=none&content=summary" : "compare";
+  if (papersPage) return loadPapersPage(paperId);
+  const route = accountPage ? "account" : documentsPage ? "documents?comments=none&content=summary" : "compare";
   libraryData = await api(route);
   if (accountPage) {
     showAccount();
@@ -417,26 +620,6 @@ async function loadLibrary(paperId) {
     await showDocuments(libraryData.account?.id !== previousAccount);
     if (previousAccount === undefined) await openRequestedDocument();
     await loadDocumentComments();
-    return;
-  }
-  if (papersPage) {
-    if (libraryData.account?.id !== previousAccount) commentDrafts.clear();
-    showAccount();
-    const publishers = [...new Set(libraryData.papers.map(paper => paper.publisher).filter(Boolean))].sort();
-    setOptions(paperPublisherFilter, publishers.map(name => [name, name]), "All publishers");
-    setOptions(paperGroupFilter, libraryData.groups.map(item => [item.id, item.name]), "All groups");
-    const params = new URLSearchParams(location.search);
-    const requested = params.get("paper");
-    updatePaperOptions(paperId === undefined ? paperPicker.value || requested : String(paperId));
-    rememberPaperSelection();
-    await loadPaperComments();
-    const requestedPage = Number(params.get("page"));
-    const selected = selectedPaper();
-    if (requested === String(selected?.id) && selected?.has_pdf && Number.isSafeInteger(requestedPage)
-        && requestedPage > 0 && element("paper-pdf-viewer").hidden) {
-      viewPdf("paper", `${paperPDFURL(selected.id)}#page=${requestedPage}`, selected.title || paperFilename(selected));
-    }
-    showArchive();
     return;
   }
   const papersById = new Map(libraryData.papers.map(item => [item.id, item]));
@@ -462,18 +645,29 @@ async function loadPaperComments() {
   const sequence = ++commentLoadSequence;
   const data = libraryData;
   const selected = selectedPaper();
-  element("paper-detail").hidden = true;
-  data.comments = [];
-  nextCommentBefore = null;
-  element("older-comments").hidden = true;
-  if (selected) {
+  if (!selected) return;
+  const isCurrent = () =>
+    sequence === commentLoadSequence && data === libraryData && selectedPaper()?.id === selected.id;
+  const status = element("paper-comments-status");
+  const retry = element("paper-comments-retry");
+  commentForm.hidden = true;
+  status.textContent = "Loading comments…";
+  retry.hidden = true;
+  try {
     const result = await api(`paper-comments?paper_id=${selected.id}`);
-    if (sequence !== commentLoadSequence || data !== libraryData || selectedPaper()?.id !== selected.id) return;
+    if (!isCurrent()) return;
     data.comments = result.comments;
     nextCommentBefore = result.next_before;
     element("older-comments").hidden = !nextCommentBefore;
+    status.textContent = "";
+    commentForm.hidden = !data.account;
+    renderPaperComments(selected);
+    showReplyTarget(commentDrafts.get(selected.id)?.parentId);
+  } catch (error) {
+    if (!isCurrent()) return;
+    status.textContent = error.message;
+    retry.hidden = false;
   }
-  if (sequence === commentLoadSequence && data === libraryData) showPaper();
 }
 
 element("older-comments").addEventListener("click", async event => {
@@ -492,7 +686,9 @@ element("older-comments").addEventListener("click", async event => {
     button.hidden = !nextCommentBefore;
     renderPaperComments(selected);
   } catch (error) {
-    libraryStatus.textContent = error.message;
+    if (sequence === commentLoadSequence && data === libraryData && selectedPaper()?.id === selected.id) {
+      libraryStatus.textContent = error.message;
+    }
   } finally {
     button.disabled = false;
   }
@@ -519,21 +715,28 @@ function submit(form, action, status = libraryStatus) {
   });
 }
 
-for (const field of [paperSearch, paperPublisherFilter, paperYearFrom, paperYearTo]) {
-  field.addEventListener("input", () => {
-    paperPage = 0;
-    if (libraryData) updatePaperOptions();
-  });
+paperSearch.addEventListener("input", () => refreshPaperFilters(true));
+for (const field of [paperPublisherFilter, paperGroupFilter]) {
+  field.addEventListener("change", () => refreshPaperFilters());
 }
-paperGroupFilter.addEventListener("change", () => { paperPage = 0; updatePaperOptions(); });
-element("paper-page-previous").addEventListener("click", () => { paperPage--; updatePaperOptions(); });
-element("paper-page-next").addEventListener("click", () => { paperPage++; updatePaperOptions(); });
+for (const field of [paperYearFrom, paperYearTo]) {
+  field.addEventListener("input", () => refreshPaperFilters());
+}
+element("paper-page-previous").addEventListener("click", () => { paperPage--; return loadPaperCatalog(); });
+element("paper-page-next").addEventListener("click", () => { paperPage++; return loadPaperCatalog(); });
 paperPicker.addEventListener("change", () => {
   libraryStatus.textContent = "";
-  updatePaperOptions();
+  paperSelection = paperPicker.value;
   rememberPaperSelection();
-  loadPaperComments().catch(error => { libraryStatus.textContent = error.message; });
+  return loadSelectedPaper();
 });
+element("paper-catalog-retry").addEventListener("click", () => paperCatalog ? loadPaperCatalog() : loadPapersPage());
+element("paper-detail-retry").addEventListener("click", loadSelectedPaper);
+element("paper-comments-retry").addEventListener("click", loadPaperComments);
+element("paper-targets-retry").addEventListener("click", loadPaperTargets);
+element("paper-archive-retry").addEventListener("click", loadPaperArchive);
+paperComments.addEventListener("toggle", () => { if (paperComments.open && selectedPaper()) return loadPaperTargets(); });
+paperArchive.addEventListener("toggle", () => { if (paperArchive.open && paperCatalog) return loadPaperArchive(); });
 groupPicker.addEventListener("change", filterGroups);
 metadataForm.addEventListener("input", () => {
   metadataSource = "Manual";
@@ -737,7 +940,10 @@ function showReplyTarget(parentId) {
 }
 
 function showPositionField() {
-  const target = commentForm.elements.target.value;
+  const field = commentForm.elements.target;
+  const target = field.value;
+  const unavailable = target && paperTargets && !paperTargets.has(target);
+  field.setCustomValidity(unavailable ? "Choose an available location or clear it." : "");
   element("comment-position-label").hidden = !target;
   commentForm.elements.position.required = Boolean(target);
   element("comment-position-text").textContent = target.startsWith("pdf:") ? "PDF page" : "Document line";
@@ -748,7 +954,9 @@ function rememberCommentDraft(parentId) {
   commentDrafts.set(id, {
     body: newComment.value, kind: commentForm.elements.kind.value,
     doiRefs: commentForm.elements.doi_refs.value, audience: commentForm.elements.audience.value, parentId,
-    target: commentForm.elements.target.value, position: commentForm.elements.position.value,
+    target: commentForm.elements.target.value,
+    targetLabel: commentForm.elements.target.selectedOptions[0]?.textContent,
+    position: commentForm.elements.position.value,
     recipients: commentForm.elements.recipients.value,
   });
 }
@@ -784,8 +992,14 @@ submit(paperAccessForm, () => updateLibrary("paper-access", {
   recipients: recipientNames(paperAccessForm.elements.recipients.value),
 }, "File access updated."));
 submit(element("archive-paper"), async () => {
-  const paper = selectedPaper();
-  await updateLibrary("archive-paper", { paper_id: paper.id, archived: true }, "Paper archived.");
+  const {id} = selectedPaper();
+  await api("archive-paper", { paper_id: id, archived: true });
+  if (paperSelection === String(id)) {
+    paperSelection = "";
+    rememberPaperSelection();
+  }
+  await loadLibrary();
+  libraryStatus.textContent = "Paper archived.";
 });
 submit(metadataForm, () => updateLibrary("metadata", {
   ...Object.fromEntries(metadataFields.map(key => [key, metadataForm.elements[key].value.trim()])),

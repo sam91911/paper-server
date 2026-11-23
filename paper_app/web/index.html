@@ -53,7 +53,7 @@
   </form>
   <ul id="import-results" aria-label="PDF import results" hidden></ul>
   <div class="library-actions">
-    <label>Search papers <input type="search" id="paper-search" placeholder="Title, author, DOI, venue, or filename"></label>
+    <label>Search papers <input type="search" id="paper-search" maxlength="500" placeholder="Title, author, DOI, venue, or filename"></label>
     <label>Paper group <select id="paper-group-filter"></select></label>
     <label>Publisher <select id="paper-publisher-filter"></select></label>
     <label>From year <input id="paper-year-from" type="number" min="1000" max="9999" placeholder="Any"></label>
@@ -70,7 +70,10 @@
     </form>
   </div>
   <p id="paper-search-status" role="status"></p>
+  <button id="paper-catalog-retry" type="button" hidden>Retry loading papers</button>
   <p id="library-status" role="status"></p>
+  <p id="paper-detail-status" role="status"></p>
+  <button id="paper-detail-retry" type="button" hidden>Retry loading paper</button>
   <div id="paper-detail" hidden>
     <details open>
       <summary>Paper file</summary>
@@ -136,8 +139,10 @@
       <summary>Group membership</summary>
       <form id="membership"><div id="group-options"></div><button>Save groups</button></form>
     </details>
-    <details>
+    <details id="paper-comments">
       <summary id="comment-summary">Comments</summary>
+      <p id="paper-comments-status" role="status"></p>
+      <button id="paper-comments-retry" type="button" hidden>Retry loading comments</button>
       <button id="older-comments" type="button" hidden>Load older threads</button>
       <div id="comments"></div>
       <p id="comment-sign-in" hidden><a href="/account">Sign in to post a comment</a>.</p>
@@ -160,6 +165,8 @@
             <input name="position" type="number" min="1" max="1000000">
           </label>
         </div>
+        <p id="paper-targets-status" role="status"></p>
+        <button id="paper-targets-retry" type="button" hidden>Retry loading locations</button>
         <label>Comment access <select name="audience" class="audience-options"></select></label>
         <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
         <button id="post-comment">Add comment</button>
@@ -169,6 +176,8 @@
   <details id="paper-archive">
     <summary id="archive-summary">Archived papers</summary>
     <p>Archived papers stay on disk and are hidden from comparisons and CSV exports.</p>
+    <p id="paper-archive-status" role="status"></p>
+    <button id="paper-archive-retry" type="button" hidden>Retry loading archived papers</button>
     <div id="archived-papers"></div>
   </details>
 </section>
@@ -260,6 +269,66 @@
         </div>
         <iframe id="document-pdf-frame" referrerpolicy="no-referrer" title="Document PDF preview"></iframe>
       </div>
+      <details id="research-goals" hidden>
+        <summary>What to do next</summary>
+        <p id="goal-status" role="status"></p>
+        <details id="goal-proposal">
+          <summary>Propose a goal</summary>
+          <form id="goal-proposal-form">
+            <label>Research question <input name="question" maxlength="160" required></label>
+            <label>Why it matters now <textarea name="rationale" maxlength="4000" required></textarea></label>
+            <label>Uncertainty to resolve <textarea name="uncertainty" maxlength="4000" required></textarea></label>
+            <fieldset>
+              <legend>Supporting findings</legend>
+              <div id="goal-evidence-options"></div>
+            </fieldset>
+            <button>Submit proposal</button>
+          </form>
+        </details>
+        <div id="goal-list"></div>
+      </details>
+      <details id="research-workspace" hidden>
+        <summary>Research findings</summary>
+        <p id="research-status" role="status"></p>
+        <div id="research-experiments"></div>
+        <details id="finding-editor">
+          <summary id="finding-editor-label">Add finding</summary>
+          <form id="finding-form">
+            <label>Finding <textarea name="statement" maxlength="20000" required></textarea></label>
+            <label>Type <select name="kind">
+              <option value="observation">Observation or conclusion</option>
+              <option value="baseline">Published baseline</option>
+              <option value="run_result">Run result</option>
+            </select></label>
+            <label id="verify-baseline" hidden><input type="checkbox" name="verified_baseline"> I checked the baseline against the PDF</label>
+            <fieldset>
+              <legend>Measurement (optional)</legend>
+              <div class="document-fields">
+                <label>Metric <input name="metric" maxlength="160"></label>
+                <label>Value <input name="value" inputmode="decimal" maxlength="40"></label>
+                <label>Unit <input name="unit" maxlength="80"></label>
+              </div>
+              <label>Measurement conditions <textarea name="conditions" maxlength="2000"></textarea></label>
+            </fieldset>
+            <fieldset>
+              <legend>Evidence</legend>
+              <div id="finding-evidence"></div>
+              <button type="button" class="secondary" id="add-evidence">Add reference</button>
+            </fieldset>
+            <button>Save finding</button>
+            <button type="button" class="secondary" id="cancel-finding-edit" hidden>Cancel edit</button>
+          </form>
+        </details>
+        <form id="finding-compare" hidden>
+          <div class="document-fields">
+            <label>First finding <select name="left" required></select></label>
+            <label>Second finding <select name="right" required></select></label>
+          </div>
+          <button>Compare findings</button>
+          <p id="finding-comparison" role="status"></p>
+        </form>
+        <div id="finding-list"></div>
+      </details>
       <details id="document-discussion" hidden>
         <summary id="document-comment-summary">Comments</summary>
         <button id="older-document-comments" type="button" hidden>Load older threads</button>
@@ -371,6 +440,8 @@
 <script src="/assets/metrics.js"></script>
 <script src="/assets/library.js"></script>
 <script src="/assets/documents.js"></script>
+<script src="/assets/findings.js"></script>
+<script src="/assets/goals.js"></script>
 <script src="/assets/boot.js"></script>
 </body>
 </html>

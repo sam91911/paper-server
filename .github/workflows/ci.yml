@@ -17,3 +17,4 @@ jobs:
       - run: node tests/test_document_comments.mjs
       - run: node tests/test_document_content.mjs
       - run: node tests/test_papers.mjs
+      - run: node tests/test_experiments.mjs

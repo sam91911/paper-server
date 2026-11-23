@@ -11,6 +11,8 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
+from .integrity import bad_artifacts
+
 
 def digest(path):
     with path.open('rb') as stream:
@@ -35,6 +37,8 @@ def create(database, destination):
                 copy = sqlite3.connect(root / 'library.sqlite3')
                 try:
                     source.backup(copy)
+                    if bad := bad_artifacts(copy):
+                        raise ValueError(f"Research artifact integrity check failed for version {bad[0]}.")
                     rows = copy.execute('SELECT id,path,sha256 FROM papers WHERE sha256 IS NOT NULL').fetchall()
                 finally:
                     copy.close()
@@ -102,6 +106,8 @@ def restore(backup, database):
                            (final, entry['paper_id'], old_paths[entry['paper_id']]))
             if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or db.execute('PRAGMA foreign_key_check').fetchone():
                 raise ValueError('Restored database failed integrity checks.')
+            if bad := bad_artifacts(db):
+                raise ValueError(f"Research artifact integrity check failed for version {bad[0]}.")
         # Publish the database last, so it is never visible before its PDFs.
         staged_pdfs.rename(pdf_dir)
         try:

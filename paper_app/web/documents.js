@@ -8,17 +8,22 @@ const documentPreview = element("document-preview");
 let editingDocument;
 let editingRevision;
 let documentParent = null;
+let documentFinding = null;
+let documentGoal = null;
 let documentCommentSequence = 0;
 let nextDocumentCommentBefore = null;
 let documentLoadSequence = 0;
 const documentCommentForm = element("document-comment-form");
 
-function setDocumentReply(comment) {
+function setDocumentReply(comment, findingId = null, goalId = null) {
   documentParent = comment?.id ?? null;
+  documentFinding = findingId;
+  documentGoal = goalId;
   const context = element("document-reply-context");
-  context.hidden = !comment;
-  context.textContent = comment ? `Replying to ${comment.author_name || "an unknown author"}` : "";
-  element("cancel-document-reply").hidden = !comment;
+  context.hidden = !comment && findingId === null && goalId === null;
+  context.textContent = comment ? `Replying to ${comment.author_name || "an unknown author"}`
+    : goalId !== null ? `Discussing goal #${goalId}` : findingId === null ? "" : `Discussing finding #${findingId}`;
+  element("cancel-document-reply").hidden = context.hidden;
   element("post-document-comment").textContent = comment ? "Post reply" : "Add comment";
 }
 
@@ -26,7 +31,7 @@ function renderDocumentComments(item) {
   element("document-discussion").hidden = !item;
   if (!item) return;
   const comments = libraryData.comments.filter(comment => comment.document_id === item.id);
-  if (!comments.some(comment => comment.id === documentParent && !comment.deleted)) setDocumentReply(null);
+  if (documentParent !== null && !comments.some(comment => comment.id === documentParent && !comment.deleted)) setDocumentReply(null);
   renderComments(element("document-comments"), element("document-comment-summary"), comments,
     { document_id: item.id }, "document", documentStatus, comment => {
       setDocumentReply(comment);
@@ -83,6 +88,8 @@ submit(documentCommentForm, async () => {
     document_id: item.id, body: fields.body.value, audience: fields.audience.value,
     doi_refs: doiLines(fields.doi_refs.value),
     recipients: recipientNames(fields.recipients.value), parent_id: documentParent,
+    finding_id: documentFinding ?? undefined,
+    goal_id: documentGoal ?? undefined,
     location: Number.isSafeInteger(line) ? { kind: "document", id: item.id, position: line } : null,
   });
   if (selectedDocument()?.id === item.id) {
@@ -107,6 +114,8 @@ function appendMarkdownLine(parent, line) {
     } else if (pdfPattern.test(match[2])) {
       inlinePdfLink(add(parent, "a", match[1]), "document", match[2], match[1]);
     } else if (/^https:\/\/doi\.org\/10\.\d{4,9}\//i.test(match[2])) {
+      add(parent, "a", match[1]).href = match[2];
+    } else if (/^\/documents\?document=[1-9]\d*&finding=[1-9]\d*$/.test(match[2])) {
       add(parent, "a", match[1]).href = match[2];
     } else {
       parent.append(match[0]);
@@ -169,17 +178,26 @@ async function openRequestedDocument() {
   item = await ensureSelectedDocument();
   if (!item) return;
   openDocument(item);
+  const revision = requested.get("revision");
   const line = Number(requested.get("line"));
   if (Number.isSafeInteger(line) && line > 0) {
-    const text = item.markdown.split("\n")[line - 1];
-    if (text === undefined) {
+    const end = Number(requested.get("end") ?? line);
+    const lines = item.markdown.split("\n");
+    if (revision !== null && String(item.revision) !== revision) {
+      documentStatus.textContent = "The cited revision has changed.";
+    } else if (!Number.isSafeInteger(end) || end < line || end > lines.length) {
       documentStatus.textContent = `Source line ${line} is no longer present.`;
     } else {
-      const marker = add(documentPreview, "p", `Source line ${line}`, "document-location");
-      add(add(documentPreview, "pre"), "code", text);
+      const label = line === end ? `Source line ${line}` : `Source lines ${line}–${end}`;
+      const marker = add(documentPreview, "p", label, "document-location");
+      add(add(documentPreview, "pre"), "code", lines.slice(line - 1, end).join("\n"));
       marker.scrollIntoView({ block: "center" });
     }
   }
+  if (requested.has("research") || requested.has("finding")) {
+    await globalThis.showRequestedResearch?.(requested.get("finding"));
+  }
+  if (requested.has("goal")) await globalThis.showRequestedGoal?.(requested.get("goal"));
 }
 
 function openDocument(item, { create = false } = {}) {
@@ -187,6 +205,8 @@ function openDocument(item, { create = false } = {}) {
   editingRevision = item?.revision;
   documentCommentForm.reset();
   setDocumentReply(null);
+  globalThis.selectResearchDocument?.(item);
+  globalThis.selectGoalDocument?.(item);
   element("review-document").hidden = !item;
   renderDocumentComments(item);
   const canEdit = create || (item && item.owner_id === libraryData.account?.id);
@@ -196,7 +216,7 @@ function openDocument(item, { create = false } = {}) {
   closePdf("document");
   element("download-document").hidden = !item;
   element("document-owner").textContent = item
-    ? `${item.owner_name}${item.owner_role === "user" ? "" : ` (${roleLabels[item.owner_role]})`} · ${audienceLabels[item.audience]}`
+    ? `${item.owner_name}${item.owner_role === "user" ? "" : ` (${roleLabels[item.owner_role]})`} · ${audienceLabels[item.audience]} · Revision ${item.revision}`
     : "";
   documentStatus.textContent = "";
   documentEditor.reset();

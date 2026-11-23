@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import account_routes, accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, google_signin, library, metadata_sync, paper_routes, sharing, tools_catalog
+from . import account_routes, accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, library, metadata_sync, paper_routes, sharing, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
 WEB_ROOT = Path(__file__).resolve().with_name("web")
@@ -30,6 +30,8 @@ ASSETS = {
     "/documents": PAGE,
     "/experiments": ("experiments.html", "text/html; charset=utf-8"),
     "/assets/experiments.js": ("experiments.js", "text/javascript; charset=utf-8"),
+    "/assets/findings.js": ("findings.js", "text/javascript; charset=utf-8"),
+    "/assets/goals.js": ("goals.js", "text/javascript; charset=utf-8"),
     "/assets/api.js": ("api.js", "text/javascript; charset=utf-8"),
     "/assets/documents.js": ("documents.js", "text/javascript; charset=utf-8"),
     "/assets/boot.js": ("boot.js", "text/javascript; charset=utf-8"),
@@ -173,6 +175,19 @@ class Handler(BaseHTTPRequestHandler):
             self.serve_pdf(int(match[1]), download=url.query == "download=1")
         elif route == "/exports/metrics.csv":
             self.export_metrics()
+        elif route in ("/api/paper-catalog", "/api/paper-detail", "/api/paper-archive", "/api/paper-comment-targets"):
+            try:
+                with library.connect(self.server.database) as db:
+                    db.execute("BEGIN")
+                    data = paper_routes.read_papers(self, db, url, self.current_account(db))
+                self.send_json(200, data)
+            except sharing.AccessDenied:
+                self.send_json(404, {"error": "Paper not found or unavailable."})
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+            except sqlite3.Error as error:
+                LOG.error("Paper catalog read failed (%s)", type(error).__name__)
+                self.send_json(500, {"error": "Could not read the paper library."})
         elif route in ("/api/metric-page", "/api/paper-page"):
             params = parse_qs(url.query)
             after = params.get("after", ["0"])[0]
@@ -212,13 +227,18 @@ class Handler(BaseHTTPRequestHandler):
             except sqlite3.Error as error:
                 LOG.error("Comment read failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read comments."})
-        elif route in ("/api/experiments", "/api/experiment-detail", "/api/research-tools"):
+        elif route in ("/api/experiments", "/api/experiment-detail", "/api/research-tools", "/api/research-findings", "/api/research-goals"):
             try:
                 with library.connect(self.server.database) as db:
                     db.execute("BEGIN")
                     account = self.require_account(db)
                     if route == "/api/research-tools":
                         data = {"tools": tools_catalog.list_tools(db, account), "host_tools": tools_catalog.host_tools()}
+                    elif route == "/api/research-findings":
+                        data = findings.read(db, account, parse_qs(url.query, keep_blank_values=True))
+                    elif route == "/api/research-goals":
+                        params = parse_qs(url.query, keep_blank_values=True)
+                        data = goals.read(db, account, findings.query_id(params, "document_id"))
                     elif route == "/api/experiments":
                         data = {"experiments": experiments.visible_experiments(db, account)}
                     else:
@@ -230,12 +250,12 @@ class Handler(BaseHTTPRequestHandler):
             except accounts.SignInRequired:
                 self.send_json(401, {"error": "Sign in to continue."})
             except sharing.AccessDenied:
-                self.send_json(404, {"error": "Experiment unavailable."})
+                self.send_json(404, {"error": "Research item unavailable."})
             except ValueError as error:
                 self.send_json(400, {"error": str(error)})
             except sqlite3.Error as error:
-                LOG.error("Experiment read failed (%s)", type(error).__name__)
-                self.send_json(500, {"error": "Could not read experiments."})
+                LOG.error("Research read failed (%s)", type(error).__name__)
+                self.send_json(500, {"error": "Could not read research data."})
         elif match := re.fullmatch(r"/research-versions/([1-9][0-9]{0,18})/file", route):
             try:
                 with library.connect(self.server.database) as db:
@@ -491,6 +511,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(500, {"error": "Could not save the local PDF import"})
 
     def update(self, db, data):
+        if self.path == "/api/research-goals":
+            return goals.update(db, self.require_account(db), data)
+        if self.path == "/api/research-findings":
+            return findings.save(db, self.require_account(db), data)
         if self.path in ("/api/experiments", "/api/experiment-runs", "/api/research-items", "/api/research-grants", "/api/tool-jobs", "/api/approve-tool-job"):
             return experiment_routes.update(self, db, data)
         if self.path in ("/api/application-keys", "/api/revoke-key"):

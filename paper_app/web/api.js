@@ -8,6 +8,10 @@ async function api(route, data) {
   };
   const response = await fetch(`/api/${route}`, options);
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error || "Request failed.");
+  if (!response.ok) {
+    const error = new Error(result.error || "Request failed.");
+    error.status = response.status;
+    throw error;
+  }
   return result;
 }
