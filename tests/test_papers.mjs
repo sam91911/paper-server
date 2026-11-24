@@ -28,10 +28,12 @@ function makeElement(tag) {
     querySelectorAll() {return [];},
     closest() {return this;},
     reset() {},
+    setAttribute(name, value) {this[name] = value;},
     removeAttribute(name) {delete this[name];},
     getAttribute(name) {return this[name];},
     setCustomValidity(message) {this.validationMessage = message;},
     scrollIntoView() {},
+    focus() {this.focused = true;},
   };
 }
 
@@ -121,7 +123,12 @@ test('catalog starts bounded, preserves selection across pages and ignores stale
   await load();
   assert.deepEqual(calls, ['paper-catalog?page=1&facets=1']);
   assert.equal(picker.options.length, 101);
-  await select(1);
+  const first = element('paper-catalog-list').children[0].children[0];
+  assert.equal(first.href, '/papers?paper=1');
+  await first.fire('click');
+  assert.equal(element('paper-detail-title').textContent, 'Paper 1');
+  assert.equal(element('paper-detail-title').focused, true);
+  assert.equal(element('paper-catalog-list').children[0].children[0]['aria-current'], 'true');
   await element('paper-page-next').fire('click');
   assert.equal(element('paper-page-status').textContent, 'Page 2 of 2');
   assert.equal(picker.value, '1');

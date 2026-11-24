@@ -16,6 +16,7 @@ import subprocess
 import sys
 from threading import Event, Thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from ipaddress import IPv6Address
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
@@ -69,10 +70,9 @@ def public_url(value):
             or not re.fullmatch(r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(?::[0-9]+)?", url.netloc)
             or url.port == 0):
         raise ValueError("Set the public URL to an HTTPS origin such as https://papers.example.org.")
-    host = url.netloc.lower()
-    if url.port == 443:
-        host = host.rsplit(":", 1)[0]
-    return f"https://{host}"
+    host = f"[{IPv6Address(url.hostname).compressed}]" if url.netloc.startswith("[") else url.hostname.lower()
+    port = f":{url.port}" if url.port not in (None, 443) else ""
+    return f"https://{host}{port}"
 
 
 class Handler(BaseHTTPRequestHandler):

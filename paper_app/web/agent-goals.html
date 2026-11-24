@@ -6,9 +6,22 @@
   <title>Agent goals · Paper Library</title>
   <link rel="stylesheet" href="/assets/style.css">
 </head>
-<body>
-  <header class="page-header"><h1>Agent goals</h1></header>
-  <main class="page-content">
+<body class="workspace-shell">
+  <a class="skip-link" href="#workspace-content">Skip to content</a>
+  <div class="workspace-bar">
+    <a class="workspace-brand" href="/papers"><span class="brand-mark" aria-hidden="true"></span>Paper Library</a>
+  </div>
+  <nav class="workspace-nav" aria-label="Library pages">
+    <a href="/">Compare</a>
+    <a href="/papers">Papers</a>
+    <a href="/documents">Documents</a>
+    <a href="/experiments">Experiments</a>
+    <a href="/skills">Skills</a>
+    <a href="/agent-goals" aria-current="page">Agent goals</a>
+    <a href="/account">Account</a>
+  </nav>
+  <header class="page-header"><h1>Agent goals</h1><p class="page-description">Set research goals and follow the agents working on them.</p></header>
+  <main class="page-content" id="workspace-content" tabindex="-1">
     <p id="agent-goal-status" role="status"></p>
     <p id="agent-goal-sign-in" hidden><a href="/account">Sign in to view agent goals</a>.</p>
     <section id="agent-goal-workspace" hidden>
@@ -31,37 +44,36 @@
           <button>Save goal</button>
         </form>
       </details>
-      <div class="file-actions">
-        <h2>Your goals</h2>
-        <button id="refresh-agent-goals" class="secondary" type="button">Refresh goals</button>
+      <div class="goal-browser">
+        <div class="goal-index">
+          <h2>Your goals</h2>
+          <ul id="agent-goal-list" class="skill-results"></ul>
+          <div class="file-actions">
+            <button id="refresh-agent-goals" class="secondary" type="button">Refresh goals</button>
+            <button id="more-agent-goals" class="secondary" type="button" hidden>Older goals</button>
+          </div>
+        </div>
+        <div id="agent-goal-empty" class="empty-record">
+          <h2>Select a goal</h2>
+          <p>Open a goal to see its objective, required skills, and work history.</p>
+        </div>
+        <section id="agent-goal-detail" aria-labelledby="agent-goal-title" hidden>
+          <h2 id="agent-goal-title" tabindex="-1"></h2>
+          <p id="agent-goal-summary"></p>
+          <div id="agent-goal-content"></div>
+          <form id="agent-goal-action" class="experiment-form" hidden>
+            <label>Action <select name="action"></select></label>
+            <label>Note or result <textarea name="note" rows="3" maxlength="16000"></textarea></label>
+            <label>Evidence references <textarea name="evidence" rows="2" maxlength="600" aria-describedby="goal-reference-help"></textarea></label>
+            <button>Update goal</button>
+          </form>
+          <h3>Progress history</h3>
+          <ol id="agent-goal-history" class="experiment-records"></ol>
+          <button id="more-agent-goal-events" class="secondary" type="button" hidden>Older progress</button>
+        </section>
       </div>
-      <ul id="agent-goal-list" class="skill-results"></ul>
-      <button id="more-agent-goals" class="secondary" type="button" hidden>Older goals</button>
-      <section id="agent-goal-detail" aria-labelledby="agent-goal-title" hidden>
-        <h2 id="agent-goal-title" tabindex="-1"></h2>
-        <p id="agent-goal-summary"></p>
-        <div id="agent-goal-content"></div>
-        <form id="agent-goal-action" class="experiment-form" hidden>
-          <label>Action <select name="action"></select></label>
-          <label>Note or result <textarea name="note" rows="3" maxlength="16000"></textarea></label>
-          <label>Evidence references <textarea name="evidence" rows="2" maxlength="600" aria-describedby="goal-reference-help"></textarea></label>
-          <button>Update goal</button>
-        </form>
-        <h3>Progress history</h3>
-        <ol id="agent-goal-history" class="experiment-records"></ol>
-        <button id="more-agent-goal-events" class="secondary" type="button" hidden>Older progress</button>
-      </section>
     </section>
   </main>
-  <nav class="bottom-nav" aria-label="Library pages">
-    <a href="/">Compare</a>
-    <a href="/papers">Papers</a>
-    <a href="/documents">Documents</a>
-    <a href="/experiments">Experiments</a>
-    <a href="/skills">Skills</a>
-    <a href="/agent-goals" aria-current="page">Agent goals</a>
-    <a href="/account">Account</a>
-  </nav>
   <script src="/assets/api.js"></script>
   <script src="/assets/agent-goals.js"></script>
 </body>

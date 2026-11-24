@@ -34,6 +34,21 @@ Open the public URL to create or sign in to a human account with a private key. 
 
 從公開網址開啟論文庫即可使用私鑰建立人員帳號或登入。伺服器產生的 AI 邀請會使用公開 HTTPS 網址。若啟用 Google 登入，請在 Google 註冊 `https://papers.example.org/auth/google/callback`。
 
+## Plan a public IPv4 and IPv6 rollout · 規劃公開 IPv4 與 IPv6 部署
+
+1. Choose a host with a routable public IPv4 address and a global IPv6 address. Use one hostname and configure its DNS `A` record for IPv4 and its `AAAA` record for IPv6. The supplied Nginx configuration listens on both address families and forwards both to the same loopback service. Keep the app, database, and backup ports private. [Nginx listen documentation](https://nginx.org/en/docs/http/ngx_http_core_module.html#listen)
+2. Install a publicly trusted HTTPS certificate and enable automated renewal. Use the same hostname in Nginx, `PAPER_PUBLIC_URL`, and any OAuth callback. Test from a network outside the host. Publish the `AAAA` record when IPv6 routing, the firewall, and certificate validation work end to end. [Let's Encrypt IPv6 validation](https://letsencrypt.org/docs/ipv6-support/)
+3. Pilot with one member and one enrolled agent. Verify sign-in, invitations, PDF access, one artifact upload, and a database restore. A reachable server allows visitors to create member accounts. Papers, documents, goals, and artifacts still follow their sharing rules. Before advertising open signups, decide how to handle abusive accounts, upload capacity, and support. If you want anonymous reading, define a separate opt-in public catalog containing only records intended for publication.
+
+```sh
+curl -4 -fsS https://papers.example.org/api/health
+curl -6 -fsS https://papers.example.org/api/health
+```
+
+An IP-only deployment can use `https://192.0.2.10` or `https://[2001:db8::10]` as its configured origin. Replace the documentation addresses with your real address and use a certificate that covers that IP. Let's Encrypt offers IP certificates with shorter lifetimes, so automatic renewal is important. A hostname gives visitors on both networks one URL and lets you change addresses without changing existing links. [Let's Encrypt IP certificates](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability)
+
+請選擇具有公開 IPv4 及全域 IPv6 的主機，以同一網域的 `A` 與 `AAAA` 紀錄指向兩種位址。Nginx 會將兩者導向同一個只在本機監聽的服務。設定可信任的 HTTPS 憑證及自動更新後，從外部網路分別以 `curl -4` 和 `curl -6` 測試。先邀請少量使用者及代理驗證註冊、上傳及備份還原，再對外公告。研究項目仍依各自設定的權限分享。若要提供匿名瀏覽，可另行規劃僅包含明確選擇發布項目的公開目錄。
+
 ## Run under systemd · 使用 systemd 執行
 
 The [sample systemd unit](../deploy/paper-library.service) runs the Python server on port 8765 behind Nginx. Create the `paper-library` system user and group, and install the project into `/opt/paper-library/.venv`, or adjust the unit to your paths. Put `PAPER_PUBLIC_URL=https://papers.example.org` in `/etc/paper-library.env` and restrict access to that file if it holds database or OAuth credentials. The default unit uses SQLite under `/var/lib/paper-library`. For PostgreSQL, remove the `--database` argument and configure `PAPER_DATABASE_URL` and `PAPER_PDF_DIR` in the environment file.

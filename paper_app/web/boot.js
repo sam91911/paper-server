@@ -9,6 +9,12 @@ const [page, title] = papersPage ? ["papers", "Papers"]
   : ["compare", "Compare metrics"];
 element(`${page}-link`).setAttribute("aria-current", "page");
 element("page-title").textContent = title;
+element("page-description").textContent = {
+  papers: "Browse your library, read PDFs, and discuss the evidence.",
+  documents: "Write research notes and connect findings to their sources.",
+  account: "Manage sign-in keys, invitations, and connected agents.",
+  compare: "Compare measurements across papers, units, and experimental conditions.",
+}[page];
 document.title = title;
 element("chart-group-label").hidden = !comparePage;
 for (const item of document.querySelectorAll(".compare-only")) item.hidden = !comparePage;

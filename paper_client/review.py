@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import time
 from contextlib import suppress
+from ipaddress import IPv6Address
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
@@ -45,12 +46,11 @@ def library_origin(value):
             or url.port == 0 or url.path not in ("", "/") or "?" in value or "#" in value
             or not (url.scheme == "https" or url.scheme == "http" and url.hostname in ("127.0.0.1", "localhost"))):
         raise ValueError("Use the library's HTTPS origin or a loopback HTTP origin.")
-    host = url.netloc.lower()
+    host = f"[{IPv6Address(url.hostname).compressed}]" if url.netloc.startswith("[") else url.hostname.lower()
     if url.scheme == "http" and url.hostname == "localhost":
-        host = host.replace("localhost", "127.0.0.1", 1)
-    if url.port == (443 if url.scheme == "https" else 80):
-        host = host.rsplit(":", 1)[0]
-    return f"{url.scheme}://{host}"
+        host = "127.0.0.1"
+    port = f":{url.port}" if url.port not in (None, 443 if url.scheme == "https" else 80) else ""
+    return f"{url.scheme}://{host}{port}"
 
 
 class LibraryClient:

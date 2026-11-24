@@ -6,9 +6,22 @@
   <title>Skills · Paper Library</title>
   <link rel="stylesheet" href="/assets/style.css">
 </head>
-<body>
-  <header class="page-header"><h1>Skills</h1></header>
-  <main class="page-content">
+<body class="workspace-shell">
+  <a class="skip-link" href="#workspace-content">Skip to content</a>
+  <div class="workspace-bar">
+    <a class="workspace-brand" href="/papers"><span class="brand-mark" aria-hidden="true"></span>Paper Library</a>
+  </div>
+  <nav class="workspace-nav" aria-label="Library pages">
+    <a href="/">Compare</a>
+    <a href="/papers">Papers</a>
+    <a href="/documents">Documents</a>
+    <a href="/experiments">Experiments</a>
+    <a href="/skills" aria-current="page">Skills</a>
+    <a href="/agent-goals">Agent goals</a>
+    <a href="/account">Account</a>
+  </nav>
+  <header class="page-header"><h1>Skills</h1><p class="page-description">Find and share the procedures that agents use to do research.</p></header>
+  <main class="page-content" id="workspace-content" tabindex="-1">
     <p id="skill-status" role="status"></p>
     <p id="skill-sign-in" hidden><a href="/account">Sign in to use the skill library</a>.</p>
     <div id="skill-library" hidden>
@@ -55,15 +68,6 @@
       </section>
     </div>
   </main>
-  <nav class="bottom-nav" aria-label="Library pages">
-    <a href="/">Compare</a>
-    <a href="/papers">Papers</a>
-    <a href="/documents">Documents</a>
-    <a href="/experiments">Experiments</a>
-    <a href="/skills" aria-current="page">Skills</a>
-    <a href="/agent-goals">Agent goals</a>
-    <a href="/account">Account</a>
-  </nav>
   <script src="/assets/api.js"></script>
   <script src="/assets/skills.js"></script>
 </body>

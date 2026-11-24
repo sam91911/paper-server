@@ -184,10 +184,13 @@ function showPaper() {
   viewer.dataset.paper = selectedId;
   paperPicker.title = selected ? selected.title || selected.path : "";
   element("paper-detail").hidden = !selected;
+  element("paper-empty").hidden = Boolean(selected);
   resetPaperMetrics(selected);
   lookupResults.replaceChildren();
   lookupForm.reset();
   if (!selected) return;
+  element("paper-detail-title").textContent = selected.title || paperFilename(selected);
+  element("paper-detail-byline").textContent = [selected.authors, selected.venue, selected.year].filter(Boolean).join(" · ");
   element("paper-file-name").textContent = selected.has_pdf
     ? paperFilename(selected)
     : "No PDF attached. Use the PDF import to add the source file.";
@@ -197,6 +200,8 @@ function showPaper() {
   element("download-paper-pdf").href = `${pdfURL}?download=1`;
   const ownsPaper = selected.can_manage || selected.owner_id === libraryData.account?.id;
   const canManage = selected.owner_id === null || ownsPaper;
+  element("paper-management").hidden = !canManage;
+  element("paper-metadata-editor").hidden = !canManage;
   element("detect-paper-metrics").hidden = !canManage || !selected.has_pdf;
   element("archive-paper").hidden = !canManage;
   element("membership").closest("details").hidden = !canManage || libraryData.account?.role !== "user";
@@ -263,14 +268,14 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
     siblings.push(comment);
     replies.set(comment.parent_id, siblings);
   }
-  const pending = [...(replies.get(null) || [])].reverse();
+  const pending = (replies.get(null) || []).map(comment => ({comment, depth: 0})).reverse();
   while (pending.length) {
-    const comment = pending.pop();
+    const {comment, depth} = pending.pop();
     const children = replies.get(comment.id) || [];
-    pending.push(...[...children].reverse());
+    pending.push(...children.map(child => ({comment: child, depth: depth + 1})).reverse());
     const article = add(comments, "article", undefined, comment.parent_id ? "paper-comment reply" : "paper-comment");
     article.id = `comment-${comment.id}`;
-    if (comment.parent_id) add(article, "a", "In reply to parent comment").href = `#comment-${comment.parent_id}`;
+    article.dataset.depth = String(Math.min(depth, 3));
     if (comment.deleted) {
       add(article, "p", "Deleted comment");
       continue;
@@ -278,8 +283,16 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
     let author = comment.author_name || "Unknown author";
     if (["local", "cloud"].includes(comment.author_role)) author += ` (${roleLabels[comment.author_role]})`;
     else if (comment.author_kind === "ai") author = `AI · recorded by ${author}`;
-    add(article, "strong", author);
-    add(article, "p", `Updated ${comment.updated} UTC · ${audienceLabels[comment.audience] || "Item access"}`, "comment-time");
+    const heading = add(article, "div", undefined, "comment-heading");
+    const mark = add(heading, "span", (comment.author_name || author).trim().slice(0, 1).toUpperCase(), "comment-avatar");
+    mark.setAttribute("aria-hidden", "true");
+    const byline = add(heading, "div");
+    add(byline, "strong", author);
+    add(byline, "p", `Updated ${comment.updated} UTC · ${audienceLabels[comment.audience] || "Item access"}`, "comment-time");
+    if (comment.parent_id) {
+      add(article, "a", "In reply to parent comment", "parent-comment-link").href = `#comment-${comment.parent_id}`;
+    }
+    add(article, "p", comment.body, "comment-body");
     if (comment.finding_id) {
       add(article, "a", `Finding #${comment.finding_id}`).href =
         `/documents?document=${comment.document_id}&finding=${comment.finding_id}`;
@@ -304,18 +317,17 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
       }
     }
     if (libraryData.account) {
-      const reply = add(article, "button", "Reply", "secondary");
+      const actions = add(article, "div", undefined, "comment-actions");
+      const reply = add(actions, "button", "Reply", "secondary");
       reply.addEventListener("click", () => onReply(comment));
-      const review = add(article, "button", "Review thread with AI", "secondary");
+      const review = add(actions, "button", "Review thread with AI", "secondary");
       review.addEventListener("click", () => openAgent("thread", comment.id, `Comment thread · #${comment.id}`));
     }
     if (!libraryData.account || (!comment.can_manage && comment.author_id !== libraryData.account.id)) {
-      add(article, "p", comment.body, "comment-body");
       continue;
     }
-    const edit = add(article, "details");
+    const edit = add(article, "details", undefined, "comment-edit");
     add(edit, "summary", "Edit comment");
-    add(article, "p", comment.body, "comment-body");
     const form = add(edit, "form");
     const field = add(add(form, "label", "Comment text"), "textarea");
     field.value = comment.body;
@@ -405,6 +417,29 @@ function renderPaperOptions() {
   }
   setOptions(paperPicker, options, papers.length || !paperCatalog ? "Choose a paper" : "No matching papers");
   paperPicker.value = paperSelection;
+
+  const list = element("paper-catalog-list");
+  const previousScroll = list.scrollTop;
+  list.replaceChildren();
+  if (paperCatalog && !papers.length) add(list, "li", "No matching papers.", "catalog-empty");
+  for (const paper of papers) {
+    const title = paper.title || paperFilename(paper);
+    const id = String(paper.id);
+    const link = add(add(list, "li"), "a", undefined, "paper-list-link");
+    link.href = `/papers?paper=${id}`;
+    if (id === paperSelection) link.setAttribute("aria-current", "true");
+    add(link, "span", undefined, "paper-list-mark").setAttribute("aria-hidden", "true");
+    const label = add(link, "span");
+    add(label, "strong", title);
+    if (title !== paperFilename(paper)) add(label, "small", paperFilename(paper));
+    link.addEventListener("click", event => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      paperPicker.value = id;
+      return selectCatalogPaper(true);
+    });
+  }
+  list.scrollTop = previousScroll;
 }
 
 function renderPaperPage(result, filters) {
@@ -417,7 +452,8 @@ function renderPaperPage(result, filters) {
   const {query, group, publisher, fromYear, throughYear, invalidYears} = filters;
   element("paper-search-status").textContent = invalidYears ? "Enter a valid publication year range."
     : query || group || publisher || fromYear || throughYear
-      ? `${result.count} of ${result.total} papers match.` : "";
+      ? `${result.count} of ${result.total} papers match.`
+      : `${result.total} ${result.total === 1 ? "paper" : "papers"}`;
   renderPaperOptions();
 }
 
@@ -478,12 +514,13 @@ function refreshPaperFilters(debounce = false) {
   paperCatalogTimer = setTimeout(() => loadPaperCatalog(), 250);
 }
 
-async function loadSelectedPaper() {
+async function loadSelectedPaper(focus = false) {
   const sequence = ++paperSelectionSequence;
   ++lookupSequence;
   const id = paperSelection;
   paperDetails = null;
   element("paper-detail").hidden = true;
+  element("paper-empty").hidden = Boolean(id);
   const status = element("paper-detail-status");
   const retry = element("paper-detail-retry");
   status.textContent = "";
@@ -502,6 +539,7 @@ async function loadSelectedPaper() {
     status.textContent = "";
     renderPaperOptions();
     showPaper();
+    if (focus === true) element("paper-detail-title").focus();
 
     const params = new URLSearchParams(location.search);
     const requestedPage = Number(params.get("page"));
@@ -516,6 +554,7 @@ async function loadSelectedPaper() {
     status.textContent = error.message;
     if (error.status === 404 || error.status === 400) {
       paperSelection = "";
+      element("paper-empty").hidden = false;
       rememberPaperSelection();
       renderPaperOptions();
     } else {
@@ -744,12 +783,13 @@ for (const field of [paperYearFrom, paperYearTo]) {
 }
 element("paper-page-previous").addEventListener("click", () => { paperPage--; return loadPaperCatalog(); });
 element("paper-page-next").addEventListener("click", () => { paperPage++; return loadPaperCatalog(); });
-paperPicker.addEventListener("change", () => {
+function selectCatalogPaper(focus) {
   libraryStatus.textContent = "";
   paperSelection = paperPicker.value;
   rememberPaperSelection();
-  return loadSelectedPaper();
-});
+  return loadSelectedPaper(focus);
+}
+paperPicker.addEventListener("change", () => selectCatalogPaper(false));
 element("paper-catalog-retry").addEventListener("click", () => paperCatalog ? loadPaperCatalog() : loadPapersPage());
 element("paper-detail-retry").addEventListener("click", loadSelectedPaper);
 element("paper-comments-retry").addEventListener("click", loadPaperComments);

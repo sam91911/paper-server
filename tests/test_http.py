@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from paper_app import accounts, library, server
 from paper_client.agent import encode
+from paper_client.review import library_origin
 
 
 class HttpTests(unittest.TestCase):
@@ -81,6 +82,26 @@ class HttpTests(unittest.TestCase):
         self.db = self.db.with_name("unavailable.sqlite3")
         self.assertEqual(self.get("/api/health", False), (503, b'{"status": "unavailable"}'))
         self.assertFalse(self.db.exists())
+
+    def test_public_ip_origins_match_browser_host_headers_and_invitation_links(self):
+        for value, expected in (
+            ("https://192.0.2.44:443/", "https://192.0.2.44"),
+            ("https://[2001:DB8:0:0:0:0:0:44]:443/", "https://[2001:db8::44]"),
+            ("https://[2001:db8:0::44]:08443", "https://[2001:db8::44]:8443"),
+        ):
+            with self.subTest(origin=value):
+                origin = server.public_url(value)
+                self.assertEqual(origin, expected)
+                self.assertEqual(library_origin(value), expected)
+                headers = {"Host": expected.removeprefix("https://"), "Origin": expected}
+                status, response = self.request("/api/ai/invitations", True, {"username": "remote", "role": "local"},
+                                                headers=headers, public_url=origin)
+                self.assertEqual(status, 200, response)
+                invitation = json.loads(response)
+                self.assertEqual(invitation["registration_url"], origin + invitation["registration_path"])
+                self.assertEqual(invitation["client_download_url"], origin + "/api/client/download")
+                self.assertEqual(self.request("/api/health", False, headers={"Host": "other.example.org"},
+                                              public_url=origin)[0], 403)
 
     def test_key_signup_and_sign_in_on_public_origin(self):
         origin = server.public_url("https://Papers.Example.org:443/")
@@ -428,11 +449,13 @@ class HttpTests(unittest.TestCase):
     def test_experiments_uses_the_library_page_layout(self):
         status, experiments = self.get('/experiments')
         self.assertEqual(status, 200)
-        self.assertIn(b'<header class="page-header"><h1>Experiments</h1></header>', experiments)
-        self.assertIn(b'<main class="page-content">', experiments)
+        self.assertIn(b'<header class="page-header"><h1>Experiments</h1>', experiments)
+        self.assertIn(b'<main class="page-content" id="workspace-content"', experiments)
+        self.assertIn(b'href="#workspace-content">Skip to content', experiments)
+        self.assertLess(experiments.index(b'<nav class="workspace-nav"'), experiments.index(b'<main'))
 
         def navigation(page):
-            return re.search(rb'<nav class="bottom-nav"[^>]*>(.*?)</nav>', page, re.S)[1]
+            return re.search(rb'<nav class="workspace-nav"[^>]*>(.*?)</nav>', page, re.S)[1]
 
         experiment_nav = navigation(experiments)
         self.assertIn(b'<a href="/experiments" aria-current="page">', experiment_nav)

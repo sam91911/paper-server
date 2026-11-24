@@ -78,6 +78,13 @@ function goalStatus(goal) {
   return `${state} · ${goal.agent ? `Claimed by ${goal.agent} (${goal.agent_role})` : "Unclaimed"}`;
 }
 
+function markSelectedGoal() {
+  for (const link of list.querySelectorAll("[data-goal-id]")) {
+    if (link.dataset.goalId === String(activeGoal?.id)) link.setAttribute("aria-current", "true");
+    else link.removeAttribute("aria-current");
+  }
+}
+
 function references(value) {
   return value.split("\n").map(line => line.trim()).filter(Boolean).map(line => {
     const match = /^([a-z_]+):([1-9][0-9]*)$/.exec(line);
@@ -134,13 +141,16 @@ async function loadList(before) {
     const label = goal.source_unavailable ? `Goal #${goal.id} · Source unavailable` : goal.objective.slice(0, 160);
     const link = add(row, "a", label);
     link.href = `/agent-goals?id=${goal.id}`;
+    link.dataset.goalId = String(goal.id);
     link.addEventListener("click", event => {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       event.preventDefault();
       run(() => openGoal(goal.id, true));
     });
-    add(row, "p", goalStatus(goal));
+    const state = add(row, "p", goalStatus(goal), "goal-list-status");
+    state.dataset.status = goal.status;
   }
+  markSelectedGoal();
   goalCursor = next_before;
   moreGoals.hidden = goalCursor === null;
 }
@@ -161,7 +171,9 @@ function showEvents(events, nextBefore, append = false) {
 
 function showGoal({goal, events, next_before}) {
   activeGoal = goal;
+  element("agent-goal-empty").hidden = true;
   element("agent-goal-detail").hidden = false;
+  markSelectedGoal();
   const title = element("agent-goal-title");
   title.textContent = `Goal #${goal.id}`;
   element("agent-goal-summary").textContent = `${goalStatus(goal)} · Set by ${goal.requester}`;

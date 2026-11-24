@@ -6,12 +6,26 @@
 <title>Paper metrics</title>
 <link rel="stylesheet" href="/assets/style.css">
 </head>
-<body>
+<body class="workspace-shell">
+<a class="skip-link" href="#workspace-content">Skip to content</a>
+<div class="workspace-bar">
+  <a class="workspace-brand" href="/papers"><span class="brand-mark" aria-hidden="true"></span>Paper Library</a>
+</div>
+<nav id="library-nav" class="workspace-nav" aria-label="Library pages">
+  <a id="compare-link" href="/">Compare</a>
+  <a id="papers-link" href="/papers">Papers</a>
+  <a id="documents-link" href="/documents">Documents</a>
+  <a href="/experiments">Experiments</a>
+  <a href="/skills">Skills</a>
+  <a href="/agent-goals">Agent goals</a>
+  <a id="account-link" href="/account">Account</a>
+</nav>
 <header class="page-header">
 <h1 id="page-title">Paper metrics</h1>
+<p class="page-description" id="page-description">Compare measurements across papers, units, and experimental conditions.</p>
 </header>
-<div class="page-content">
-<p class="compare-only"><a href="/exports/metrics.csv">Download library metrics CSV</a></p>
+<main class="page-content" id="workspace-content" tabindex="-1">
+<p class="compare-only"><a class="utility-link" href="/exports/metrics.csv">Download library metrics CSV</a></p>
 <p id="status" class="compare-only" role="status">Loading metrics…</p>
 <details class="compare-only compare-panel">
   <summary>Unit conversion table</summary>
@@ -24,58 +38,77 @@
   <p id="unit-status" role="status"></p>
 </details>
 <section id="library" hidden>
-  <h2>Paper library</h2>
-  <details>
-    <summary>Find related papers on Crossref</summary>
-    <form id="related-paper-search">
-      <label>Topic keywords <input name="topic" required maxlength="500" placeholder="AI accelerator"></label>
-      <label>Related keyword groups, one per line
-        <textarea name="keywords" rows="3" placeholder="neural network accelerator"></textarea>
-      </label>
-      <div class="search-filters">
-        <label>Publisher <input name="publisher" list="crossref-publishers" maxlength="160" placeholder="e.g. IEEE"></label>
-        <datalist id="crossref-publishers"></datalist>
-        <label>From year <input name="year_from" type="number" min="1000" max="9999" placeholder="Any"></label>
-        <label>Through year <input name="year_to" type="number" min="1000" max="9999" placeholder="Any"></label>
-      </div>
-      <button>Search titles</button>
-    </form>
-    <p id="related-paper-status" role="status"></p>
-    <a id="download-related-dois" download="related_paper_dois.txt" hidden>Download DOIs</a>
-    <div id="related-paper-results"></div>
-  </details>
-  <p id="pdf-sign-in"><a href="/account">Sign in to upload PDFs</a>.</p>
-  <form id="pdf-import" hidden>
-    <label>Add paper PDFs <input id="paper-pdf" type="file" accept=".pdf,application/pdf" multiple required></label>
-    <label>Metric keywords (comma-separated) <input name="metric_keywords" maxlength="1220" placeholder="e.g. peak power, PSNR"></label>
-    <label>File access <select name="audience" class="audience-options"></select></label>
-    <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
-    <button id="import-pdf-button">Import and extract metrics</button>
-  </form>
-  <ul id="import-results" aria-label="PDF import results" hidden></ul>
-  <div class="library-actions">
-    <label>Search papers <input type="search" id="paper-search" maxlength="500" placeholder="Title, author, DOI, venue, or filename"></label>
-    <label>Paper group <select id="paper-group-filter"></select></label>
-    <label>Publisher <select id="paper-publisher-filter"></select></label>
-    <label>From year <input id="paper-year-from" type="number" min="1000" max="9999" placeholder="Any"></label>
-    <label>Through year <input id="paper-year-to" type="number" min="1000" max="9999" placeholder="Any"></label>
-    <label class="paper-picker">Paper details <select id="library-paper"></select></label>
-    <div class="paper-pages" aria-label="Paper list pages">
-      <button id="paper-page-previous" type="button">Previous</button>
-      <span id="paper-page-status" role="status"></span>
-      <button id="paper-page-next" type="button">Next</button>
-    </div>
-    <form id="create-group">
-      <label>New group <input name="name" required maxlength="120"></label>
-      <button>Create group</button>
-    </form>
+  <div class="paper-tools">
+    <details>
+      <summary>Find related papers on Crossref</summary>
+      <form id="related-paper-search">
+        <label>Topic keywords <input name="topic" required maxlength="500" placeholder="AI accelerator"></label>
+        <label>Related keyword groups, one per line
+          <textarea name="keywords" rows="3" placeholder="neural network accelerator"></textarea>
+        </label>
+        <div class="search-filters">
+          <label>Publisher <input name="publisher" list="crossref-publishers" maxlength="160" placeholder="e.g. IEEE"></label>
+          <datalist id="crossref-publishers"></datalist>
+          <label>From year <input name="year_from" type="number" min="1000" max="9999" placeholder="Any"></label>
+          <label>Through year <input name="year_to" type="number" min="1000" max="9999" placeholder="Any"></label>
+        </div>
+        <button>Search titles</button>
+      </form>
+      <p id="related-paper-status" role="status"></p>
+      <a id="download-related-dois" download="related_paper_dois.txt" hidden>Download DOIs</a>
+      <div id="related-paper-results"></div>
+    </details>
+    <details>
+      <summary>Import PDFs</summary>
+      <p id="pdf-sign-in"><a href="/account">Sign in to upload PDFs</a>.</p>
+      <form id="pdf-import" hidden>
+        <label>Add paper PDFs <input id="paper-pdf" type="file" accept=".pdf,application/pdf" multiple required></label>
+        <label>Metric keywords (comma-separated) <input name="metric_keywords" maxlength="1220" placeholder="e.g. peak power, PSNR"></label>
+        <label>File access <select name="audience" class="audience-options"></select></label>
+        <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
+        <button id="import-pdf-button">Import and extract metrics</button>
+      </form>
+      <ul id="import-results" aria-label="PDF import results" hidden></ul>
+    </details>
   </div>
-  <p id="paper-search-status" role="status"></p>
-  <button id="paper-catalog-retry" type="button" hidden>Retry loading papers</button>
+  <div class="paper-browser">
+    <div class="paper-catalog-panel">
+      <h2>Browse papers</h2>
+      <label>Search papers <input type="search" id="paper-search" maxlength="500" placeholder="Title, author, DOI, venue, or filename"></label>
+      <details>
+        <summary>Filters and groups</summary>
+        <div class="library-actions">
+          <label>Paper group <select id="paper-group-filter"></select></label>
+          <label>Publisher <select id="paper-publisher-filter"></select></label>
+          <label>From year <input id="paper-year-from" type="number" min="1000" max="9999" placeholder="Any"></label>
+          <label>Through year <input id="paper-year-to" type="number" min="1000" max="9999" placeholder="Any"></label>
+          <form id="create-group">
+            <label>New group <input name="name" required maxlength="120"></label>
+            <button>Create group</button>
+          </form>
+        </div>
+      </details>
+      <label class="paper-picker">Jump to a paper <select id="library-paper"></select></label>
+      <p id="paper-search-status" role="status"></p>
+      <button id="paper-catalog-retry" type="button" hidden>Retry loading papers</button>
+      <ul id="paper-catalog-list" class="paper-catalog-list" aria-label="Papers on this page"></ul>
+      <div class="paper-pages" aria-label="Paper list pages">
+        <button id="paper-page-previous" type="button">Previous</button>
+        <span id="paper-page-status" role="status"></span>
+        <button id="paper-page-next" type="button">Next</button>
+      </div>
+    </div>
+    <div class="paper-record">
   <p id="library-status" role="status"></p>
   <p id="paper-detail-status" role="status"></p>
   <button id="paper-detail-retry" type="button" hidden>Retry loading paper</button>
+  <div id="paper-empty" class="empty-record">
+    <h2>Select a paper</h2>
+    <p>Choose a paper to open its PDF, review its measurements, or join the discussion.</p>
+  </div>
   <div id="paper-detail" hidden>
+    <h2 id="paper-detail-title" tabindex="-1"></h2>
+    <p id="paper-detail-byline" class="record-byline"></p>
     <details open>
       <summary>Paper file</summary>
       <p id="paper-file-name"></p>
@@ -94,13 +127,16 @@
         <iframe id="paper-pdf-frame" referrerpolicy="no-referrer" title="Paper PDF preview"></iframe>
       </div>
       <p id="paper-audience"></p>
+      <details id="paper-management" hidden>
+        <summary>Sharing and archive</summary>
       <form id="paper-access" class="account-actions" hidden>
         <label>File access <select name="audience" class="audience-options"></select></label>
-    <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
+        <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
         <label class="inline-check"><input name="allow_title" type="checkbox"> Allow automatic title or filename lookup on Crossref</label>
         <button>Save access</button>
       </form>
       <form id="archive-paper"><button class="secondary">Archive paper</button></form>
+      </details>
     </details>
     <details open>
       <summary>Publication metadata</summary>
@@ -120,6 +156,8 @@
       </form>
       </details>
       <div id="lookup-results"></div>
+      <details id="paper-metadata-editor" hidden>
+        <summary>Edit metadata</summary>
       <form id="metadata">
         <div class="metadata-fields">
           <label>DOI <input name="doi"></label>
@@ -135,6 +173,7 @@
         <p id="metadata-source"></p>
         <button>Save metadata</button>
       </form>
+      </details>
     </details>
     <details>
       <summary>Group membership</summary>
@@ -227,6 +266,8 @@
         <button id="post-comment">Add comment</button>
       </form>
     </details>
+  </div>
+    </div>
   </div>
   <details id="paper-archive">
     <summary id="archive-summary">Archived papers</summary>
@@ -482,7 +523,7 @@
       <p id="document-status" role="status"></p>
     </div>
 </section>
-<main id="results" hidden>
+<div id="results" hidden>
   <section class="filters" aria-label="Comparison filters">
     <label id="chart-group-label" hidden>Paper group <select id="library-group"></select></label>
     <label>Metric and unit <select id="group"></select></label>
@@ -534,17 +575,8 @@
       </table>
     </div>
   </section>
-</main>
 </div>
-<nav id="library-nav" class="bottom-nav" aria-label="Library pages">
-  <a id="compare-link" href="/">Compare</a>
-  <a id="papers-link" href="/papers">Papers</a>
-  <a id="documents-link" href="/documents">Documents</a>
-  <a href="/experiments">Experiments</a>
-  <a href="/skills">Skills</a>
-  <a href="/agent-goals">Agent goals</a>
-  <a id="account-link" href="/account">Account</a>
-</nav>
+</main>
 <dialog id="agent-dialog" aria-labelledby="agent-heading">
   <form method="dialog" class="agent-toolbar">
     <h2 id="agent-heading">Review with AI</h2>
