@@ -1,0 +1,23 @@
+[Unit]
+Description=Paper Library workspace %i
+After=network.target
+
+[Service]
+Type=simple
+User=paper-%i
+Group=paper-%i
+StateDirectory=paper-library-%i
+StateDirectoryMode=0700
+WorkingDirectory=%S/paper-library-%i
+EnvironmentFile=/etc/paper-library/workspaces/%i.env
+ExecStart=/opt/paper-library/.venv/bin/python -m paper_app.server --invite-only --port ${PAPER_PORT}
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target

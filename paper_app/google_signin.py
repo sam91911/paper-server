@@ -109,13 +109,18 @@ def verify(config, code, flow):
     return claims
 
 
-def account(db, claims):
+def account(db, claims, *, invite_only=False):
     subject = claims.get("sub")
     if not isinstance(subject, str) or not 1 <= len(subject) <= 255:
         raise ValueError("Google sign-in could not be verified.")
-    row = db.execute("SELECT account_id FROM google_identities WHERE subject=?", (subject,)).fetchone()
+    row = db.execute("SELECT i.account_id,a.disabled_at FROM google_identities i "
+                     "JOIN accounts a ON a.id=i.account_id WHERE i.subject=?", (subject,)).fetchone()
     if row:
+        if row["disabled_at"] is not None:
+            raise ValueError("This workspace account is disabled.")
         return row["account_id"]
+    if invite_only:
+        raise ValueError("An invitation is required to join this workspace.")
 
     email = accounts.email_address(claims.get("email"))
     # Bind to Google's subject. A matching email never links a local password account.

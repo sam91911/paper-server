@@ -1,6 +1,6 @@
 """Public HTTP operations for workstation-based research clients."""
 
-from . import agent_goals, client_distribution
+from . import agent_goals, client_distribution, experiments
 from .sharing import AUDIENCES
 
 
@@ -51,7 +51,8 @@ def operation(summary, response, *, params=(), body=None, request_type="applicat
         "responses": {"200": {"description": "Success", **media(response, response_type)}},
     }
     for code, message in (("400", "Invalid input"), ("401", "Sign in required"), ("403", "Access denied"),
-                          ("404", "Resource unavailable"), ("409", "Conflict"), ("415", "Unsupported media type"),
+                          ("404", "Resource unavailable"), ("409", "Conflict"), ("413", "Upload size or quota exceeded"),
+                          ("415", "Unsupported media type"),
                           ("422", "PDF text extraction failed"), ("500", "Server error"), ("502", "Upstream service error")):
         result["responses"][code] = {"description": message, **media(ref("Error"))}
     if params:
@@ -99,10 +100,20 @@ EXPERIMENT_FIELDS = {
     "id": ID, "revision": ID, "title": STRING, "description": STRING, "audience": AUDIENCE,
     "paper_id": nullable(ID), "research_document_id": nullable(ID),
 }
+REPRODUCTION_OUTCOME = enum(*experiments.REPRODUCTION_OUTCOMES)
+REPRODUCTION_CHECK = {"run_revision": ID, "outcome": REPRODUCTION_OUTCOME,
+                      "observed": schema("string", minLength=1, maxLength=10000)}
+REPRODUCTION_RECORD = obj({
+    "dependencies": schema("array", maxItems=100, items=schema("string", maxLength=512)),
+    "inputs": schema("array", maxItems=100, items=obj({
+        "name": schema("string", maxLength=512), "sha256": schema("string", pattern="^[A-Fa-f0-9]{64}$"),
+    }, ("name", "sha256"))),
+    "seed": schema("string", maxLength=200), "expected_output": schema("string", maxLength=10000),
+})
 RUN_FIELDS = {
     "id": ID, "revision": ID, "experiment_id": ID, "title": STRING, "description": STRING,
     "methods": STRING, "settings": STRING, "status": enum("planned", "running", "complete", "failed"),
-    "audience": AUDIENCE,
+    "audience": AUDIENCE, "reproduction": REPRODUCTION_RECORD,
 }
 ITEM_FIELDS = {
     "id": ID, "revision": ID, "experiment_id": ID, "run_id": nullable(ID), "title": STRING,
@@ -163,7 +174,12 @@ SCHEMAS = {
         **GOAL_ACCESS_FIELDS, "can_manage": BOOLEAN,
     }, ("id", "document_id", "question", "evidence_ids", "briefs")),
     "Experiment": obj(EXPERIMENT_FIELDS, ("id", "title", "revision")),
-    "Run": obj(RUN_FIELDS, ("id", "title", "revision")),
+    "Run": obj({
+        **RUN_FIELDS, "can_verify": BOOLEAN,
+        "reproduction_checks": array(obj({
+            **REPRODUCTION_CHECK, "reviewer": STRING, "updated": STRING, "mine": BOOLEAN,
+        }, (*REPRODUCTION_CHECK, "reviewer", "updated", "mine"))),
+    }, ("id", "title", "revision", "reproduction", "can_verify", "reproduction_checks")),
     "ArtifactInput": obj(ITEM_FIELDS, ("experiment_id", "title", "kind")),
     "Artifact": obj({
         **ITEM_FIELDS, "versions": array(obj({"id": ID, "number": ID, "filename": STRING,
@@ -332,7 +348,7 @@ PATHS = {
             security=[{"BrowserSession": []}]),
     },
     "/api/account": {"get": operation("Check the current account",
-        obj({"account": nullable(ref("Account")), "google_available": BOOLEAN,
+        obj({"account": nullable(ref("Account")), "google_available": BOOLEAN, "invitation_required": BOOLEAN,
              "sign_in_keys": array(obj({"key_id": STRING, "label": STRING, "created": nullable(COUNT)}))}, ("account",)),
         security=[{}, {"ApplicationKey": []}, {"BrowserSession": []}])},
     "/api/paper-catalog": {"get": operation("Search the library's visible papers",
@@ -462,7 +478,11 @@ PATHS = {
              "can_edit": BOOLEAN, "brief": nullable(obj())}, ("experiment", "runs", "items", "can_edit", "brief")),
         params=(param("id", ID, required=True),))},
     "/api/experiment-runs": {"post": operation("Create or update a run", acknowledgement("id", id=ID),
-        body=obj(RUN_FIELDS, ("experiment_id", "title")), description="Updates require id and revision.")},
+        body=obj(RUN_FIELDS, ("experiment_id", "title")),
+        description="Updates require id and revision. Omit reproduction to retain its value or send an empty object to clear it.")},
+    "/api/run-reproductions": {"post": operation("Record an independent rerun", acknowledgement(),
+        body=obj({"run_id": ID, **REPRODUCTION_CHECK}, ("run_id", *REPRODUCTION_CHECK)),
+        description="A human reader can save one check per completed run revision. Saving again replaces their check.")},
     "/api/research-grants": {"post": operation("Set named readers and editors for a research item you own",
         acknowledgement(), body=obj({"id": ID, "kind": enum("experiment", "run", "item", "tool"),
                                      "readers": RECIPIENTS, "editors": RECIPIENTS}, ("id", "kind")))},

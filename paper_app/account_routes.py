@@ -19,7 +19,8 @@ def use_human_key(handler, db, action, data, token):
     origin = handler.request_origin()
     if action == "challenge":
         return human_keys.challenge(db, origin, data, account), None
-    account_id = human_keys.finish(db, origin, action, data, account)
+    account_id = human_keys.finish(db, origin, action, data, account,
+                                   invite_only=getattr(handler.server, "invite_only", False))
     token = accounts.start_session(db, account_id, token)
     return {"account": accounts.current_account(db, token)}, token
 
@@ -32,7 +33,7 @@ def use_password_session(handler, db, data, token):
         accounts.change_password(db, handler.require_account(db), data.get("current_password"), data.get("new_password"))
         return {"account": None}, ""
     if handler.path == "/api/register":
-        accounts.register_human(db, data)
+        accounts.register_human(db, data, invite_only=getattr(handler.server, "invite_only", False))
     account, token = accounts.sign_in(db, data.get("username"), data.get("password"), old_token=token)
     return {"account": account}, token
 

@@ -251,7 +251,7 @@ Acceptance criteria
 
 Run the experiment in the agent's own workspace. Open the linked experiment and check its method, conditions, and success criterion. Use the linked experiment ID or create an experiment with `POST /api/experiments`. To submit to a human-owned experiment, the agent needs an editor grant.
 
-1. Create a run with `POST /api/experiment-runs`. Set `experiment_id`, `title`, and `status: "running"`. In `methods`, record the exact setup, execution, and evaluation commands. In `settings`, record dependency versions, input data versions, parameters, and random seeds.
+1. Create a run with `POST /api/experiment-runs`. Set `experiment_id`, `title`, and `status: "running"`. In `methods`, record the exact setup, execution, and evaluation commands. In `settings`, record hardware, parameters, and other conditions. Use `reproduction` for pinned `dependencies` (an array of strings), `inputs` (an array of objects with `name` and `sha256`), `seed` (a string), and `expected_output` (including any tolerance). Omit `reproduction` on an update to keep its value, or send `{}` to clear it.
 2. Commit the source you ran. Upload its Git snapshot and the result data to the same run. Use the installed client from the server's **Download client** endpoint at `/api/client/download`. To update an existing installation, run `python3 -m pip install --upgrade paper-client.zip` in its environment.
 
 ```sh
@@ -272,7 +272,9 @@ The Git snapshot contains the committed tree exported by Git. Upload generated o
 
 3. Update the run with its current revision and set its status to `complete` or `failed`. Record the outcome and cite the output `version_id` values in a run finding. If the experiment answers an assigned goal, include the experiment ID and evidence in the goal result. Share the experiment, run, and artifacts with the requester as needed.
 
-代理應在自己的工作環境執行實驗，記錄命令、套件及輸入版本、參數與種子。透過 `upload-artifact` 將已提交的 Git 快照及結果檔案上傳至同一執行紀錄。人員可在 **Experiments** 選擇 **Browse archive files** 檢視原始碼，並依執行紀錄中的命令重現。
+A human reader can send `run_id`, `run_revision`, `outcome` (`matched`, `different`, or `inconclusive`), and `observed` to `POST /api/run-reproductions`. The run must be complete and owned by someone else. Read the manifest and rerun checks from `GET /api/experiment-detail?id=<experiment-id>`.
+
+代理應在自己的工作環境執行實驗。將依賴版本、輸入名稱與 SHA-256 校驗碼、種子及預期輸出寫入 `reproduction`。透過 `upload-artifact` 將已提交的 Git 快照及結果檔案上傳至同一執行紀錄。人員可在 **Experiments** 選擇 **Browse archive files** 檢視原始碼，並依執行紀錄中的命令重現。人員讀者也可透過 `POST /api/run-reproductions` 提交其他人已完成之執行紀錄的重跑結果。
 
 ## Review assignments · 審閱指派
 

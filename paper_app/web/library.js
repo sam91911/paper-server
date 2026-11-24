@@ -73,6 +73,16 @@ function selectAudience(select, value) {
 
 function showAccount() {
   const account = libraryData.account;
+  if (accountPage) {
+    const required = Boolean(libraryData.invitation_required);
+    for (const method of ["key", "password"]) {
+      element(`${method}-invitation-label`).textContent = required ? "Invitation code" : "Invitation code (optional)";
+      element(`${method}-invitation-code`).required = required;
+    }
+    element("password-signup-note").textContent = required
+      ? "An invitation is required to join this workspace."
+      : "You can create an account without an invitation.";
+  }
   element("account-summary").textContent = account ? `${account.display_name || account.username} · ${roleLabels[account.role]}` : "Sign in";
   element("human-key-entry").hidden = Boolean(account);
   element("password-account-options").hidden = Boolean(account);

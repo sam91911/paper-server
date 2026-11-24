@@ -1,0 +1,1 @@
+ALTER TABLE papers ADD COLUMN pdf_size BIGINT;

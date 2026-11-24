@@ -72,6 +72,12 @@ function editRun(run = null) {
   runForm.reset();
   $("run-form-heading").textContent = run ? `Edit run #${run.id}` : "New run";
   $("cancel-run-edit").hidden = !run;
+  const record = run?.reproduction ?? {};
+  $("reproduction-fields").open = Object.keys(record).length > 0;
+  runForm.elements.dependencies.value = (record.dependencies ?? []).join("\n");
+  runForm.elements.input_checksums.value = (record.inputs ?? []).map(item => `${item.sha256}  ${item.name}`).join("\n");
+  runForm.elements.seed.value = record.seed ?? "";
+  runForm.elements.expected_output.value = record.expected_output ?? "";
   if (run) {
     for (const field of ["title", "description", "methods", "settings", "status", "audience"]) {
       runForm.elements[field].value = run[field];
@@ -80,6 +86,72 @@ function editRun(run = null) {
     runForm.elements.methods.value = runBrief.approach;
     runForm.elements.settings.value = runBrief.conditions;
   }
+}
+
+function reproductionRecord(fields) {
+  const lines = value => value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  return {
+    dependencies: lines(fields.dependencies.value),
+    inputs: lines(fields.input_checksums.value).map(line => {
+      const match = line.match(/^([\da-f]{64})\s+(.+)$/i);
+      if (!match) throw new Error("Enter each input as a SHA-256 checksum followed by its filename.");
+      return {sha256: match[1], name: match[2]};
+    }),
+    seed: fields.seed.value,
+    expected_output: fields.expected_output.value,
+  };
+}
+
+const rerunOutcomes = {matched: "Matched", different: "Different result", inconclusive: "Inconclusive"};
+
+function renderReproduction(run, parent) {
+  const record = run.reproduction ?? {};
+  if (Object.keys(record).length) {
+    text("h5", "Reproduction record", parent);
+    for (const [label, value] of [
+      ["Dependency versions", record.dependencies?.join("\n")],
+      ["Input checksums", record.inputs?.map(item => `${item.sha256}  ${item.name}`).join("\n")],
+      ["Random seed", record.seed],
+      ["Expected output and match criteria", record.expected_output],
+    ]) {
+      if (!value) continue;
+      text("strong", label, parent);
+      text("pre", value, parent).className = "goal-brief-text";
+    }
+  }
+  const checks = run.reproduction_checks ?? [];
+  if (!checks.length && !run.can_verify) return;
+  text("h5", "Independent reruns", parent);
+  for (const check of checks) {
+    const revision = check.run_revision === run.revision ? "current revision" : "earlier revision";
+    text("p", `${rerunOutcomes[check.outcome]} · ${check.reviewer} · revision ${check.run_revision} (${revision})`, parent);
+    text("pre", check.observed, parent).className = "goal-brief-text";
+  }
+  if (!run.can_verify) return;
+  const previous = checks.find(check => check.mine && check.run_revision === run.revision);
+  const panel = text("details", "", parent);
+  text("summary", previous ? "Edit your rerun result" : "Record a rerun result", panel);
+  const form = text("form", "", panel);
+  form.className = "experiment-form";
+  const outcome = text("select", "", text("label", "Outcome ", form));
+  outcome.name = "outcome";
+  outcome.required = true;
+  addOption(outcome, "", "Choose an outcome");
+  for (const [value, label] of Object.entries(rerunOutcomes)) addOption(outcome, value, label);
+  outcome.value = previous?.outcome ?? "";
+  const observed = text("textarea", "", text("label", "Observed result ", form));
+  observed.name = "observed";
+  observed.rows = 3;
+  observed.maxLength = 10000;
+  observed.required = true;
+  observed.value = previous?.observed ?? "";
+  text("button", "Save rerun result", form);
+  submit(form, (fields) => api("run-reproductions", {
+    run_id: run.id,
+    run_revision: run.revision,
+    outcome: fields.outcome.value,
+    observed: fields.observed.value,
+  }), (_result, id) => showExperiment(id, true));
 }
 
 function previewFile(url, parent) {
@@ -315,6 +387,7 @@ function renderExperiment(result) {
       text("h5", "Environment and settings", box);
       text("pre", run.settings, box).className = "goal-brief-text";
     }
+    renderReproduction(run, box);
     if (run.can_edit) {
       const edit = text("button", "Edit run", box);
       edit.type = "button";
@@ -476,6 +549,7 @@ submit(runForm, (fields, id) => api("experiment-runs", {
   description: fields.description.value,
   methods: fields.methods.value,
   settings: fields.settings.value,
+  reproduction: reproductionRecord(fields),
   status: fields.status.value,
   audience: fields.audience.value,
 }), (_result, id) => {

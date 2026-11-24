@@ -4,8 +4,8 @@ _paper_server_complete() {
     local current=${COMP_WORDS[COMP_CWORD]} previous="" two_back="" prefix="" match
     if (( COMP_CWORD > 0 )); then previous=${COMP_WORDS[COMP_CWORD-1]}; fi
     if (( COMP_CWORD > 1 )); then two_back=${COMP_WORDS[COMP_CWORD-2]}; fi
-    local options='-h --help --database --port --public-url --interactive --import-csv
-        --invite-human --create-account --set-account-role --set-tool-approver --set-ai-operator --register-tool'
+    local options='-h --help --database --port --public-url --invite-only --storage-quota-mib --interactive --import-csv
+        --invite-human --create-account --set-account-role --revoke-human --set-tool-approver --set-ai-operator --register-tool'
     COMPREPLY=()
 
     case $current in
@@ -22,7 +22,7 @@ _paper_server_complete() {
         while IFS= read -r match; do
             COMPREPLY+=("$match")
         done < <(compgen -W 'user member local cloud' -- "$current")
-    elif [[ ! $previous =~ ^--(port|public-url|invite-human|set-account-role|create-account|set-tool-approver|set-ai-operator|register-tool)$ &&
+    elif [[ ! $previous =~ ^--(port|public-url|storage-quota-mib|invite-human|set-account-role|create-account|revoke-human|set-tool-approver|set-ai-operator|register-tool)$ &&
             $two_back != --set-ai-operator ]]; then
         while IFS= read -r match; do
             COMPREPLY+=("$match")

@@ -31,7 +31,7 @@ def initialize(db):
 
 def account_with_keys(db, username):
     return db.execute(
-        "SELECT a.id,a.username FROM accounts a WHERE a.username=? AND a.role='user' "
+        "SELECT a.id,a.username FROM accounts a WHERE a.username=? AND a.role='user' AND a.disabled_at IS NULL "
         "AND EXISTS (SELECT 1 FROM human_public_keys k WHERE k.account_id=a.id)",
         (username,),
     ).fetchone()
@@ -83,7 +83,7 @@ def challenge(db, origin, data, account):
             "expires_in": key_auth.CHALLENGE_SECONDS}
 
 
-def finish(db, origin, action, data, account):
+def finish(db, origin, action, data, account, *, invite_only=False):
     nonce = data.get("challenge")
     if not accounts.valid_token(nonce):
         raise accounts.SignInRequired
@@ -115,7 +115,7 @@ def finish(db, origin, action, data, account):
     if not isinstance(label, str) or not 1 <= len(label.strip()) <= 100 or any(ord(char) < 32 for char in label):
         raise ValueError("Enter a sign-in key label of up to 100 characters.")
     if action == "register":
-        account_id = accounts.register_human(db, {**data, "username": username}, key_only=True)
+        account_id = accounts.register_human(db, {**data, "username": username}, key_only=True, invite_only=invite_only)
     else:
         account_id = account["id"]
         if len(list_keys(db, account_id)) >= MAX_KEYS:

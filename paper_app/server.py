@@ -53,7 +53,7 @@ MAX_PDF_BYTES = 50 * 1024 * 1024
 LOG = logging.getLogger(__name__)
 MEASURED_ROUTES = frozenset({
     "/api/health", "/api/paper-catalog", "/api/paper-detail", "/api/papers",
-    "/api/experiments", "/api/experiment-detail", "/api/research-upload",
+    "/api/experiments", "/api/experiment-detail", "/api/research-upload", "/api/run-reproductions",
     "/api/agent-goals", "/api/ai/heartbeat", "/api/reviews",
 })
 
@@ -178,6 +178,8 @@ class Handler(BaseHTTPRequestHandler):
             configured = urlsplit(public)
             if host == configured.netloc or (configured.port is None and host == configured.netloc + ":443"):
                 return public
+            if getattr(self.server, "invite_only", False):
+                return None
         if host in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}:
             return f"http://{host.removesuffix(':80')}"
         if self.server.server_port == 80 and host in {"127.0.0.1", "localhost"}:
@@ -238,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
             claims = google_signin.verify(config, code, flow)
             with library.connect(self.server.database) as db:
                 storage.begin(db, write=True)
-                account_id = google_signin.account(db, claims)
+                account_id = google_signin.account(db, claims, invite_only=getattr(self.server, "invite_only", False))
                 token = accounts.start_session(db, account_id, self.session_token())
         except storage.ERRORS + (KeyError, ValueError, OSError):
             self.redirect("/account?google=failed")
@@ -421,7 +423,8 @@ class Handler(BaseHTTPRequestHandler):
                     storage.begin(db)
                     account = self.current_account(db)
                     if route == "/api/account":
-                        data = {"account": account, "google_available": self.google_available()}
+                        data = {"account": account, "google_available": self.google_available(),
+                                "invitation_required": getattr(self.server, "invite_only", False)}
                         if account and self.headers.get("Authorization") is None:
                             data["keys"] = accounts.list_keys(db, account["id"])
                             if account["role"] in ("user", "member"):
@@ -726,7 +729,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Incomplete upload.")
             with library.connect(self.server.database) as db:
                 storage.begin(db, write=True)
-                item_id = experiments.save_item(db, self.require_account(db), metadata, payload)
+                item_id = experiments.save_item(db, self.require_account(db), metadata, payload,
+                                                storage_limit=getattr(self.server, "storage_limit", 0))
                 version_id = db.execute("SELECT id FROM research_versions WHERE item_id=? ORDER BY number DESC LIMIT 1",
                                         (item_id,)).fetchone()[0]
             self.send_json(200, {"ok": True, "id": item_id, "version_id": version_id})
@@ -736,6 +740,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(403, {"error": "This item is unavailable."})
         except sharing.EditConflict as error:
             self.send_json(409, {"error": str(error)})
+        except library.UploadQuotaExceeded as error:
+            self.send_json(413, {"error": str(error)})
         except (ValueError, KeyError, OverflowError) as error:
             self.send_json(400, {"error": str(error)})
         except storage.ERRORS + (OSError,) as error:
@@ -767,12 +773,15 @@ class Handler(BaseHTTPRequestHandler):
             payload = self.rfile.read(size)
             if len(payload) != size or b"%PDF-" not in payload[:1024]:
                 raise ValueError("The upload is incomplete or is not a PDF")
-            result = import_pdf(self.server.database, filename, payload, account, audience, recipients, keywords=keywords)
+            result = import_pdf(self.server.database, filename, payload, account, audience, recipients,
+                                keywords=keywords, storage_limit=getattr(self.server, "storage_limit", 0))
             self.send_json(200, result)
         except accounts.SignInRequired:
             self.send_json(401, {"error": "Sign in to upload PDFs."})
         except sharing.AccessDenied:
             self.send_json(403, {"error": "This PDF could not be imported by this account."})
+        except library.UploadQuotaExceeded as error:
+            self.send_json(413, {"error": str(error)})
         except ValueError as error:
             self.send_json(400, {"error": str(error)})
         except subprocess.SubprocessError:
@@ -831,7 +840,8 @@ class Handler(BaseHTTPRequestHandler):
             return goals.update(db, self.require_account(db), data)
         if self.path == "/api/research-findings":
             return findings.save(db, self.require_account(db), data)
-        if self.path in ("/api/experiments", "/api/experiment-runs", "/api/research-items", "/api/research-grants", "/api/tool-jobs", "/api/approve-tool-job"):
+        if self.path in ("/api/experiments", "/api/experiment-runs", "/api/run-reproductions",
+                         "/api/research-items", "/api/research-grants", "/api/tool-jobs", "/api/approve-tool-job"):
             return experiment_routes.update(self, db, data)
         if self.path in ("/api/application-keys", "/api/revoke-key"):
             return account_routes.update_key(self, db, data)
@@ -850,12 +860,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 
-def serve(database, port, external_url=None, *, interactive=False):
+def serve(database, port, external_url=None, *, interactive=False, invite_only=False, storage_limit=0):
     if not shutil.which("pdftotext"):
         LOG.warning("pdftotext is unavailable; PDF import and text extraction will fail")
     with ThreadingHTTPServer(("127.0.0.1", port), Handler) as server:
         server.database = database
         server.public_url = external_url
+        server.invite_only = invite_only
+        server.storage_limit = storage_limit
         server.request_metrics = os.getenv("PAPER_REQUEST_METRICS") == "1"
         server.google_config = google_signin.configuration(server.server_port, origin=external_url)
         stop = Event()
@@ -888,20 +900,32 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--public-url", default=os.getenv("PAPER_PUBLIC_URL"),
                         help="Public HTTPS origin served through a local reverse proxy")
+    parser.add_argument("--invite-only", action="store_true", help="Require an invitation for new workspace accounts")
+    parser.add_argument("--storage-quota-mib", type=int, default=os.getenv("PAPER_STORAGE_QUOTA_MIB", "0"),
+                        help="Combined workspace quota for uploaded PDFs and artifact versions (0 disables it)")
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--interactive", action="store_true", help="Run the server with an admin console on stdin")
     modes.add_argument("--import-csv", type=Path, help="Import a metrics CSV and exit")
     modes.add_argument("--invite-human", metavar="EMAIL", help="Print a one-time browser signup URL")
     modes.add_argument("--create-account", nargs=2, metavar=("USERNAME", "ROLE"))
     modes.add_argument("--set-account-role", nargs=2, metavar=("USERNAME", "ROLE"))
+    modes.add_argument("--revoke-human", metavar="USERNAME", help="Revoke a human's workspace access and credentials")
     modes.add_argument("--set-tool-approver", metavar="USERNAME", help="Authorize a trusted human to approve tool jobs")
     modes.add_argument("--set-ai-operator", nargs=2, metavar=("AGENT", "HUMAN"),
                        help="Authorize a trusted human to manage an existing AI agent's key")
     modes.add_argument("--register-tool", nargs=2, metavar=("USERNAME", "CONFIG_JSON"), help="Register a pinned tool owned by USERNAME")
     args = parser.parse_args()
+    if args.storage_quota_mib < 0:
+        parser.error("--storage-quota-mib must be nonnegative")
     try:
         database = storage.configuration(args.database)
         library.initialize(database)
+        if args.revoke_human:
+            with library.connect(database) as db:
+                storage.begin(db, write=True)
+                accounts.revoke_human(db, args.revoke_human)
+            print(f"Revoked workspace access for {args.revoke_human}.")
+            return
         if args.set_ai_operator:
             with library.connect(database) as db:
                 storage.begin(db, write=True)
@@ -960,7 +984,8 @@ def main():
                     count = library.import_csv(db, stream, args.import_csv.absolute().parent)
             print(f"Imported metrics for {count} paper path(s).")
             return
-        serve(database, args.port, public_url(args.public_url) if args.public_url else None, interactive=args.interactive)
+        serve(database, args.port, public_url(args.public_url) if args.public_url else None,
+              interactive=args.interactive, invite_only=args.invite_only, storage_limit=args.storage_quota_mib * 1024**2)
     except storage.ERRORS + (csv.Error, ValueError, OSError, EOFError) as error:
         parser.exit(1, f"Paper library: {error}\n")
 

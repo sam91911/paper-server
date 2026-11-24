@@ -26,6 +26,51 @@ class ExperimentTests(unittest.TestCase):
             self.users = {r['username']: {'id': r['id'], 'username': r['username'], 'role': r['effective']}
                           for r in db.execute(f"SELECT a.*, {accounts.ROLE_SQL.format(alias='a')} effective FROM accounts a")}
 
+    def test_rerun_checks_follow_run_visibility_and_revision(self):
+        with library.connect(self.path) as db:
+            owner, reviewer, outsider, agent = (self.users[name] for name in ('owner', 'editor', 'human', 'local'))
+            owner_key, reviewer_key, outsider_key, agent_key = (
+                accounts.create_key(db, user['id'], 'Test') for user in (owner, reviewer, outsider, agent)
+            )
+            experiment = experiments.save_experiment(db, owner, {'title': 'Experiment', 'audience': 'all'})
+            experiments.set_grants(db, 'experiment', experiment, owner,
+                                   experiments.require_experiment(db, experiment, owner), ['editor'], [])
+
+        record = {'dependencies': ['Python 3.12'], 'inputs': [{'name': 'input.csv', 'sha256': 'A' * 64}],
+                  'seed': '42', 'expected_output': 'Score equals 0.8'}
+        run_data = {'experiment_id': experiment, 'title': 'Original run', 'status': 'complete', 'reproduction': record}
+        status, saved = request(self.path, '/api/experiment-runs', key=owner_key, data=run_data)
+        self.assertEqual(status, 200, saved)
+        run = saved['id']
+        grant = {'kind': 'run', 'id': run, 'readers': ['editor', 'local']}
+        self.assertEqual(request(self.path, '/api/research-grants', key=owner_key, data=grant)[0], 200)
+        detail = f'/api/experiment-detail?id={experiment}'
+        visible = request(self.path, detail, key=reviewer_key)[1]['runs'][0]
+        record['inputs'][0]['sha256'] = 'a' * 64
+        self.assertEqual(visible['reproduction'], record)
+        self.assertFalse(visible['can_edit'])
+        self.assertTrue(visible['can_verify'])
+        self.assertEqual(request(self.path, detail, key=outsider_key)[1]['runs'], [])
+        endpoint = '/api/run-reproductions'
+        check = {'run_id': run, 'run_revision': 1, 'outcome': 'matched', 'observed': 'Rerun scored 0.8.'}
+        for key in (owner_key, agent_key, outsider_key):
+            self.assertEqual(request(self.path, endpoint, key=key, data=check)[0], 403)
+        self.assertEqual(request(self.path, endpoint, key=reviewer_key, data=dict(check, observed=''))[0], 400)
+        self.assertEqual(request(self.path, endpoint, key=reviewer_key, data=check)[0], 200)
+        self.assertEqual(request(self.path, endpoint, key=reviewer_key, data=dict(check, observed='Exact match.'))[0], 200)
+
+        run_data.pop('reproduction')
+        self.assertEqual(request(self.path, '/api/experiment-runs', key=owner_key,
+                                 data=dict(run_data, id=run, revision=1))[0], 200)
+        self.assertEqual(request(self.path, endpoint, key=reviewer_key, data=check)[0], 409)
+        later = request(self.path, detail, key=reviewer_key)[1]['runs'][0]
+        self.assertEqual(later['reproduction'], record)
+        self.assertEqual(later['revision'], 2)
+        self.assertEqual([(r['run_revision'], r['reviewer'], r['mine'], r['observed'])
+                          for r in later['reproduction_checks']], [(1, 'editor', True, 'Exact match.')])
+        self.assertEqual(request(self.path, '/api/research-grants', key=owner_key, data=dict(grant, readers=[]))[0], 200)
+        self.assertEqual(request(self.path, detail, key=reviewer_key)[1]['runs'], [])
+
     def test_parent_and_item_access_and_version_immutability(self):
         with library.connect(self.path) as db:
             owner, editor, cloud = (self.users[n] for n in ('owner', 'editor', 'cloud'))

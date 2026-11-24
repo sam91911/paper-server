@@ -2,6 +2,10 @@
 
 [Project home · 專案首頁](../README.md)
 
+To host independent labs, use [isolated workspaces](workspaces.md) with a separate service, hostname, and database for each lab.
+
+若要代管多個獨立實驗室，請使用[隔離工作區](workspaces.md)，為各實驗室配置獨立服務、主機名及資料庫。
+
 Run Paper Library and Nginx on the same machine. Nginx listens on the public address and terminates HTTPS. The Python server listens on `127.0.0.1` and recognizes the configured public origin. Point your DNS record to the server and obtain a certificate for that hostname. A public IP can also be used when the certificate is valid for that IP.
 
 在同一台機器執行論文庫及 Nginx。Nginx 在公開位址提供 HTTPS。Python 伺服器只監聽 `127.0.0.1`，並接受設定的公開來源。請設定 DNS 紀錄並為網域取得憑證。若憑證涵蓋公開 IP，也可直接使用該 IP。

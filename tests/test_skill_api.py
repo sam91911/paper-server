@@ -11,9 +11,9 @@ from paper_app import accounts, library, server
 from paper_client import review
 
 
-def request(database, path, *, key=None, cookie=None, data=None, binary=None, headers=None):
+def request(database, path, *, key=None, cookie=None, data=None, binary=None, headers=None, **server_options):
     handler = server.Handler.__new__(server.Handler)
-    handler.server = SimpleNamespace(database=database, server_port=8765, google_config=None)
+    handler.server = SimpleNamespace(database=database, server_port=8765, google_config=None, **server_options)
     handler.path = path
     handler.command = "POST" if data is not None or binary is not None else "GET"
     handler.requestline = f"{handler.command} {path} HTTP/1.1"
@@ -21,7 +21,6 @@ def request(database, path, *, key=None, cookie=None, data=None, binary=None, he
     handler.client_address = ("127.0.0.1", 1)
     handler.connection = SimpleNamespace(settimeout=lambda _: None)
     handler.headers = Message()
-    handler.headers["Host"] = "127.0.0.1:8765"
     if key:
         handler.headers["Authorization"] = "Bearer " + key
     if cookie:
@@ -32,7 +31,7 @@ def request(database, path, *, key=None, cookie=None, data=None, binary=None, he
     if binary is not None:
         handler.headers["Content-Length"] = str(len(binary))
         handler.rfile = io.BytesIO(binary)
-    for name, value in (headers or {}).items():
+    for name, value in {"Host": "127.0.0.1:8765", **(headers or {})}.items():
         handler.headers[name] = value
     handler.wfile = io.BytesIO()
     handler.log_request = lambda *args: None

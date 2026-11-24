@@ -11,6 +11,7 @@ COMMANDS = {
     "help": (),
     "accounts": (),
     "set-account-role": ("USERNAME", "ROLE"),
+    "revoke-human": ("USERNAME",),
     "invite-human": ("EMAIL",),
     "set-ai-operator": ("AGENT", "HUMAN"),
     "quit": (),
@@ -25,6 +26,7 @@ def completions(database, prior, prefix):
         return [role for role in accounts.ROLES if role.startswith(prefix)]
     filters = {
         ("set-account-role", 0): "",
+        ("revoke-human", 0): " AND role='user'",
         ("set-ai-operator", 0): " AND role='ai'",
         ("set-ai-operator", 1): " AND role='user' AND trusted=1",
     }
@@ -74,14 +76,18 @@ def execute(server, command, arguments):
         storage.begin(db, write=command != "accounts")
         if command == "accounts":
             rows = db.execute(
-                f"SELECT a.username, {accounts.ROLE_SQL.format(alias='a')} AS role "
+                f"SELECT a.username, {accounts.ROLE_SQL.format(alias='a')} AS role, a.disabled_at "
                 "FROM accounts a ORDER BY a.username"
             )
-            return "\n".join(f"{row['username']}\t{row['role']}" for row in rows) or "No accounts."
+            return "\n".join(f"{row['username']}\t{row['role']}" + (" (disabled)" if row["disabled_at"] is not None else "")
+                             for row in rows) or "No accounts."
         if command == "set-account-role":
             username, role = arguments
             accounts.set_role(db, username, role)
             return f"Saved account {username} ({role})."
+        if command == "revoke-human":
+            accounts.revoke_human(db, arguments[0])
+            return f"Revoked workspace access for {arguments[0]}."
         if command == "invite-human":
             token, _ = accounts.create_invite(db, arguments[0])
             origin = server.public_url or f"http://127.0.0.1:{server.server_port}"

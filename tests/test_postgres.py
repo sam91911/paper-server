@@ -233,10 +233,21 @@ class PostgreSQLTests(unittest.TestCase):
         self.api(f"/api/skills/{skill['id']}", key=cloud, expected=404)
 
         experiment = self.api("/api/experiments", key=local, data={"title": "Trial", "audience": "local"})["id"]
-        run = self.api("/api/experiment-runs", key=local, data={"experiment_id": experiment, "title": "Run"})["id"]
+        record = {"dependencies": ["Python 3.11"], "seed": "42", "expected_output": "Result file is unchanged."}
+        run = self.api("/api/experiment-runs", key=local, data={
+            "experiment_id": experiment, "title": "Run", "status": "complete", "audience": "local", "reproduction": record,
+        })["id"]
+        check = {"run_id": run, "run_revision": 1, "outcome": "matched", "observed": "Output matched."}
+        self.api("/api/run-reproductions", cookie=cookie, data=check)
+        self.api("/api/run-reproductions", cookie=cookie, data=dict(check, observed="Output was byte-identical."))
+        reproduced = self.api(f"/api/experiment-detail?id={experiment}", key=local)["runs"][0]
+        self.assertEqual(reproduced["reproduction"], record)
+        self.assertEqual([check["observed"] for check in reproduced["reproduction_checks"]], ["Output was byte-identical."])
         metadata = quote(json.dumps({"experiment_id": experiment, "run_id": run, "title": "Sample", "kind": "data",
                                      "filename": "sample.bin"}))
         self.api("/api/research-upload", key=local, binary=b"\x00data", headers={
+            "Content-Type": "application/octet-stream", "X-Research-Metadata": metadata})
+        self.api("/api/research-upload", key=local, binary=b"extra", storage_limit=5, expected=413, headers={
             "Content-Type": "application/octet-stream", "X-Research-Metadata": metadata})
         version = self.api(f"/api/experiment-detail?id={experiment}", key=local)["items"][0]["versions"][0]["id"]
         self.assertEqual(self.api(f"/research-versions/{version}/file", key=local), b"\x00data")

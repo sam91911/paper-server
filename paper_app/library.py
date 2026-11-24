@@ -140,9 +140,11 @@ def initialize(path):
         agent_goals.initialize(db)
         for table, name, definition in (
             ("metric_corrections", "removed", metrics.REMOVED_COLUMN),
+            ("papers", "pdf_size", "INTEGER"),
             ("experiments", "research_document_id", "INTEGER REFERENCES documents(id)"),
             ("experiment_runs", "methods", "TEXT NOT NULL DEFAULT ''"),
             ("experiment_runs", "settings", "TEXT NOT NULL DEFAULT ''"),
+            ("experiment_runs", "reproduction", "TEXT NOT NULL DEFAULT '{}'"),
             ("comments", "finding_id", "INTEGER REFERENCES research_findings(id)"),
             ("comments", "goal_id", "INTEGER REFERENCES research_goals(id)"),
             ("research_goals", "audience", goals.AUDIENCE_COLUMN),
@@ -161,6 +163,25 @@ def initialize(path):
                       "review_requests"):
             if db.execute(f"PRAGMA foreign_key_check({table})").fetchone():
                 raise sqlite3.IntegrityError("Invalid library references during migration")
+
+
+class UploadQuotaExceeded(ValueError):
+    pass
+
+
+def require_upload_space(db, limit, additional_bytes):
+    """Check the workspace total inside the same write transaction as the upload."""
+    if not limit or not additional_bytes:
+        return
+    used = db.execute(
+        "SELECT COALESCE((SELECT SUM(pdf_size) FROM papers),0) "
+        "+ COALESCE((SELECT SUM(length(content)) FROM research_versions),0)"
+    ).fetchone()[0]
+    # Libraries created before size tracking already have PDF files on disk.
+    for (path,) in db.execute("SELECT path FROM papers WHERE sha256 IS NOT NULL AND pdf_size IS NULL"):
+        used += Path(path).stat().st_size
+    if used + additional_bytes > limit:
+        raise UploadQuotaExceeded("This upload would exceed the workspace storage quota.")
 
 
 def store(db, path, rows, digest=None, base=None):

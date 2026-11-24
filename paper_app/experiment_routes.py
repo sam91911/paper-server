@@ -8,6 +8,9 @@ def update(handler, db, data):
         return {'id': experiments.save_experiment(db, account, data)}
     if handler.path == '/api/experiment-runs':
         return {'id': experiments.save_run(db, account, data)}
+    if handler.path == '/api/run-reproductions':
+        experiments.verify_run(db, account, data)
+        return {}
     if handler.path == '/api/research-items':
         return {'id': experiments.save_item(db, account, data)}
     if handler.path == '/api/tool-jobs':

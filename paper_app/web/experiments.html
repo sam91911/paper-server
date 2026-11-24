@@ -66,6 +66,17 @@
             <label>Methods and reproduction commands <textarea name="methods" rows="3"></textarea></label>
             <label>Environment and settings <textarea name="settings" rows="3"></textarea></label>
           </div>
+          <details id="reproduction-fields">
+            <summary>Reproduction record</summary>
+            <div class="metadata-fields">
+              <label>Dependency versions (one per line) <textarea name="dependencies" rows="3"></textarea></label>
+              <label>Input checksums (one SHA-256 followed by a filename per line)
+                <textarea name="input_checksums" rows="3" spellcheck="false"></textarea>
+              </label>
+              <label>Random seed <input name="seed" maxlength="200"></label>
+              <label>Expected output and match criteria <textarea name="expected_output" rows="3" maxlength="10000"></textarea></label>
+            </div>
+          </details>
           <div class="metadata-fields">
             <label>Status
               <select name="status">

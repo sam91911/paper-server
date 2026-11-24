@@ -176,12 +176,14 @@ def revoke_invite(db, issuer_id, invite_id):
         raise LookupError("Human invitation unavailable.")
 
 
-def register_human(db, data, *, key_only=False):
+def register_human(db, data, *, key_only=False, invite_only=False):
     email = email_address(data.get("email"))
     token = data.get("invite") or ""
     role = "member"
+    if invite_only and not token:
+        raise ValueError("An invitation is required to join this workspace.")
     if token:
-        message = "Enter a valid invitation for this email address or leave it blank."
+        message = "Enter a valid invitation for this email address."
         if not valid_token(token):
             raise ValueError(message)
         used = db.execute(
@@ -283,6 +285,22 @@ def set_role(db, username, role):
         db.execute(f"DELETE FROM {table} WHERE account_id=?", (row["id"],))
     if role != "user":
         db.execute("DELETE FROM human_invites WHERE issuer_id=?", (row["id"],))
+
+
+def revoke_human(db, username):
+    now = int(time.time())
+    row = db.execute(
+        "UPDATE accounts SET disabled_at=COALESCE(disabled_at,?) WHERE username=? AND role='user' RETURNING id",
+        (now, identity(username)),
+    ).fetchone()
+    if not row:
+        raise ValueError("Human account not found.")
+    account_id = row["id"]
+    for table in ("sessions", "application_keys"):
+        db.execute(f"DELETE FROM {table} WHERE account_id=?", (account_id,))
+    db.execute("DELETE FROM human_invites WHERE issuer_id=?", (account_id,))
+    db.execute("UPDATE ai_invites SET canceled_at=? WHERE issuer_id=? AND used_at IS NULL AND canceled_at IS NULL",
+               (now, account_id))
 
 
 def authenticate(db, username, password):
