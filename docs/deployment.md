@@ -66,6 +66,12 @@ curl -fsS https://papers.example.org/api/health
 
 `GET /api/health` 在可讀取設定的資料庫時回傳 HTTP 200，失敗時回傳 HTTP 503，無須憑證。使用公開網址檢查也會驗證 Nginx 與 HTTPS 路徑。
 
+## Enable request timing logs · 啟用請求計時日誌
+
+Set `PAPER_REQUEST_METRICS=1` in the service environment and restart Paper Library. Read the `request_metric` JSON records with `journalctl -u paper-library`. Each record includes the method, route group, HTTP status, elapsed milliseconds in the app handler, and whether the handler returned with a status. Known file routes replace record IDs with `{id}`, while other routes are grouped as `other`. The timing records omit query strings, authorization headers, and request bodies. Use Nginx timing separately for traffic through the public proxy.
+
+在服務環境中設定 `PAPER_REQUEST_METRICS=1` 並重新啟動論文庫。使用 `journalctl -u paper-library` 查看 `request_metric` JSON 記錄。每筆包含請求方法、路由群組、HTTP 狀態碼、應用程式處理時間（毫秒），以及處理程式是否帶有狀態碼返回。已知檔案路由以 `{id}` 取代資料識別碼，其餘路由歸入 `other`。計時記錄省略查詢字串、授權標頭及請求內容。透過公開反向代理的流量另用 Nginx 取得計時。
+
 ## Verify a backup by restoring it · 以還原驗證備份
 
 Use a separate restore directory or host with no production traffic. For SQLite, run the following as a user that can read the library and write the backup directory. The restore command checks database integrity, stored PDFs, and uploaded research artifacts.

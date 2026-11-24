@@ -14,10 +14,11 @@ import re
 import shutil
 import subprocess
 import sys
-from threading import Event, Thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import IPv6Address
 from pathlib import Path
+from threading import Event, Thread
+from time import perf_counter
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
@@ -50,6 +51,11 @@ ASSETS = {
 }
 MAX_PDF_BYTES = 50 * 1024 * 1024
 LOG = logging.getLogger(__name__)
+MEASURED_ROUTES = frozenset({
+    "/api/health", "/api/paper-catalog", "/api/paper-detail", "/api/papers",
+    "/api/experiments", "/api/experiment-detail", "/api/research-upload",
+    "/api/agent-goals", "/api/ai/heartbeat", "/api/reviews",
+})
 
 
 def lookup_stored_paper(paper):
@@ -77,6 +83,33 @@ def public_url(value):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def handle_one_request(self):
+        if not getattr(self.server, "request_metrics", False):
+            return super().handle_one_request()
+        self.command = None
+        self.path = ""
+        self.response_status = None
+        started = perf_counter()
+        finished = False
+        try:
+            super().handle_one_request()
+            finished = True
+        finally:
+            if self.command is not None or self.response_status is not None:
+                path = getattr(self, "path", "").partition("?")[0]
+                route = path if path in MEASURED_ROUTES else "other"
+                if re.fullmatch(r"/papers/[0-9]+/source\.pdf", path):
+                    route = "/papers/{id}/source.pdf"
+                elif match := re.fullmatch(r"/research-versions/[0-9]+/(entries|entry|file)", path):
+                    route = f"/research-versions/{{id}}/{match[1]}"
+                self.log_message("request_metric %s", json.dumps({
+                    "method": self.command if self.command in ("GET", "POST", "HEAD") else "other",
+                    "route": route,
+                    "status": self.response_status,
+                    "duration_ms": round((perf_counter() - started) * 1000, 3),
+                    "completed": finished and self.response_status is not None,
+                }))
+
     def send_data(self, status, data, content_type="application/json; charset=utf-8", *, filename=None, pdf_download=None, cookie=None):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -161,9 +194,11 @@ class Handler(BaseHTTPRequestHandler):
         return f"{accounts.COOKIE}={token}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
 
     def log_request(self, code="-", size="-"):
-        if self.path.startswith(ai_accounts.REGISTRATION_PREFIX):
+        self.response_status = int(code) if str(code).isdigit() else None
+        path = getattr(self, "path", "")
+        if path.startswith(ai_accounts.REGISTRATION_PREFIX):
             self.log_message('"%s %s[redacted]" %s %s', self.command, ai_accounts.REGISTRATION_PREFIX, code, size)
-        elif urlsplit(self.path).path == "/auth/google/callback":
+        elif urlsplit(path).path == "/auth/google/callback":
             self.log_message('"%s /auth/google/callback" %s %s', self.command, str(code), str(size))
         else:
             super().log_request(code, size)
@@ -821,6 +856,7 @@ def serve(database, port, external_url=None, *, interactive=False):
     with ThreadingHTTPServer(("127.0.0.1", port), Handler) as server:
         server.database = database
         server.public_url = external_url
+        server.request_metrics = os.getenv("PAPER_REQUEST_METRICS") == "1"
         server.google_config = google_signin.configuration(server.server_port, origin=external_url)
         stop = Event()
         worker = Thread(target=metadata_sync.run, args=(database, stop), daemon=True)

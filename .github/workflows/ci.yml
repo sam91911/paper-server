@@ -54,6 +54,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y poppler-utils postgresql-client-16
       - run: python -m pip install '.[postgres]'
       - run: bash scripts/check.sh --postgres
+      - run: python -m scripts.benchmark_workflow --postgres --users 2 --agents 2 --rounds 2 --papers 50
 
   package:
     name: Installed server and enrolled agent workflow

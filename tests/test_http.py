@@ -83,6 +83,27 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.get("/api/health", False), (503, b'{"status": "unavailable"}'))
         self.assertFalse(self.db.exists())
 
+    def test_request_metrics_group_paths_and_exclude_request_values(self):
+        for target, route, status in (
+            ("/api/health?token=private-value", "/api/health", 200),
+            ("/research-versions/123/entry?path=private-value", "/research-versions/{id}/entry", 401),
+            (server.ai_accounts.REGISTRATION_PREFIX + "private-value", "other", 404),
+        ):
+            with self.subTest(route=route):
+                handler = server.Handler.__new__(server.Handler)
+                handler.server = SimpleNamespace(database=self.db, server_port=8765, request_metrics=True)
+                handler.rfile = io.BytesIO(f"GET {target} HTTP/1.0\r\nHost: localhost:8765\r\n\r\n".encode())
+                handler.wfile = io.BytesIO()
+                logs = []
+                handler.log_message = lambda template, *args: logs.append(template % args)
+                handler.handle_one_request()
+                self.assertEqual(len(logs), 2)
+                record = json.loads(logs[1].removeprefix("request_metric "))
+                self.assertEqual((record["method"], record["route"], record["status"]), ("GET", route, status))
+                self.assertTrue(record["completed"])
+                self.assertGreaterEqual(record["duration_ms"], 0)
+                self.assertNotIn("private-value", logs[1])
+
     def test_public_ip_origins_match_browser_host_headers_and_invitation_links(self):
         for value, expected in (
             ("https://192.0.2.44:443/", "https://192.0.2.44"),

@@ -35,6 +35,25 @@ To measure catalog startup, run `python3 -m scripts.benchmark_snapshots --papers
 
 若要測量論文目錄的載入效能，請執行 `python3 -m scripts.benchmark_snapshots --papers 10000 --comments-per-paper 1 --catalog`。
 
+## Benchmark concurrent research activity · 測量並行研究活動
+
+Run a browsing baseline, then repeat with agents. Both commands run the real HTTP handlers on loopback using a fresh synthetic library. PostgreSQL mode uses `PAPER_TEST_POSTGRES_URL` to create and remove a temporary database. Omit `--postgres` to use temporary SQLite instead.
+
+先測量純瀏覽的基準，再加入代理重測。兩個指令都使用全新的合成資料庫，在本機迴路介面執行實際的 HTTP 處理程式。PostgreSQL 模式依據 `PAPER_TEST_POSTGRES_URL` 建立並清除暫存資料庫。省略 `--postgres` 則使用暫存 SQLite。
+
+```sh
+python3 -m scripts.benchmark_workflow --postgres --users 4 --agents 0 --rounds 30
+python3 -m scripts.benchmark_workflow --postgres --users 4 --agents 8 --rounds 30
+```
+
+Each browsing round opens the catalog, a paper and its PDF, an experiment, the ZIP listing, and a source file preview. Each agent checks goals and sends a heartbeat every round, with an upload on the first round and then every `--upload-every` rounds. Keep `--papers`, `--archive-files`, `--upload-kib`, and `--pause-ms` the same to compare runs. The report shows client-observed p50, p95, and maximum latency in milliseconds, total throughput, and failures. The command exits nonzero on any failed request.
+
+每一輪瀏覽會開啟論文目錄、論文與 PDF、實驗、ZIP 檔案清單及原始碼預覽。代理每輪查詢目標並送出心跳，第一輪上傳一次，之後每隔 `--upload-every` 輪再上傳。比較測試時請固定 `--papers`、`--archive-files`、`--upload-kib` 與 `--pause-ms`。報告提供用戶端觀察到的 p50、p95 與最長延遲（毫秒）、總吞吐量及失敗數。任何請求失敗時，指令會以非零狀態結束。
+
+Use `--request-metrics` to include server-side timing logs in a benchmark. The benchmark measures local HTTP and database work with repeated access to the same PDF and archive. Agent rounds intentionally compress time and may begin together. Setup, Nginx, TLS, remote networks, and the background metadata worker are outside the timed workload.
+
+測試時加入 `--request-metrics` 可輸出伺服器端計時日誌。測試會重複讀取同一份 PDF 與封存檔，以測量本機 HTTP 與資料庫工作。代理輪次刻意縮短，也可能同時開始。計時範圍不包含初始化、Nginx、TLS、遠端網路或背景書目更新。
+
 ## Maintain the guides · 維護指南
 
 Keep the root README focused on setup and navigation. Update the relevant guide in `docs/` when a workflow changes, keep English and Traditional Chinese together, and verify command examples and relative links.
