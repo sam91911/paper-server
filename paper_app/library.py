@@ -114,6 +114,8 @@ def initialize(path):
         db.execute("PRAGMA foreign_keys=OFF")
         db.execute("BEGIN IMMEDIATE")
         accounts.initialize(db)
+        ai_accounts.initialize(db)
+        human_keys.initialize(db)
         sharing.initialize(db)
         columns = {row["name"] for row in db.execute("PRAGMA table_info(comments)")}
         if "document_id" not in columns:

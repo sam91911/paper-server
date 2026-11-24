@@ -36,6 +36,7 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     },
     fetch: async (route, options) => {
       if (route === '/api/ai/invitations') {
+        if (!options) return {ok: true, json: async () => ({agents: [], invitations: []})};
         assert.deepEqual(JSON.parse(options.body), {username: invitation.username, role: invitation.role});
         return {ok: true, json: async () => invitation};
       }

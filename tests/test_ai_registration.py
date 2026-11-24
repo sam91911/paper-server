@@ -84,3 +84,53 @@ class AIRegistrationTests(unittest.TestCase):
             self.assertNotEqual(first_token, client.key)
         if os.name == "posix":
             self.assertEqual(identity.stat().st_mode & 0o777, 0o600)
+
+    def test_operator_can_cancel_replace_and_rotate_without_changing_account(self):
+        route = "/api/ai/invitations"
+        with library.connect(self.database) as db:
+            account_id = accounts.create_account(db, "another", "other password", "user")
+            other = accounts.create_key(db, account_id, "operator")
+        enrollment = self.api(route, key=self.owner, data={"username": "Reviewer", "role": "local"})
+        old = agent.AgentClient(8765, "Reviewer", Ed25519PrivateKey.generate())
+
+        def register(client, invite, expected=200):
+            path = invite["registration_path"]
+            return self.api(path, expected=expected, data={
+                "public_key": agent.encode(client.private_key.public_key().public_bytes_raw()),
+                "signature": client.sign("register", "Reviewer", path),
+            })
+
+        def login_body(client):
+            challenge = self.api("/api/ai/challenge", data={"username": "reviewer"})["challenge"]
+            return {"username": "reviewer", "challenge": challenge,
+                    "signature": client.sign("login", "Reviewer", challenge)}
+
+        self.api(route, key=other, data={"action": "cancel", "invite_id": enrollment["invite_id"]}, expected=404)
+        self.api(route, key=self.owner, data={"action": "cancel", "invite_id": enrollment["invite_id"]})
+        register(old, enrollment, expected=400)
+        replacement = self.api(route, key=self.owner, data={"action": "replace", "invite_id": enrollment["invite_id"]})
+        original = register(old, replacement)["account"]
+        token = self.api("/api/ai/login", data=login_body(old))["access_token"]
+        document = self.api("/api/documents", key=self.owner, data={
+            "title": "A shared document", "markdown": "Source", "recipients": ["Reviewer"],
+        })["document_id"]
+        review_id = self.api("/api/reviews", key=self.owner, data={
+            "action": "create", "kind": "document", "target_id": document, "agent": "Reviewer", "agent_role": "local",
+        })["review"]["id"]
+        self.api("/api/reviews", key=token, data={"action": "complete", "id": review_id, "status": "complete", "response": "Review"})
+        pending_challenge = login_body(old)
+        self.api(route, key=other, data={"action": "rotate", "username": "Reviewer"}, expected=404)
+        rotation = self.api(route, key=self.owner, data={"action": "rotate", "username": "Reviewer"})
+        register(old, rotation, expected=400)
+        new = agent.AgentClient(8765, "Reviewer", Ed25519PrivateKey.generate())
+        self.assertEqual(register(new, rotation)["account"], original)
+        self.assertIsNone(self.api("/api/account", key=token)["account"])
+        self.api("/api/ai/login", data=pending_challenge, expected=401)
+        self.api("/api/ai/login", data=login_body(old), expected=401)
+        new_token = self.api("/api/ai/login", data=login_body(new))["access_token"]
+        self.assertEqual(self.api(f"/api/reviews?id={review_id}", key=new_token)["review"]["response"], "Review")
+        self.assertEqual(self.api(f"/api/document?id={document}", key=new_token)["document"]["title"], "A shared document")
+        dashboard = self.api(route, key=self.owner)
+        self.assertEqual({row["status"] for row in dashboard["invitations"]}, {"canceled", "used"})
+        self.assertIsNotNone(dashboard["agents"][0]["last_authenticated"])
+        self.assertEqual(self.api(route, key=other), {"invitations": [], "agents": []})

@@ -12,9 +12,9 @@ The browser generates a Paper Library Ed25519 key and signs a short-lived challe
 
 瀏覽器會產生論文庫的 Ed25519 金鑰，並簽署短效挑戰碼。伺服器儲存公鑰並接收簽章。請私下備份下載的金鑰檔。持有檔案的人可登入；只以私鑰註冊的帳號往後也需使用該檔案登入。請透過 HTTPS 或本機回送位址，並使用支援 Ed25519 Web Crypto 的瀏覽器。
 
-Existing human accounts can sign in as usual and choose **Account → Add private-key sign-in**. Password sign-in and signup are under **Password sign-in and signup**.
+Under **Account → Private sign-in keys**, generate and download a backup key, then save it with a label. Keep the backup separate from your primary key. You can revoke keys individually. Revocation ends your existing browser sessions, and an account created with only a key must retain at least one registered key. If you lose every key, use a password or Google sign-in if your account already has it. A key-only account has no self-service recovery after all key files are lost. Password sign-in and signup are under **Password sign-in and signup**.
 
-既有的人員帳號可照常登入，再選擇 **Account → Add private-key sign-in**。密碼登入及註冊位於 **Password sign-in and signup**。
+在 **Account → Private sign-in keys** 可產生、下載並加上標籤後儲存備用金鑰。請將備用檔案與主要金鑰分開保管。可逐把撤銷金鑰，撤銷後既有瀏覽器工作階段會登出。只以私鑰註冊的帳號須保留至少一把已註冊金鑰。若所有金鑰皆遺失，可使用帳號原有的密碼或 Google 登入；僅有金鑰的帳號無法自行復原。密碼登入及註冊位於 **Password sign-in and signup**。
 
 ## Roles and sharing · 角色與分享
 

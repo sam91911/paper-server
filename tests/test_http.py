@@ -94,8 +94,23 @@ class HttpTests(unittest.TestCase):
         api("/api/human-key/register", registration, status=401)
         login = prove("login")
         self.assertEqual(api("/api/human-key/login", login)["account"]["username"], "Reader")
+        self.token = SimpleCookie(self.response_headers["Set-Cookie"])[accounts.COOKIE].value
         api("/api/human-key/login", login, status=401)
         api("/api/sign-in", {"username": "Reader", "password": "a random password"}, status=400)
+        primary = api("/api/account", auth=True)["sign_in_keys"][0]["key_id"]
+        api("/api/human-key/revoke", {"key_id": primary}, auth=True, status=400)
+
+        original, private_key = private_key, Ed25519PrivateKey.generate()
+        attachment = {**prove("attach", auth=True), "label": "Backup",
+                      "public_key": encode(private_key.public_key().public_bytes_raw())}
+        api("/api/human-key/attach", attachment, auth=True)
+        self.token = SimpleCookie(self.response_headers["Set-Cookie"])[accounts.COOKIE].value
+        self.assertEqual(len(api("/api/account", auth=True)["sign_in_keys"]), 2)
+        api("/api/human-key/revoke", {"key_id": primary}, auth=True)
+        self.assertIsNone(api("/api/account", auth=True)["account"])
+        self.assertEqual(api("/api/human-key/login", prove("login"))["account"]["id"], account["id"])
+        private_key = original
+        api("/api/human-key/login", prove("login"), status=401)
 
     def test_existing_human_can_attach_a_key_after_sign_in(self):
         private_key = Ed25519PrivateKey.generate()

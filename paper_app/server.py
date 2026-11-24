@@ -19,7 +19,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
-from . import account_routes, accounts, ai_accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tools_catalog
+from . import account_routes, accounts, ai_accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
 WEB_ROOT = Path(__file__).resolve().with_name("web")
@@ -210,6 +210,8 @@ class Handler(BaseHTTPRequestHandler):
             self.google_login(url)
         elif route == "/api/openapi.json":
             self.send_json(200, openapi.document(self.server.server_port, getattr(self.server, "public_url", None)))
+        elif route == "/api/ai/invitations":
+            self.read_ai_invitations()
         elif route in ("/api/reviews", "/api/review-agents"):
             self.read_reviews(url)
         elif route == "/api/skills" or route.startswith("/api/skills/"):
@@ -352,6 +354,8 @@ class Handler(BaseHTTPRequestHandler):
                         data = {"account": account, "google_available": self.google_available()}
                         if account and self.headers.get("Authorization") is None:
                             data["keys"] = accounts.list_keys(db, account["id"])
+                            if account["role"] in ("user", "member"):
+                                data["sign_in_keys"] = human_keys.list_keys(db, account["id"])
                     elif route == "/api/documents":
                         data = library.snapshot(db, view="documents", account=account,
                                                 include_comments=parse_qs(url.query).get("comments") != ["none"],
@@ -416,6 +420,20 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_data(200, payload, "application/pdf",
                            pdf_download=Path(paper["path"]).name if download else None)
+
+    def read_ai_invitations(self):
+        try:
+            with library.connect(self.server.database) as db:
+                storage.begin(db)
+                result = ai_accounts.dashboard(db, self.require_human(db))
+            self.send_json(200, result)
+        except accounts.SignInRequired:
+            self.send_json(401, {"error": "Sign in to continue."})
+        except sharing.AccessDenied:
+            self.send_json(403, {"error": "A trusted human account is required."})
+        except storage.ERRORS as error:
+            LOG.error("AI invitation read failed (%s)", type(error).__name__)
+            self.send_json(500, {"error": "Could not read AI invitations."})
 
     def read_reviews(self, url):
         try:
@@ -633,8 +651,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def update(self, db, data):
         if self.path == "/api/ai/invitations":
-            self.require_human(db)
-            invite = ai_accounts.create_invite(db, data)
+            invite = ai_accounts.manage_invite(db, self.require_human(db), data)
+            if "registration_path" not in invite:
+                return invite
             origin = getattr(self.server, "public_url", None) or self.request_origin()
             return {**invite, "registration_url": origin + invite["registration_path"]}
         if self.path.startswith(ai_accounts.REGISTRATION_PREFIX):
@@ -708,11 +727,19 @@ def main():
     modes.add_argument("--create-account", nargs=2, metavar=("USERNAME", "ROLE"))
     modes.add_argument("--set-account-role", nargs=2, metavar=("USERNAME", "ROLE"))
     modes.add_argument("--set-tool-approver", metavar="USERNAME", help="Authorize a trusted human to approve tool jobs")
+    modes.add_argument("--set-ai-operator", nargs=2, metavar=("AGENT", "HUMAN"),
+                       help="Authorize a trusted human to manage an existing AI agent's key")
     modes.add_argument("--register-tool", nargs=2, metavar=("USERNAME", "CONFIG_JSON"), help="Register a pinned tool owned by USERNAME")
     args = parser.parse_args()
     try:
         database = storage.configuration(args.database)
         library.initialize(database)
+        if args.set_ai_operator:
+            with library.connect(database) as db:
+                storage.begin(db, write=True)
+                ai_accounts.assign_operator(db, *args.set_ai_operator)
+            print("AI operator saved.")
+            return
         if args.set_tool_approver:
             with library.connect(database) as db:
                 storage.begin(db, write=True)

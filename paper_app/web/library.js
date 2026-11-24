@@ -77,7 +77,7 @@ function showAccount() {
   element("password-account-options").hidden = Boolean(account);
   element("sign-out").hidden = !account;
   element("change-password").hidden = !account || account.google_only || account.key_only;
-  element("attach-human-key-panel").hidden = !["user", "member"].includes(account?.role) || account.has_private_key;
+  element("attach-human-key-panel").hidden = !["user", "member"].includes(account?.role);
   element("google-option").hidden = Boolean(account) || !libraryData.google_available;
   const username = element("account-username");
   username.hidden = !account;
@@ -622,6 +622,7 @@ async function loadLibrary(paperId) {
     }
     showAccount();
     showKeys();
+    showHumanKeys();
     return;
   }
   if (documentsPage) {
@@ -869,15 +870,23 @@ const issuedKey = element("issued-key");
 const aiInvitationForm = element("create-ai-invitation");
 const aiInvitationPrompt = element("ai-invitation-prompt");
 
-submit(aiInvitationForm, async () => {
+async function updateAIInvitation(data) {
   const accountId = libraryData.account?.id;
   aiInvitationPrompt.value = "";
   element("ai-invitation-result").hidden = true;
-  const {registration_path, registration_url, username, role} = await api("ai/invitations", Object.fromEntries(new FormData(aiInvitationForm)));
+  const {registration_path, registration_url, username, role, mode, invite_id} = await api("ai/invitations", data);
   if (libraryData.account?.id !== accountId) return;
-  const identity = `~/.paper-library/${username}.json`;
+  if (!registration_url) {
+    await showAIInvitations();
+    accountStatus.textContent = "Invitation canceled.";
+    return;
+  }
+  const rotating = mode === "rotate";
+  const identity = `~/.paper-library/${username}${rotating ? `-${invite_id}` : ""}.json`;
   const client = "python3 -m paper_client.agent";
-  aiInvitationPrompt.value = `Connect to my Paper Library as ${username} (${role} AI). Register this agent and verify the connection.
+  const task = rotating ? "Replace your current key using a new identity file. Use that file for future requests after verifying the connection." :
+    "Register this agent and verify the connection.";
+  aiInvitationPrompt.value = `Connect to my Paper Library as ${username} (${role} AI). ${task}
 
 One-time registration URL (expires in 15 minutes):
 ${registration_url}
@@ -894,7 +903,50 @@ If you use your own HTTP client, send POST bodies as JSON with Content-Type: app
 Use the HTTPS URL as provided. If the library uses loopback on another machine, use its forwarded loopback port and keep the registration path. Report the connected username and role.`;
   element("ai-invitation-result").hidden = false;
   accountStatus.textContent = "";
-}, accountStatus);
+  await showAIInvitations();
+}
+
+async function showAIInvitations() {
+  const accountId = libraryData.account?.id;
+  const {agents, invitations} = await api("ai/invitations");
+  if (libraryData.account?.id !== accountId) return;
+  const managed = element("managed-ai-agents");
+  const history = element("ai-invitation-history");
+  managed.replaceChildren();
+  history.replaceChildren();
+  if (!agents.length) add(managed, "p", "No managed agents.");
+  if (!invitations.length) add(history, "p", "No invitations.");
+  for (const agent of agents) {
+    const last = agent.last_authenticated === null ? "No key sign-in yet" :
+      `Last key sign-in ${new Date(agent.last_authenticated * 1000).toLocaleString()}`;
+    const row = add(managed, "form", undefined, "archive-row");
+    add(row, "span", `${agent.username} · ${roleLabels[agent.role]} · ${last}`);
+    add(row, "button", "Rotate key", "secondary");
+    submit(row, () => updateAIInvitation({action: "rotate", username: agent.username}), accountStatus);
+  }
+  for (const invitation of invitations) {
+    const row = add(history, "div", undefined, "archive-row");
+    add(row, "span", `${invitation.username} · ${invitation.mode === "rotate" ? "Rotation" : "Enrollment"} · ${invitation.status}`);
+    const actions = add(row, "div");
+    for (const [action, label] of [["replace", "Issue replacement"], ["cancel", "Cancel"]]) {
+      if (invitation.status === "used" || (action === "cancel" && invitation.status !== "pending")) continue;
+      const form = add(actions, "form");
+      add(form, "button", label, "secondary");
+      submit(form, () => updateAIInvitation({action, invite_id: invitation.invite_id}), accountStatus);
+    }
+  }
+}
+
+submit(aiInvitationForm, () => updateAIInvitation(Object.fromEntries(new FormData(aiInvitationForm))), accountStatus);
+
+element("ai-registration-panel").addEventListener("toggle", event => {
+  if (event.currentTarget.open && libraryData?.account?.role === "user") {
+    showAIInvitations().catch(error => { accountStatus.textContent = error.message; });
+  }
+});
+element("refresh-ai-invitations").addEventListener("click", () => {
+  showAIInvitations().catch(error => { accountStatus.textContent = error.message; });
+});
 
 element("copy-ai-invitation").addEventListener("click", async () => {
   try {

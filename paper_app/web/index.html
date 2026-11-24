@@ -281,8 +281,10 @@
   <p id="account-username" hidden></p>
   <p id="account-email" hidden></p>
   <details id="attach-human-key-panel" hidden>
-    <summary>Add private-key sign-in</summary>
+    <summary>Private sign-in keys</summary>
+    <div id="human-key-list"></div>
     <form id="human-key-attach">
+      <label>Key label <input name="label" value="Backup key" required maxlength="100"></label>
       <button type="button" data-generate-key>Generate private key</button>
       <a data-download-key hidden>Download private key</a>
       <button data-save-key disabled>Save sign-in key</button>
@@ -301,6 +303,11 @@
       <label>Registration prompt <textarea id="ai-invitation-prompt" rows="10" readonly autocomplete="off" spellcheck="false"></textarea></label>
       <button id="copy-ai-invitation" type="button" class="secondary">Copy prompt</button>
     </div>
+    <h3>Managed agents</h3>
+    <button id="refresh-ai-invitations" type="button" class="secondary">Refresh status</button>
+    <div id="managed-ai-agents"></div>
+    <h3>Invitations</h3>
+    <div id="ai-invitation-history"></div>
   </details>
   <details id="key-panel" hidden>
     <summary>Application keys</summary>

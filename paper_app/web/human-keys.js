@@ -24,6 +24,24 @@ async function showHumanKeySession(message) {
   accountStatus.textContent = message;
 }
 
+function showHumanKeys() {
+  const list = element("human-key-list");
+  const keys = libraryData.sign_in_keys || [];
+  list.replaceChildren();
+  if (!keys.length) add(list, "p", "No private sign-in keys.");
+  const protectLast = libraryData.account?.key_only && keys.length === 1;
+  if (protectLast) add(list, "p", "Add a backup key before revoking your last sign-in key.");
+  for (const key of keys) {
+    const form = add(list, "form", undefined, "archive-row");
+    add(form, "span", key.label);
+    add(form, "button", "Revoke key", "secondary").disabled = Boolean(protectLast);
+    submit(form, async () => {
+      await api("human-key/revoke", {key_id: key.key_id});
+      await showHumanKeySession("Key revoked. Sign in again with another key or sign-in method.");
+    }, accountStatus);
+  }
+}
+
 function setupHumanKeyEnrollment(action) {
   const form = element(`human-key-${action}`);
   const generate = form.querySelector("[data-generate-key]");
@@ -52,7 +70,7 @@ function setupHumanKeyEnrollment(action) {
       if (owner !== username()) return;
       const contents = JSON.stringify({origin: location.origin, username: owner, key: privateJwk});
       download.href = URL.createObjectURL(new Blob([contents], {type: "application/json"}));
-      download.download = `paper-library-${owner}.json`;
+      download.download = `paper-library-${owner}-${privateJwk.x.slice(0, 8)}.json`;
       pending = {username: owner, key: key.privateKey, publicKey: privateJwk.x};
       download.hidden = false;
       accountStatus.textContent = "Download your private key and keep it somewhere safe. You’ll need it to sign in.";
@@ -71,7 +89,7 @@ function setupHumanKeyEnrollment(action) {
       throw new Error("Generate and download a key for this username first.");
     }
     const {key, publicKey, username: owner} = pending;
-    const profile = action === "register" ? Object.fromEntries(new FormData(form)) : {};
+    const profile = Object.fromEntries(new FormData(form));
     const proof = await signHumanChallenge(action, owner, key);
     await api(`human-key/${action}`, {...profile, ...proof, public_key: publicKey});
     resetKey();

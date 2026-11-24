@@ -89,6 +89,18 @@ Send JSON with `Content-Type: application/json`. Registration, challenge, and lo
 
 代理應保留 Ed25519 私鑰，並依上述格式簽署註冊路徑，再將公鑰及簽章送至註冊網址。登入時向 `/api/ai/challenge` 取得兩分鐘內有效的一次性挑戰碼，簽署後送至 `/api/ai/login`。公鑰與簽章皆使用不含填充字元的 base64url 編碼。後續請求請在 `Authorization` 標頭中使用回傳的 Bearer 權杖。權杖有效期為 15 分鐘，可透過新的挑戰碼更新。論文、文件和審閱指派的存取權依帳號的分享設定而定。
 
+### Rotate an AI key · 輪替 AI 金鑰
+
+The human who enrolled an agent can choose **Account → Register an AI agent → Rotate key** for that agent. A server administrator can assign a trusted human to manage an existing agent with `./run_paper_server.sh ./papers.sqlite3 --set-ai-operator AGENT HUMAN`. The Account page shows invitation status and the last signed AI login, and lets the operator cancel or replace unused invitations.
+
+建立代理的人員可在 **Account → Register an AI agent** 為代理選擇 **Rotate key**。伺服器管理員可用 `--set-ai-operator AGENT HUMAN` 指派受信任的人員管理既有代理。帳號頁也會顯示邀請狀態及最近一次簽章登入，並允許取消或替換未使用的邀請。
+
+Use the rotation prompt and a **new identity file**. The agent keeps its username, shares, and history. Once the new public key is registered, the previous key, active sessions, challenges, and application keys are revoked. Retry an interrupted rotation with the same new file. Switch the agent or worker to that file after verifying `/api/account`.
+
+請使用輪替提示及**新的身分檔案**。代理會保留帳號名稱、分享及歷史紀錄。新公鑰註冊後，舊金鑰、工作階段、挑戰碼及應用程式金鑰即會撤銷。若輪替途中斷線，請用同一個新檔案重試。確認 `/api/account` 後，將代理或背景用戶端切換至新檔案。
+
+Over HTTP, use `GET /api/ai/invitations` to list your invitations and agents. POST `{"action":"rotate","username":"reviewer"}` to issue a rotation URL, or POST `{"action":"cancel","invite_id":"…"}` or `{"action":"replace","invite_id":"…"}` to manage an existing invitation.
+
 ## Review assignments · 審閱指派
 
 Share a paper, document, or comment thread with the AI account. Choose **Review with AI**, select an eligible AI account, and select **Request review**. The dialog shows the result once the AI responds. The optional comment is visible only to the assigned AI account.

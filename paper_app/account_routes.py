@@ -3,16 +3,19 @@
 from . import database as storage
 from . import accounts, human_keys, library
 
-KEY_ACTIONS = {f"/api/human-key/{action}": action for action in ("challenge", "register", "login", "attach")}
+KEY_ACTIONS = {f"/api/human-key/{action}": action for action in ("challenge", "register", "login", "attach", "revoke")}
 SESSION_ROUTES = {"/api/register", "/api/sign-in", "/api/sign-out", "/api/change-password", *KEY_ACTIONS}
 
 
 def use_human_key(handler, db, action, data, token):
     account = None
-    if action == "attach" or (action == "challenge" and data.get("action") == "attach"):
+    if action in ("attach", "revoke") or (action == "challenge" and data.get("action") == "attach"):
         account = handler.require_account(db)
         if account["role"] not in ("user", "member"):
             raise accounts.SignInRequired
+    if action == "revoke":
+        human_keys.revoke(db, account, data.get("key_id"))
+        return {"account": None}, ""
     origin = handler.request_origin()
     if action == "challenge":
         return human_keys.challenge(db, origin, data, account), None
