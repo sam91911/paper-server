@@ -1,5 +1,6 @@
 """Public HTTP operations for workstation-based research clients."""
 
+from . import agent_goals
 from .sharing import AUDIENCES
 
 
@@ -82,6 +83,12 @@ BINARY = schema("string", format="binary")
 AUDIENCE = enum(*AUDIENCES)
 RECIPIENTS = array(STRING)
 ID_LIST = array(ID)
+AGENT_GOAL_REQUEST_ID = schema("string", pattern="^[A-Za-z0-9_-]{16,64}$")
+AGENT_GOAL_STATUS = enum(*agent_goals.STATES)
+AGENT_GOAL_ACTION = enum(*agent_goals.OWNER_ACTIONS, *agent_goals.AGENT_ACTIONS)
+AGENT_GOAL_REFERENCES = schema("array", maxItems=20, items=obj(
+    {"kind": enum(*agent_goals.SOURCE_KINDS), "id": ID,
+     "document_id": {**ID, "readOnly": True}, "paper_id": {**ID, "readOnly": True}}, ("kind", "id")))
 PAPER_ID = param("paper_id", ID, required=True)
 DOCUMENT_ID = param("document_id", ID, required=True)
 AFTER = param("after", COUNT, description="The previous response's next_after cursor.")
@@ -117,6 +124,14 @@ SKILL_FIELDS = {name: SKILL_SUMMARY[name] for name in ("audience", "title", "des
 SKILL_FIELDS.update(markdown=SKILL_MARKDOWN, recipients=RECIPIENTS)
 SCHEMAS = {
     "Error": obj({"error": STRING}, ("error",)),
+    "AgentGoal": obj({"id": ID, "agent": STRING, "agent_role": AI_ROLE, "requester": STRING,
+                      "objective": STRING, "acceptance_criteria": STRING, "sources": AGENT_GOAL_REFERENCES,
+                      "status": AGENT_GOAL_STATUS, "revision": ID, "created": COUNT, "updated": COUNT,
+                      "source_unavailable": BOOLEAN, "actions": array(AGENT_GOAL_ACTION)},
+                     ("id", "status", "revision", "agent", "requester", "source_unavailable", "actions")),
+    "AgentGoalEvent": obj({"revision": ID, "action": enum("create", *AGENT_GOAL_ACTION["enum"]),
+                           "actor": STRING, "status": AGENT_GOAL_STATUS, "note": STRING, "evidence": AGENT_GOAL_REFERENCES,
+                           "created": COUNT, "redacted": BOOLEAN}, ("revision", "action", "actor", "status", "note", "evidence")),
     "Account": obj({"id": ID, "role": enum("user", "member", "local", "cloud"), "username": STRING,
                     "display_name": STRING, "has_private_key": BOOLEAN, "key_only": BOOLEAN}, ("id", "role", "username")),
     "Paper": obj({"id": ID, "path": STRING, **METADATA, "owner_id": nullable(ID),
@@ -184,6 +199,29 @@ PATHS = {
             "503": {"description": "Database unavailable", **media(obj({"status": enum("unavailable")}, ("status",)))},
         },
     }},
+    "/api/agent-goals": {
+        "get": operation("Read your agent goals or a goal's progress history", {"oneOf": [
+            obj({"goals": array(ref("AgentGoal")), "next_before": nullable(ID)}, ("goals", "next_before")),
+            obj({"goal": ref("AgentGoal"), "events": array(ref("AgentGoalEvent")), "next_before": nullable(ID)},
+                ("goal", "events", "next_before")),
+        ]}, params=(param("id", ID, description="Goal ID for a detail view."), BEFORE),
+            description="Only the assigning human and assigned AI account can read the goal. "
+                        "With id, before pages through older events by revision. Otherwise it pages through goals by ID.",
+            security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
+        "post": operation("Assign an agent goal or update its progress",
+            acknowledgement("goal", "events", "next_before", goal=ref("AgentGoal"), events=array(ref("AgentGoalEvent")),
+                            next_before=nullable(ID)),
+            body={"oneOf": [
+                obj({"action": enum("create"), "request_id": AGENT_GOAL_REQUEST_ID, "agent": STRING,
+                     "objective": STRING, "acceptance_criteria": STRING, "sources": AGENT_GOAL_REFERENCES},
+                    ("action", "request_id", "agent", "objective", "acceptance_criteria")),
+                obj({"action": AGENT_GOAL_ACTION, "request_id": AGENT_GOAL_REQUEST_ID, "id": ID, "revision": ID,
+                     "note": STRING, "evidence": AGENT_GOAL_REFERENCES}, ("action", "request_id", "id", "revision")),
+            ]},
+            description="Use an action from the goal's actions list. Retry an identical update with the same request_id. "
+                        "A stale revision returns 409. Progress, block, submit, and request_changes require a note.",
+            security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
+    },
     "/api/human-key/challenge": {"post": operation("Request a one-time human sign-in or enrollment challenge",
         obj({"challenge": AI_NONCE, "message": STRING, "expires_in": COUNT}, ("challenge", "message", "expires_in")),
         body=obj({"action": enum("register", "login", "attach"), "username": STRING}, ("action",)),
@@ -212,8 +250,9 @@ PATHS = {
             obj({"invitations": array(obj({"invite_id": STRING, "username": STRING, "role": AI_ROLE,
                 "mode": enum("enroll", "rotate"), "created": COUNT, "expires": COUNT,
                 "status": enum("pending", "used", "canceled", "expired")})),
-                "agents": array(obj({"id": ID, "username": STRING, "role": AI_ROLE, "last_authenticated": nullable(COUNT)}))},
-                ("invitations", "agents")),
+                "agents": array(obj({"id": ID, "username": STRING, "role": AI_ROLE, "last_authenticated": nullable(COUNT)})),
+                "next_before": nullable(STRING)}, ("invitations", "agents", "next_before")),
+            params=(param("before", STRING, description="The previous page's next_before invitation cursor."),),
             security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
         "post": operation("Create, rotate, replace, or cancel an AI invitation",
             acknowledgement("invite_id", invite_id=STRING, registration_path=STRING,

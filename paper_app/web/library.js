@@ -619,6 +619,10 @@ async function loadLibrary(paperId) {
     if (previousAccount !== libraryData.account?.id) {
       element("ai-invitation-prompt").value = "";
       element("ai-invitation-result").hidden = true;
+      element("managed-ai-agents").replaceChildren();
+      element("ai-invitation-history").replaceChildren();
+      olderAIInvitations.hidden = true;
+      aiInvitationCursor = undefined;
     }
     showAccount();
     showKeys();
@@ -869,6 +873,9 @@ const createKeyForm = element("create-key");
 const issuedKey = element("issued-key");
 const aiInvitationForm = element("create-ai-invitation");
 const aiInvitationPrompt = element("ai-invitation-prompt");
+const olderAIInvitations = element("older-ai-invitations");
+let aiInvitationCursor;
+let aiInvitationRequest = 0;
 
 async function updateAIInvitation(data) {
   const accountId = libraryData.account?.id;
@@ -906,23 +913,27 @@ Use the HTTPS URL as provided. If the library uses loopback on another machine, 
   await showAIInvitations();
 }
 
-async function showAIInvitations() {
+async function showAIInvitations(before) {
   const accountId = libraryData.account?.id;
-  const {agents, invitations} = await api("ai/invitations");
-  if (libraryData.account?.id !== accountId) return;
+  const request = ++aiInvitationRequest;
+  const route = before ? `ai/invitations?before=${encodeURIComponent(before)}` : "ai/invitations";
+  const {agents, invitations, next_before} = await api(route);
+  if (request !== aiInvitationRequest || libraryData.account?.id !== accountId) return;
   const managed = element("managed-ai-agents");
   const history = element("ai-invitation-history");
-  managed.replaceChildren();
-  history.replaceChildren();
-  if (!agents.length) add(managed, "p", "No managed agents.");
-  if (!invitations.length) add(history, "p", "No invitations.");
-  for (const agent of agents) {
-    const last = agent.last_authenticated === null ? "No key sign-in yet" :
-      `Last key sign-in ${new Date(agent.last_authenticated * 1000).toLocaleString()}`;
-    const row = add(managed, "form", undefined, "archive-row");
-    add(row, "span", `${agent.username} · ${roleLabels[agent.role]} · ${last}`);
-    add(row, "button", "Rotate key", "secondary");
-    submit(row, () => updateAIInvitation({action: "rotate", username: agent.username}), accountStatus);
+  if (!before) {
+    managed.replaceChildren();
+    history.replaceChildren();
+    if (!agents.length) add(managed, "p", "No managed agents.");
+    if (!invitations.length) add(history, "p", "No invitations.");
+    for (const agent of agents) {
+      const last = agent.last_authenticated === null ? "No key sign-in yet" :
+        `Last key sign-in ${new Date(agent.last_authenticated * 1000).toLocaleString()}`;
+      const row = add(managed, "form", undefined, "archive-row");
+      add(row, "span", `${agent.username} · ${roleLabels[agent.role]} · ${last}`);
+      add(row, "button", "Rotate key", "secondary");
+      submit(row, () => updateAIInvitation({action: "rotate", username: agent.username}), accountStatus);
+    }
   }
   for (const invitation of invitations) {
     const row = add(history, "div", undefined, "archive-row");
@@ -935,6 +946,8 @@ async function showAIInvitations() {
       submit(form, () => updateAIInvitation({action, invite_id: invitation.invite_id}), accountStatus);
     }
   }
+  aiInvitationCursor = next_before;
+  olderAIInvitations.hidden = !next_before;
 }
 
 submit(aiInvitationForm, () => updateAIInvitation(Object.fromEntries(new FormData(aiInvitationForm))), accountStatus);
@@ -946,6 +959,17 @@ element("ai-registration-panel").addEventListener("toggle", event => {
 });
 element("refresh-ai-invitations").addEventListener("click", () => {
   showAIInvitations().catch(error => { accountStatus.textContent = error.message; });
+});
+olderAIInvitations.addEventListener("click", async () => {
+  if (!aiInvitationCursor || olderAIInvitations.disabled) return;
+  olderAIInvitations.disabled = true;
+  try {
+    await showAIInvitations(aiInvitationCursor);
+  } catch (error) {
+    accountStatus.textContent = error.message;
+  } finally {
+    olderAIInvitations.disabled = false;
+  }
 });
 
 element("copy-ai-invitation").addEventListener("click", async () => {

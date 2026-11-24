@@ -222,6 +222,7 @@ function renderGoal(goal, available, manager) {
     documentCommentForm.elements.body.focus();
   });
   if (manager) {
+    add(card, "a", "Set agent goal").href = `/agent-goals?research_goal=${goal.id}`;
     const form = goalForm(card, "Set priority", fields => ({
       action: "rank", goal_id: goal.id, revision: goal.revision,
       priority: Number(fields.priority.value), selected: fields.selected.checked,

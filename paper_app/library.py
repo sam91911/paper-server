@@ -100,7 +100,7 @@ def connect(path):
 
 
 def initialize(path):
-    from . import ai_accounts, human_keys, reviews
+    from . import agent_goals, ai_accounts, human_keys, reviews
 
     with connect(path) as db:
         if isinstance(path, storage.PostgreSQL):
@@ -134,7 +134,7 @@ def initialize(path):
             )
             db.execute("DROP TABLE old_metrics")
         db.execute("CREATE INDEX IF NOT EXISTS metrics_paper_cursor ON metrics(paper_id,cursor_id)")
-        for statement in (*findings.SCHEMA, *goals.SCHEMA, *metrics.SCHEMA):
+        for statement in (*findings.SCHEMA, *goals.SCHEMA, *metrics.SCHEMA, *agent_goals.SCHEMA):
             db.execute(statement)
         for table, name, definition in (
             ("metric_corrections", "removed", metrics.REMOVED_COLUMN),

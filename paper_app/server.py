@@ -19,7 +19,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
-from . import account_routes, accounts, ai_accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tools_catalog
+from . import account_routes, accounts, agent_goals, ai_accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
 WEB_ROOT = Path(__file__).resolve().with_name("web")
@@ -29,6 +29,8 @@ ASSETS = {
     "/papers": PAGE,
     "/account": PAGE,
     "/documents": PAGE,
+    "/agent-goals": ("agent-goals.html", "text/html; charset=utf-8"),
+    "/assets/agent-goals.js": ("agent-goals.js", "text/javascript; charset=utf-8"),
     "/skills": ("skills.html", "text/html; charset=utf-8"),
     "/assets/skills.js": ("skills.js", "text/javascript; charset=utf-8"),
     "/experiments": ("experiments.html", "text/html; charset=utf-8"),
@@ -213,7 +215,9 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/api/openapi.json":
             self.send_json(200, openapi.document(self.server.server_port, getattr(self.server, "public_url", None)))
         elif route == "/api/ai/invitations":
-            self.read_ai_invitations()
+            self.read_ai_invitations(url)
+        elif route == "/api/agent-goals":
+            self.read_agent_goals(url)
         elif route in ("/api/reviews", "/api/review-agents"):
             self.read_reviews(url)
         elif route == "/api/skills" or route.startswith("/api/skills/"):
@@ -434,16 +438,40 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_json(200, {"status": "ok"})
 
-    def read_ai_invitations(self):
+    def read_agent_goals(self, url):
         try:
+            params = parse_qs(url.query, keep_blank_values=True)
+            goal_id = skills.query_id(params["id"][0]) if "id" in params else None
+            before = skills.query_id(params["before"][0]) if "before" in params else None
             with library.connect(self.server.database) as db:
                 storage.begin(db)
-                result = ai_accounts.dashboard(db, self.require_human(db))
+                result = agent_goals.read(db, self.require_account(db), goal_id=goal_id, before=before)
+            self.send_json(200, result)
+        except accounts.SignInRequired:
+            self.send_json(401, {"error": "Sign in to continue."})
+        except LookupError:
+            self.send_json(404, {"error": "Agent goal unavailable."})
+        except ValueError as error:
+            self.send_json(400, {"error": str(error)})
+        except storage.ERRORS as error:
+            LOG.error("Agent goal read failed (%s)", type(error).__name__)
+            self.send_json(500, {"error": "Could not read agent goals."})
+
+    def read_ai_invitations(self, url):
+        try:
+            before = parse_qs(url.query, keep_blank_values=True).get("before", [None])[0]
+            with library.connect(self.server.database) as db:
+                storage.begin(db)
+                result = ai_accounts.dashboard(db, self.require_human(db), before)
             self.send_json(200, result)
         except accounts.SignInRequired:
             self.send_json(401, {"error": "Sign in to continue."})
         except sharing.AccessDenied:
             self.send_json(403, {"error": "A trusted human account is required."})
+        except LookupError:
+            self.send_json(404, {"error": "AI invitation unavailable."})
+        except ValueError as error:
+            self.send_json(400, {"error": str(error)})
         except storage.ERRORS as error:
             LOG.error("AI invitation read failed (%s)", type(error).__name__)
             self.send_json(500, {"error": "Could not read AI invitations."})
@@ -585,7 +613,9 @@ class Handler(BaseHTTPRequestHandler):
         except RuntimeError as error:
             self.send_json(502, {"error": str(error)})
         except LookupError:
-            errors = {"/api/skills": "Skill unavailable.", "/api/reviews": "Review unavailable."}
+            errors = {"/api/skills": "Skill unavailable.", "/api/reviews": "Review unavailable.",
+                      "/api/agent-goals": "Agent goal unavailable.", "/api/ai/invitations": "AI invitation or account unavailable.",
+                      "/api/human-key/revoke": "Sign-in key unavailable."}
             self.send_json(404, {"error": errors.get(self.path, "Unknown route")})
 
     def upload_research_file(self):
@@ -663,6 +693,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(500, {"error": "Could not save the local PDF import"})
 
     def update(self, db, data):
+        if self.path == "/api/agent-goals":
+            return agent_goals.update(db, self.require_account(db), data)
         if self.path == "/api/ai/invitations":
             invite = ai_accounts.manage_invite(db, self.require_human(db), data)
             if "registration_path" not in invite:

@@ -9,6 +9,7 @@ from . import accounts, database as storage, key_auth
 REGISTRATION_PREFIX = "/api/ai/register/"
 INVITE_SECONDS = 900
 ACCESS_SECONDS = 900
+PAGE_SIZE = 100
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS ai_invites (
@@ -67,30 +68,42 @@ def assign_operator(db, username, operator):
                "AND canceled_at IS NULL AND expires>?", (now, agent["id"], owner["id"], now))
 
 
-def dashboard(db, operator):
+def invitation_id(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{32}", value):
+        raise ValueError("Choose an AI invitation.")
+    return value
+
+
+def dashboard(db, operator, before=None):
     now = int(time.time())
-    invitations = [
-        {**dict(row), "mode": "rotate" if row["rotate_id"] else "enroll"}
-        for row in db.execute(
-            f"SELECT invite_id,username,role,rotate_id,created,expires,{STATUS} AS status "
-            "FROM ai_invites WHERE issuer_id=? ORDER BY created DESC,invite_id LIMIT 100", (now, operator["id"]),
-        )
-    ]
+    cursor_clause, values = "", (now, operator["id"])
+    if before is not None:
+        cursor = db.execute("SELECT created,invite_id FROM ai_invites WHERE invite_id=? AND issuer_id=?",
+                            (invitation_id(before), operator["id"])).fetchone()
+        if cursor is None:
+            raise LookupError("AI invitation unavailable.")
+        cursor_clause = "AND (created<? OR (created=? AND invite_id<?))"
+        values += (cursor["created"], cursor["created"], cursor["invite_id"])
+    invitations = [dict(row) for row in db.execute(
+        f"SELECT invite_id,username,role,created,expires,{STATUS} AS status,"
+        "CASE WHEN rotate_id IS NULL THEN 'enroll' ELSE 'rotate' END AS mode "
+        f"FROM ai_invites WHERE issuer_id=? {cursor_clause} ORDER BY created DESC,invite_id DESC LIMIT ?",
+        (*values, PAGE_SIZE + 1),
+    )]
     agents = [dict(row) for row in db.execute(
         f"SELECT {ACCOUNT_FIELDS}, k.last_authenticated FROM ai_operators o JOIN accounts a ON a.id=o.agent_id "
         "LEFT JOIN ai_public_keys k ON k.account_id=a.id WHERE o.operator_id=? AND a.role='ai' ORDER BY a.username",
         (operator["id"],),
     )]
-    return {"invitations": invitations, "agents": agents}
+    return {"invitations": invitations[:PAGE_SIZE], "agents": agents,
+            "next_before": invitations[PAGE_SIZE - 1]["invite_id"] if len(invitations) > PAGE_SIZE else None}
 
 
 def manage_invite(db, operator, data):
     action = data.get("action", "create")
     now = int(time.time())
     if action in ("cancel", "replace"):
-        invite_id = data.get("invite_id")
-        if not isinstance(invite_id, str) or not re.fullmatch("[a-f0-9]{32}", invite_id):
-            raise ValueError("Choose an AI invitation.")
+        invite_id = invitation_id(data.get("invite_id"))
         row = db.execute(f"SELECT username,role,rotate_id,{STATUS} AS status FROM ai_invites "
                          "WHERE invite_id=? AND issuer_id=?", (now, invite_id, operator["id"])).fetchone()
         if not row:

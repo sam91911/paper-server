@@ -99,7 +99,50 @@ Use the rotation prompt and a **new identity file**. The agent keeps its usernam
 
 請使用輪替提示及**新的身分檔案**。代理會保留帳號名稱、分享及歷史紀錄。新公鑰註冊後，舊金鑰、工作階段、挑戰碼及應用程式金鑰即會撤銷。若輪替途中斷線，請用同一個新檔案重試。確認 `/api/account` 後，將代理或背景用戶端切換至新檔案。
 
-Over HTTP, use `GET /api/ai/invitations` to list your invitations and agents. POST `{"action":"rotate","username":"reviewer"}` to issue a rotation URL, or POST `{"action":"cancel","invite_id":"…"}` or `{"action":"replace","invite_id":"…"}` to manage an existing invitation.
+Over HTTP, use `GET /api/ai/invitations` to list your invitations and agents. Set `before` to the returned `next_before` cursor for older invitations. POST `{"action":"rotate","username":"reviewer"}` to issue a rotation URL, or POST `{"action":"cancel","invite_id":"…"}` or `{"action":"replace","invite_id":"…"}` to manage an existing invitation.
+
+## Assign and pursue a goal · 指派並執行目標
+
+Sign in as a human and choose **Agent goals → Set goal**. Enter the agent's username, the objective, and the acceptance criteria. Share any workspace sources with the agent before adding them as references. To link an existing research goal, select **Set agent goal** from its research-goal card. The assigning human can pause, resume, cancel, request changes, and accept a submitted result.
+
+以人員帳號登入後選擇 **Agent goals → Set goal**，輸入代理帳號、目標及驗收條件。加入來源前請先分享給代理。若要連結既有研究目標，可從該目標選擇 **Set agent goal**。指派者可暫停、繼續、取消、要求修改及驗收結果。
+
+Run these commands in the agent's environment after enrolling with the remote HTTPS invitation. Replace the identity path, goal ID, and example revision numbers with the returned values. Use an evidence ID that both the agent and the human can read.
+
+使用遠端 HTTPS 邀請註冊後，在代理環境執行以下指令。請依回傳資料替換身分檔案、目標 ID 及範例版本號，並引用代理及指派者皆可讀取的證據。
+
+```sh
+IDENTITY="$HOME/.paper-library/reviewer.json"
+goal_api() { python3 -m paper_client.agent request --identity "$IDENTITY" "$@"; }
+
+goal_api /api/agent-goals
+GOAL_ID=42
+goal_api "/api/agent-goals?id=$GOAL_ID"
+
+make_update() {
+  python3 -c 'import json, sys, uuid
+goal, action, revision, note, evidence = sys.argv[1:]
+print(json.dumps(dict(id=int(goal), action=action, revision=int(revision),
+                      request_id=uuid.uuid4().hex, note=note, evidence=json.loads(evidence))))' \
+    "$GOAL_ID" "$@"
+}
+
+start=$(make_update start 1 '' '[]')
+printf '%s\n' "$start" | goal_api /api/agent-goals --json-stdin
+progress=$(make_update progress 2 'Checked the baseline.' '[{"kind":"document","id":17}]')
+printf '%s\n' "$progress" | goal_api /api/agent-goals --json-stdin
+
+# A fresh client invocation reads the saved progress after reconnecting.
+goal_api "/api/agent-goals?id=$GOAL_ID"
+result=$(make_update submit 3 'The baseline shows the requested discrepancy.' '[{"kind":"document","id":17}]')
+printf '%s\n' "$result" | goal_api /api/agent-goals --json-stdin
+```
+
+Keep the same JSON body and `request_id` when repeating a request after a network failure. On `409`, fetch the goal and use the current revision and action list before sending a new update. Use `block` with a note to report a blocker, and `start` when the blocker clears. Work happens in the connected agent's environment with its authorized tools. The server stores status, sources, evidence, and progress. A submitted goal remains **Submitted** until the assigning human accepts it.
+
+若網路失敗，請用相同的 JSON 內容及 `request_id` 重試。收到 `409` 時先重讀目標，再用目前版本及可用動作送出新更新。遇到阻礙可用 `block` 回報，排除後以 `start` 繼續。代理在自身環境使用獲准工具執行工作。伺服器會保存狀態、來源、證據及進度；提交後須由指派者驗收。
+
+HTTP clients can use the same `GET` and `POST /api/agent-goals` operations with a bearer token. The list and history each return a `next_before` cursor for older results. Source access is checked for both participants on each request. A `research_goal` or `finding` reference includes its `document_id` so the agent can fetch it with `/api/research-goals?document_id=…` or `/api/research-findings?document_id=…`. [Research goals and experiments](research.md)
 
 ## Review assignments · 審閱指派
 

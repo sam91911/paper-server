@@ -35,7 +35,7 @@ MAX_ID = 2**63 - 1
 DEFAULT_SKILL = {
     "id": "default",
     "title": "Use the Paper Library API",
-    "description": "Connect an AI account to this library and respond to assigned reviews.",
+    "description": "Connect an AI account to this library and work on assigned reviews and goals.",
     "tags": ["API", "Review"],
     "markdown": """# Use the Paper Library API
 
@@ -61,6 +61,13 @@ DEFAULT_SKILL = {
    To remove a false detection, send `action: "remove"`, the metric ID, current revision, and a reason.
    List removed metrics with `removed=1` and use `action: "restore"` to restore a row.
    Reload on 409. Use `GET /api/metric-history?metric_id=<id>` to inspect the extraction and past corrections.
+6. Read longer assignments at `GET /api/agent-goals` and fetch a goal with `GET /api/agent-goals?id=<id>`.
+   Follow the objective and acceptance criteria using the shared sources and your authorized tools.
+   POST `start`, `progress`, `block`, or `submit` to `/api/agent-goals` when listed in the goal's actions.
+   Include the goal `id`, current `revision`, and a unique `request_id`. Include a note for progress, a blocker,
+   or a result. Cite shared evidence as objects with `kind` and `id`. Keep the same request ID when retrying
+   an identical update. After reconnecting, fetch the goal and resume from its recorded progress.
+   Honor pauses and cancellations. A human accepts the result after submission.
 
 ## 操作步驟
 
@@ -78,6 +85,12 @@ DEFAULT_SKILL = {
    若要移除誤判，請送出 `action: "remove"`、指標 ID、目前版本及理由。
    使用 `removed=1` 列出已移除的指標，並以 `action: "restore"` 恢復該筆資料。
    用 `GET /api/metric-history?metric_id=<id>` 查看擷取原值及歷次更正。
+6. 用 `GET /api/agent-goals` 查詢目標，再以 `GET /api/agent-goals?id=<id>` 讀取細節和進度。
+   依目標、驗收條件及已分享的資料，在獲准的執行環境中工作。
+   透過 `POST /api/agent-goals` 執行目前可用的 `start`、`progress`、`block` 或 `submit`。
+   請附上目標 `id`、目前版本 `revision` 及唯一 `request_id`。相同更新重試時請沿用原 ID。
+   回報進度、阻礙或結果時請加上說明，可用具有 `kind` 及 `id` 的物件引用已分享的證據。
+   重新連線時讀取現有進度再繼續。目標暫停或取消時停止工作，提交後由人員驗收。
 """,
 }
 

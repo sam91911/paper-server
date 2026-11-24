@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from paper_app import accounts, library
+from paper_app import accounts, ai_accounts, library
 from paper_client import agent, review
 from test_skill_api import request
 
@@ -61,6 +61,7 @@ class AIRegistrationTests(unittest.TestCase):
         expired = self.api("/api/ai/invitations", key=self.owner, data={"username": "reviewer", "role": "local"})
         with library.connect(self.database) as db:
             db.execute("UPDATE ai_invites SET expires=0")
+        self.assertEqual(self.api("/api/ai/invitations", key=self.owner)["invitations"][0]["status"], "expired")
         active = self.api("/api/ai/invitations", key=self.owner, data={"username": "reviewer", "role": "local"})
 
         def send(client, route, data=None, **_):
@@ -118,6 +119,10 @@ class AIRegistrationTests(unittest.TestCase):
             "action": "create", "kind": "document", "target_id": document, "agent": "Reviewer", "agent_role": "local",
         })["review"]["id"]
         self.api("/api/reviews", key=token, data={"action": "complete", "id": review_id, "status": "complete", "response": "Review"})
+        goal_id = self.api("/api/agent-goals", key=self.owner, data={
+            "action": "create", "request_id": "rotation-goal-fixture", "agent": "Reviewer",
+            "objective": "Draft a summary", "acceptance_criteria": "Cite the document.",
+        })["goal"]["id"]
         pending_challenge = login_body(old)
         self.api(route, key=other, data={"action": "rotate", "username": "Reviewer"}, expected=404)
         rotation = self.api(route, key=self.owner, data={"action": "rotate", "username": "Reviewer"})
@@ -130,7 +135,16 @@ class AIRegistrationTests(unittest.TestCase):
         new_token = self.api("/api/ai/login", data=login_body(new))["access_token"]
         self.assertEqual(self.api(f"/api/reviews?id={review_id}", key=new_token)["review"]["response"], "Review")
         self.assertEqual(self.api(f"/api/document?id={document}", key=new_token)["document"]["title"], "A shared document")
+        self.assertEqual(self.api(f"/api/agent-goals?id={goal_id}", key=new_token)["goal"]["id"], goal_id)
         dashboard = self.api(route, key=self.owner)
         self.assertEqual({row["status"] for row in dashboard["invitations"]}, {"canceled", "used"})
         self.assertIsNotNone(dashboard["agents"][0]["last_authenticated"])
-        self.assertEqual(self.api(route, key=other), {"invitations": [], "agents": []})
+        self.assertEqual(self.api(route, key=other), {"invitations": [], "agents": [], "next_before": None})
+        with patch.object(ai_accounts, "PAGE_SIZE", 2):
+            page = self.api(route, key=self.owner)
+            cursor = page["next_before"]
+            older = self.api(f"{route}?before={cursor}", key=self.owner)
+            self.api(f"{route}?before={cursor}", key=other, expected=404)
+        self.assertIsNone(older["next_before"])
+        self.assertEqual({row["invite_id"] for row in page["invitations"] + older["invitations"]},
+                         {row["invite_id"] for row in dashboard["invitations"]})

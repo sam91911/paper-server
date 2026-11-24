@@ -83,6 +83,22 @@ class PostgreSQLTests(unittest.TestCase):
         signed = {"challenge": login["challenge"], "signature": agent.encode(private_key.sign(login["message"].encode()))}
         self.assertEqual(self.api("/api/human-key/login", data=signed)["account"], account)
 
+    def test_agent_goal_updates_and_replay(self):
+        library.initialize(self.target)
+        with library.connect(self.target) as db:
+            human = accounts.create_account(db, "owner", "sample password", "user")
+            worker = accounts.create_account(db, "worker", "sample password", "local")
+            owner = accounts.create_key(db, human, "test")
+            client = accounts.create_key(db, worker, "test")
+        route = "/api/agent-goals"
+        created = self.api(route, key=owner, data={"action": "create", "agent": "worker",
+                           "objective": "Inspect a result", "acceptance_criteria": "Explain the issue",
+                           "request_id": uuid4().hex})["goal"]
+        payload = {"action": "start", "id": created["id"], "revision": created["revision"], "request_id": uuid4().hex}
+        started = self.api(route, key=client, data=payload)
+        self.assertEqual(self.api(route, key=client, data=payload), started)
+        self.assertEqual(self.api(route, key=client)["goals"][0]["status"], "in_progress")
+
     def test_fresh_library_api_and_concurrent_revision_control(self):
         library.initialize(self.target)
         library.initialize(self.target)
