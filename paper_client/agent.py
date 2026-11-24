@@ -6,6 +6,7 @@ import getpass
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -19,6 +20,9 @@ from .review import LibraryClient, LibraryError, PDF_LIMIT, library_origin
 
 USERNAME = r"[A-Za-z0-9][A-Za-z0-9_.-]{1,31}"
 REGISTRATION_PATH = re.compile(r"/api/ai/register/[A-Za-z0-9_-]{43}")
+PAPER_AUDIENCES = ("owner", "users", "local", "all", "ai")
+ARTIFACT_LIMIT = 100 * 1024 * 1024
+ARTIFACT_KINDS = ("code", "data", "environment", "equipment", "tool_record")
 
 
 def encode(value):
@@ -65,24 +69,72 @@ class AgentClient(LibraryClient):
         self.authorize()
         return super().request(route, data, limit=limit)
 
-    def upload_pdf(self, filename, payload, recipients):
+    def upload_pdf(self, filename, payload, recipients, *, audience="owner"):
         self.authorize()
         return json.loads(self._send("/api/papers", payload, {
             "Content-Type": "application/pdf",
             "X-Paper-Filename": quote(filename, safe=""),
-            "X-Paper-Audience": "owner",
+            "X-Paper-Audience": audience,
             "X-Paper-Recipients": quote(json.dumps(recipients), safe=""),
         }))
 
+    def upload_artifact(self, metadata, payload):
+        self.authorize()
+        return json.loads(self._send("/api/research-upload", payload, {
+            "Content-Type": "application/octet-stream",
+            "X-Research-Metadata": quote(json.dumps(metadata), safe=""),
+        }))
 
-def import_paper(client, url, filename, recipients):
+
+def import_paper(client, url, filename, recipients, *, audience="owner"):
+    if audience not in PAPER_AUDIENCES:
+        raise ValueError("Choose a valid paper audience.")
     if len(recipients) > 50 or any(not re.fullmatch(USERNAME, name) for name in recipients):
         raise ValueError("Provide up to 50 valid recipient usernames.")
     if filename and (not filename.lower().endswith(".pdf") or "/" in filename or "\\" in filename
                      or any(ord(char) < 32 for char in filename) or len(filename.encode()) > 240):
         raise ValueError("Use a .pdf filename without directory separators, up to 240 bytes.")
     source_name, payload = fetch_pdf(url, PDF_LIMIT)
-    return client.upload_pdf(filename or source_name, payload, recipients)
+    return client.upload_pdf(filename or source_name, payload, recipients, audience=audience)
+
+
+def read_artifact(stream):
+    payload = stream.read(ARTIFACT_LIMIT + 1)
+    if len(payload) > ARTIFACT_LIMIT:
+        raise ValueError("Choose an artifact of up to 100 MiB.")
+    return payload
+
+
+def upload_artifact(client, args):
+    metadata = {"experiment_id": args.experiment_id, "run_id": args.run_id,
+                "title": args.title, "description": args.description, "audience": args.audience}
+    if (args.item_id is None) != (args.item_revision is None):
+        raise ValueError("Provide both the item ID and item revision when uploading a new version.")
+    if args.item_id is not None:
+        metadata.update(id=args.item_id, revision=args.item_revision)
+    if args.repository is not None:
+        if args.kind not in (None, "code"):
+            raise ValueError("A Git snapshot is a code artifact.")
+        git = ["git", "-C", str(args.repository.expanduser())]
+        try:
+            commit = subprocess.check_output(
+                [*git, "rev-parse", "--verify", "--end-of-options", f"{args.commit}^{{commit}}"],
+                text=True, timeout=15, stderr=subprocess.DEVNULL,
+            ).strip()
+            with tempfile.TemporaryFile() as stream:
+                subprocess.run([*git, "archive", "--format=zip", commit], stdout=stream,
+                               stderr=subprocess.DEVNULL, check=True, timeout=120)
+                stream.seek(0)
+                payload = read_artifact(stream)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            raise ValueError("Could not archive the selected local Git commit.") from error
+        metadata.update(kind="code", filename=f"{commit[:12]}.zip",
+                        description=f"Git commit {commit}.\n{args.description}".rstrip())
+    else:
+        with args.file.expanduser().open("rb") as stream:
+            payload = read_artifact(stream)
+        metadata.update(kind=args.kind or "data", filename=args.file.name)
+    return client.upload_artifact(metadata, payload)
 
 
 def send_heartbeats(client, *, once=False):
@@ -153,7 +205,22 @@ def main():
     paper.add_argument("--identity", type=Path, required=True)
     paper.add_argument("--url", required=True, help="Direct public HTTPS PDF URL")
     paper.add_argument("--filename", help="Filename to use in the library")
+    paper.add_argument("--audience", choices=PAPER_AUDIENCES, default="owner", help="Paper audience (default: owner)")
     paper.add_argument("--recipient", action="append", default=[], help="Share with this username (repeatable)")
+    artifact = commands.add_parser("upload-artifact", help="Submit a local file or a committed Git snapshot")
+    artifact.add_argument("--identity", type=Path, required=True)
+    artifact.add_argument("--experiment-id", type=int, required=True)
+    artifact.add_argument("--run-id", type=int)
+    artifact.add_argument("--title", required=True)
+    artifact.add_argument("--description", default="")
+    artifact.add_argument("--kind", choices=ARTIFACT_KINDS)
+    artifact.add_argument("--audience", choices=PAPER_AUDIENCES, default="owner")
+    artifact.add_argument("--item-id", type=int)
+    artifact.add_argument("--item-revision", type=int)
+    source = artifact.add_mutually_exclusive_group(required=True)
+    source.add_argument("--file", type=Path)
+    source.add_argument("--repository", type=Path)
+    artifact.add_argument("--commit", default="HEAD", help="Git commit or ref for --repository (default: HEAD)")
     heartbeat = commands.add_parser("heartbeat", help="Report presence to your enrolled library")
     heartbeat.add_argument("--identity", type=Path, required=True)
     heartbeat.add_argument("--once", action="store_true", help="Send one heartbeat and exit")
@@ -165,7 +232,10 @@ def main():
             print(f"Registered {account['username']} ({account['role']}).")
         elif args.command == "import-paper":
             client = AgentClient.from_identity(args.identity.expanduser())
-            print(json.dumps(import_paper(client, args.url, args.filename, args.recipient)))
+            print(json.dumps(import_paper(client, args.url, args.filename, args.recipient, audience=args.audience)))
+        elif args.command == "upload-artifact":
+            client = AgentClient.from_identity(args.identity.expanduser())
+            print(json.dumps(upload_artifact(client, args)))
         elif args.command == "heartbeat":
             client = AgentClient.from_identity(args.identity.expanduser())
             try:

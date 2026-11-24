@@ -1,7 +1,15 @@
+import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from urllib.parse import quote
+from unittest.mock import Mock
+
 from paper_app import accounts, ai_accounts, experiments, library, sharing
+from paper_client import agent
+from test_skill_api import request
 
 
 class ExperimentTests(unittest.TestCase):
@@ -51,6 +59,59 @@ class ExperimentTests(unittest.TestCase):
                 experiments.save_item(db, owner, {'experiment_id': second, 'run_id': run, 'kind': 'data', 'title': 'Data'})
             with self.assertRaises(ValueError):
                 experiments.save_item(db, owner, {'experiment_id': first, 'kind': 'data', 'title': 'Data', 'filename': '../x'}, b'x')
+
+    def test_upload_git_snapshot_and_browse_committed_files(self):
+        repository = self.path.with_name("repo")
+        repository.mkdir()
+        git = ["git", "-C", str(repository)]
+        subprocess.run([*git, "init", "-q"], check=True)
+        (repository / "src").mkdir()
+        source = repository / "src" / "model.py"
+        source.write_text("print('committed model')\n")
+        subprocess.run([*git, "add", "src"], check=True)
+        subprocess.run([*git, "-c", "user.name=Test", "-c", "user.email=test@example.org",
+                        "-c", "commit.gpgsign=false", "commit", "-qm", "Add test model"], check=True)
+        commit = subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip()
+        source.write_text("uncommitted change\n")
+        (repository / "local.txt").write_text("untracked file")
+        with library.connect(self.path) as db:
+            owner, other = self.users["cloud"], self.users["human"]
+            key = accounts.create_key(db, owner["id"], "experiment owner")
+            other_key = accounts.create_key(db, other["id"], "other reader")
+            experiment = experiments.save_experiment(db, owner, {"title": "Test experiment"})
+            run = experiments.save_run(db, owner, {"experiment_id": experiment, "title": "Run"})
+
+        def submit(metadata, payload):
+            status, response = request(self.path, "/api/research-upload", key=key, binary=payload, headers={
+                "Content-Type": "application/octet-stream",
+                "X-Research-Metadata": quote(json.dumps(metadata), safe=""),
+            })
+            self.assertEqual(status, 200, response)
+            return response
+
+        client = Mock()
+        client.upload_artifact.side_effect = submit
+        args = SimpleNamespace(experiment_id=experiment, run_id=run, title="Source", description="Reproduction source",
+                               audience="owner", repository=repository, commit="HEAD", kind=None, file=None,
+                               item_id=None, item_revision=None)
+        snapshot = agent.upload_artifact(client, args)
+        route = f"/research-versions/{snapshot['version_id']}"
+        self.assertEqual(request(self.path, route + "/entries", key=key), (200, {
+            "commit": commit, "files": [{"path": "src/model.py", "size": len(b"print('committed model')\n")}],
+        }))
+        self.assertEqual(request(self.path, route + "/entry?path=src%2Fmodel.py", key=key),
+                         (200, b"print('committed model')\n"))
+        self.assertEqual(request(self.path, route + "/entry?path=local.txt", key=key)[0], 404)
+        self.assertEqual(request(self.path, route + "/entries", key=other_key)[0], 404)
+        self.assertEqual(request(self.path, route + "/entry?path=src%2Fmodel.py", key=other_key)[0], 404)
+
+        results = repository / "results.csv"
+        results.write_text("score\n1.0\n")
+        output = agent.upload_artifact(client, SimpleNamespace(
+            **{**vars(args), "repository": None, "file": results, "title": "Results"},
+        ))
+        self.assertEqual(request(self.path, f"/research-versions/{output['version_id']}/file", key=key),
+                         (200, b"score\n1.0\n"))
 
     def test_operator_manages_agent_owned_experiment_runs_and_artifacts(self):
         with library.connect(self.path) as db:

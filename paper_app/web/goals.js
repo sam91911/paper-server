@@ -8,6 +8,8 @@ let goalDocumentId = null;
 let goalLoadSequence = 0;
 let goalLoading = false;
 
+const resetGoalAccess = goalAccessFields(element("goal-proposal-access"));
+
 function selectGoalDocument(item) {
   goalDocumentId = item?.id ?? null;
   goalLoadSequence++;
@@ -17,6 +19,7 @@ function selectGoalDocument(item) {
   goalList.replaceChildren();
   element("goal-evidence-options").replaceChildren();
   goalProposal.reset();
+  resetGoalAccess();
   goalStatus.textContent = "";
 }
 
@@ -50,6 +53,30 @@ function goalForm(parent, label, handler) {
     if (id === goalDocumentId) await loadGoalPanel(String(response.id));
   }, goalStatus);
   return form;
+}
+
+function goalAccessFields(parent, goal) {
+  const audience = goalField(parent, "audience", "Goal access", "select");
+  add(audience, "option", "Same access as document").value = "inherit";
+  const current = goal?.audience ?? "inherit";
+  fillAudiences(audience, current === "inherit" ? "owner" : current);
+  audience.value = current;
+  const sharingFields = add(parent, "div");
+  const recipients = goalField(sharingFields, "recipients", "Share with usernames", "input",
+    (goal?.recipients || []).join(", "));
+  recipients.required = false;
+  recipients.maxLength = 1700;
+  recipients.autocomplete = "off";
+  enhanceRecipients(recipients);
+  const sync = () => { sharingFields.hidden = audience.value === "inherit"; };
+  audience.addEventListener("change", sync);
+  sync();
+  return sync;
+}
+
+function goalAccessValues(fields) {
+  const audience = fields.audience.value;
+  return {audience, recipients: audience === "inherit" ? [] : recipientNames(fields.recipients.value)};
 }
 
 function findingOption(row) {
@@ -221,6 +248,13 @@ function renderGoal(goal, available, manager) {
     setDocumentReply(null, null, goal.id);
     documentCommentForm.elements.body.focus();
   });
+  if (goal.can_manage) {
+    const form = goalForm(card, "Change goal access", fields => ({
+      action: "set_access", goal_id: goal.id, revision: goal.revision, ...goalAccessValues(fields),
+    }));
+    goalAccessFields(form, goal);
+    add(form, "button", "Save access");
+  }
   if (manager) {
     add(card, "a", "Set agent goal").href = `/agent-goals?research_goal=${goal.id}`;
     const form = goalForm(card, "Set priority", fields => ({
@@ -309,10 +343,11 @@ submit(goalProposal, async () => {
   const evidence = [...goalProposal.querySelectorAll("input[name=evidence]:checked")].map(input => Number(input.value));
   const response = await api("research-goals", {action: "propose", document_id: id,
     question: fields.question.value, rationale: fields.rationale.value, uncertainty: fields.uncertainty.value,
-    evidence_ids: evidence,
+    evidence_ids: evidence, ...goalAccessValues(fields),
   });
   if (id !== goalDocumentId) return;
   goalProposal.reset();
+  resetGoalAccess();
   element("goal-proposal").open = false;
   await loadGoalPanel(String(response.id));
 }, goalStatus);

@@ -238,16 +238,17 @@ def identity(username):
     return username
 
 
-def suggest_usernames(db, query):
+def suggest_usernames(db, query, *, ai_only=False):
     query = query.strip()
     if not 2 <= len(query) <= 32 or any(ord(char) < 32 for char in query):
         return []
     pattern = query.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
     return [dict(row) for row in db.execute(
         "SELECT username,display_name FROM accounts "
-        "WHERE disabled_at IS NULL AND (LOWER(username) LIKE LOWER(?) ESCAPE '!' OR LOWER(display_name) LIKE LOWER(?) ESCAPE '!') "
+        "WHERE disabled_at IS NULL AND (?=0 OR role='ai') "
+        "AND (LOWER(username) LIKE LOWER(?) ESCAPE '!' OR LOWER(display_name) LIKE LOWER(?) ESCAPE '!') "
         "ORDER BY (LOWER(username) LIKE LOWER(?) ESCAPE '!') DESC,username LIMIT 8",
-        (pattern, pattern, pattern),
+        (int(ai_only), pattern, pattern, pattern),
     )]
 
 

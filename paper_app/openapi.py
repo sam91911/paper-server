@@ -82,6 +82,7 @@ PUBLIC_KEY = {**AI_NONCE, "description": "32-byte Ed25519 public key in unpadded
 BINARY = schema("string", format="binary")
 AUDIENCE = enum(*AUDIENCES)
 RECIPIENTS = array(STRING)
+GOAL_ACCESS_FIELDS = {"audience": enum("inherit", *AUDIENCES), "recipients": RECIPIENTS}
 ID_LIST = array(ID)
 AGENT_GOAL_REQUEST_ID = schema("string", pattern="^[A-Za-z0-9_-]{16,64}$")
 AGENT_GOAL_STATUS = enum(*agent_goals.STATES)
@@ -156,6 +157,7 @@ SCHEMAS = {
     "Goal": obj({
         "id": ID, "document_id": ID, "question": STRING, "rationale": STRING, "uncertainty": STRING,
         "evidence_ids": ID_LIST, "revision": ID, "briefs": array(obj({"id": ID, "markdown": STRING})),
+        **GOAL_ACCESS_FIELDS, "can_manage": BOOLEAN,
     }, ("id", "document_id", "question", "evidence_ids", "briefs")),
     "Experiment": obj(EXPERIMENT_FIELDS, ("id", "title", "revision")),
     "Run": obj(RUN_FIELDS, ("id", "title", "revision")),
@@ -175,7 +177,7 @@ REVIEW_KIND = enum("paper", "document", "thread")
 AI_ROLE = enum("local", "cloud")
 REVIEW = obj({
     "id": ID, "kind": REVIEW_KIND, "target_id": ID, "position": nullable(ID), "post": BOOLEAN,
-    "status": enum("pending", "complete", "failed"), "response": STRING, "comment_id": nullable(ID),
+    "status": enum("pending", "complete", "failed", "withdrawn"), "response": STRING, "comment_id": nullable(ID),
     "agent": STRING, "agent_role": AI_ROLE,
     "thread": array(obj({"id": ID, "body": STRING}, ("id", "body"))),
 }, ("id", "kind", "target_id", "position", "post", "status", "response", "comment_id", "agent", "agent_role"))
@@ -421,14 +423,17 @@ PATHS = {
         "get": operation("Read visible goals and briefs",
             obj({"goals": array(ref("Goal")), "can_manage": BOOLEAN, "findings": array(obj({"id": ID, "statement": STRING}))},
                 ("goals", "can_manage", "findings")), params=(DOCUMENT_ID,)),
-        "post": operation("Propose a goal or advance its workflow", acknowledgement("id", id=ID, revision=ID,
+        "post": operation("Propose a goal, change its access, or advance its workflow", acknowledgement("id", id=ID, revision=ID,
                                                                                    brief_id=ID, experiment_id=ID, decision_id=ID),
-            description="Rank, confirm, decide, and revise_design require the human workspace owner.",
+            description="Rank, confirm, decide, and revise_design require the human workspace owner. "
+                        "The goal author or their operator can use set_access. Readers also need the document and evidence.",
             body={"oneOf": [
-                obj({"action": enum(action), "document_id": ID, **fields},
+                obj({"action": enum(action), "document_id": ID, **fields,
+                     **(GOAL_ACCESS_FIELDS if action in ("propose", "set_access") else {})},
                     ("action", "document_id", *fields))
                 for action, fields in (
                     ("propose", {"question": STRING, "rationale": STRING, "uncertainty": STRING, "evidence_ids": ID_LIST}),
+                    ("set_access", {"goal_id": ID, "revision": ID}),
                     ("draft", {"goal_id": ID, **BRIEF_FIELDS}),
                     ("rank", {"goal_id": ID, "revision": ID, "selected": BOOLEAN, "priority": ID}),
                     ("confirm", {"goal_id": ID, "revision": ID, "brief_id": ID}),
@@ -455,12 +460,20 @@ PATHS = {
                                      "readers": RECIPIENTS, "editors": RECIPIENTS}, ("id", "kind")))},
     "/api/research-items": {"post": operation("Record an artifact or another version without uploading bytes",
         acknowledgement("id", id=ID), body=ref("ArtifactInput"), description="New versions require id and revision.")},
-    "/api/research-upload": {"post": operation("Upload an artifact or another version", acknowledgement("id", id=ID),
+    "/api/research-upload": {"post": operation("Upload an artifact or another version",
+        acknowledgement("id", "version_id", id=ID, version_id=ID),
         params=(param("X-Research-Metadata", STRING, location="header", required=True,
                       description="Percent-encoded JSON matching ArtifactInput, with filename. New versions require id and revision."),),
         body=BINARY, request_type="application/octet-stream")},
     "/research-versions/{version_id}/file": {"get": operation("Download a visible uploaded artifact version", BINARY,
         params=(param("version_id", ID, location="path", required=True),), response_type="application/octet-stream")},
+    "/research-versions/{version_id}/entries": {"get": operation("List the files in an uploaded ZIP version",
+        obj({"commit": nullable(STRING), "files": array(obj({"path": STRING, "size": COUNT}, ("path", "size")))},
+            ("commit", "files")),
+        params=(param("version_id", ID, location="path", required=True),))},
+    "/research-versions/{version_id}/entry": {"get": operation("Download a file from an uploaded ZIP version", BINARY,
+        params=(param("version_id", ID, location="path", required=True), param("path", STRING, required=True)),
+        response_type="application/octet-stream")},
     "/api/review-agents": {"get": operation("List AI accounts eligible to access the review target",
         obj({"agents": array(obj({"username": STRING, "display_name": STRING, "role": AI_ROLE},
                                  ("username", "display_name", "role")))}, ("agents",)),
@@ -472,14 +485,15 @@ PATHS = {
             params=(param("id", ID, description="Return one request, including thread context for the assigned AI."),
                     param("kind", REVIEW_KIND), param("target_id", ID)),
             description="AI accounts receive up to 30 pending assignments in creation order. Human accounts receive up to 30 of their own requests, newest first. Supply kind and target_id together to filter by source."),
-        "post": operation("Request a review or return an assigned review result",
+        "post": operation("Request or withdraw a review or return an assigned result",
             acknowledgement("review", review=REVIEW), body={"oneOf": [
                 obj({"action": enum("create"), "kind": REVIEW_KIND, "target_id": ID, "position": nullable(ID),
                      "agent": STRING, "agent_role": AI_ROLE, "post": BOOLEAN},
                     ("action", "kind", "target_id", "agent", "agent_role")),
                 obj({"action": enum("complete"), "id": ID, "status": enum("complete", "failed"), "response": STRING},
                     ("action", "id", "status", "response")),
-            ]}),
+                obj({"action": enum("withdraw"), "id": ID}, ("action", "id")),
+            ]}, description="The requester can withdraw a pending review. A withdrawn review is removed from the agent queue and cannot accept a result."),
     },
     "/api/skills/default": {"get": operation("Fetch the built-in guide to using the library API",
         obj({"skill": obj({"id": enum("default"), "title": STRING, "description": STRING, "markdown": STRING,

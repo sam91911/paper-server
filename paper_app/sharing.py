@@ -5,7 +5,7 @@ from . import accounts
 AUDIENCES = ("owner", "users", "local", "all", "ai")
 GRANTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS item_grants (
-    kind TEXT NOT NULL CHECK (kind IN ('paper','document','comment','skill')),
+    kind TEXT NOT NULL CHECK (kind IN ('paper','document','comment','skill','research_goal')),
     item_id INTEGER NOT NULL,
     account_id INTEGER NOT NULL REFERENCES accounts(id),
     PRIMARY KEY (kind,item_id,account_id)
@@ -61,8 +61,8 @@ def access_sql(owner, audience, kind, item_id):
        OR ({audience} = 'users' AND :role = 'user')
        OR ({audience} = 'local' AND :role IN ('user', 'local'))
        OR ({audience} = 'ai' AND :role = 'local')
-       OR EXISTS (SELECT 1 FROM item_grants g WHERE g.kind='{kind}'
-                  AND g.item_id={item_id} AND g.account_id=:viewer))))"""
+       OR EXISTS (SELECT 1 FROM item_grants grant_entry WHERE grant_entry.kind='{kind}'
+                  AND grant_entry.item_id={item_id} AND grant_entry.account_id=:viewer))))"""
 
 
 PAPER_SCOPE = f"""
@@ -78,7 +78,7 @@ PAPER_SCOPE = f"""
 
 def initialize(db):
     grants_sql, = db.execute("SELECT sql FROM sqlite_schema WHERE name='item_grants'").fetchone()
-    if "'skill'" not in grants_sql:
+    if "'research_goal'" not in grants_sql:
         db.execute("ALTER TABLE item_grants RENAME TO old_item_grants")
         db.execute(GRANTS_SCHEMA)
         db.execute("INSERT INTO item_grants SELECT * FROM old_item_grants")
@@ -213,18 +213,16 @@ def save_document(db, account, data):
         raise ValueError("Enter a document title of up to 160 characters.")
     if not isinstance(markdown, str) or len(markdown) > 100_000:
         raise ValueError("Use up to 100,000 characters of Markdown.")
-    audience = validate_audience(data.get("audience", "owner"))
-    values = title.strip(), markdown, audience
     document_id = data.get("document_id")
     if document_id is None:
         document_id = db.execute(
             "INSERT INTO documents(title,markdown,audience,owner_id) VALUES (?,?,?,?) RETURNING id",
-            (*values, account["id"]),
+            (title.strip(), markdown, validate_audience(data.get("audience", "owner")), account["id"]),
         ).fetchone()[0]
     elif type(document_id) is not int:
         raise ValueError("Choose a document.")
     else:
-        existing = db.execute("SELECT owner_id,revision FROM documents WHERE id=?", (document_id,)).fetchone()
+        existing = db.execute("SELECT owner_id,revision,audience FROM documents WHERE id=?", (document_id,)).fetchone()
         if not existing or not is_owner(db, account, existing["owner_id"]):
             raise AccessDenied
         expected = data.get("revision")
@@ -232,7 +230,7 @@ def save_document(db, account, data):
             raise EditConflict("This document changed. Reload it before saving.")
         db.execute(
             "UPDATE documents SET title=?,markdown=?,audience=?,updated=CURRENT_TIMESTAMP,revision=revision+1 "
-            "WHERE id=?", (*values, document_id),
+            "WHERE id=?", (title.strip(), markdown, validate_audience(data.get("audience", existing["audience"])), document_id),
         )
     set_recipients(db, "document", document_id, data.get("recipients"))
     return document_id

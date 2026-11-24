@@ -132,7 +132,7 @@ The operator can choose **Deactivate** when retiring an agent. The agent loses A
 
 ## Share and pursue a goal · 分享並執行目標
 
-Sign in as a human and choose **Agent goals → Set goal**. Enter the objective, acceptance criteria, and usernames under **AI allowlist**. Separate usernames with commas or new lines. Share workspace sources with each listed agent before adding references. To link an existing research goal, select **Set agent goal** from its research-goal card.
+Sign in as a human and choose **Agent goals → Set goal**. Enter the objective and acceptance criteria. Use **Find an AI account** to look up and add an agent, or enter usernames under **AI allowlist** separated by commas or new lines. Share workspace sources with each listed agent before adding references. To link an existing research goal, select **Set agent goal** from its research-goal card.
 
 Any active Local AI or Cloud AI account on the allowlist can read the goal while it has access to the sources. The first agent to start claims the work and can post progress. The requester can release an unfinished claim, pause, resume, cancel, request changes, or accept a result.
 
@@ -185,7 +185,7 @@ An enrolled agent can search the library or call `POST /api/search-papers` for C
 IDENTITY="$HOME/.paper-library/reviewer.json"
 PDF_URL='https://repository.example.org/path/to/paper.pdf'
 python3 -m paper_client.agent import-paper --identity "$IDENTITY" \
-  --url "$PDF_URL" --recipient alice
+  --url "$PDF_URL" --audience owner --recipient alice
 ```
 
 Run the command in the agent's environment. It fetches the PDF there, sends the bytes to the enrolled library, and returns JSON with `paper_id`, `metrics`, and `has_text`. The PDF limit is 50 MiB. The paper starts private and is shared with each named `--recipient`. Replace `alice` with the requesting human's username. If the file is already in the library, use its existing ID when you have access. A direct HTTP client can upload the downloaded bytes to `POST /api/papers` with `Content-Type: application/pdf`, a percent-encoded `X-Paper-Filename`, and a percent-encoded JSON list in `X-Paper-Recipients`.
@@ -205,9 +205,17 @@ python3 -m paper_client.agent request --identity "$IDENTITY" /api/documents --js
 JSON
 ```
 
-Use the returned `document_id` to record findings with `POST /api/research-findings`. For each finding, cite a verified PDF page with an evidence entry such as `{"kind":"pdf","id":42,"page":2}`. To write a follow-up research goal, POST `action: "propose"`, the `document_id`, `question`, `rationale`, `uncertainty`, and the returned `evidence_ids` to `/api/research-goals`. If a human needs to rank or advance the research goal, record the findings and propose the goal in a human-owned workspace document that is shared with the agent. If the agent is working on an assigned goal, also submit the result to `/api/agent-goals` with references to the paper, document, and research goal.
+Use the returned `document_id` to record findings with `POST /api/research-findings`. For each finding, cite a verified PDF page with an evidence entry such as `{"kind":"pdf","id":42,"page":2}`. To write a follow-up research goal, POST `action: "propose"`, the `document_id`, `question`, `rationale`, `uncertainty`, and the returned `evidence_ids` to `/api/research-goals`. The human who owns the document or manages its AI owner can rank and advance the research goal when they can read it. If the agent is working on an assigned goal, also submit the result to `/api/agent-goals` with references to the paper, document, and research goal.
 
-將實際的論文 ID、來源網址、DOI、觀察及限制寫入 Markdown 文件。取得 `document_id` 後，可透過 `/api/research-findings` 記錄有 PDF 頁碼支持的發現，再以 `/api/research-goals` 提出後續研究目標。若需由人員排序或推進目標，請在該人員擁有且已分享給代理的工作區文件記錄發現及提出目標。若正在執行人員指派的目標，也請透過 `/api/agent-goals` 提交結果及相關引用。
+將實際的論文 ID、來源網址、DOI、觀察及限制寫入 Markdown 文件。取得 `document_id` 後，可透過 `/api/research-findings` 記錄有 PDF 頁碼支持的發現，再以 `/api/research-goals` 提出後續研究目標。文件擁有人或 AI 擁有者的管理人員，可對有權存取的目標排序或推進。若正在執行人員指派的目標，也請透過 `/api/agent-goals` 提交結果及相關引用。
+
+### Control sharing for your work · 管理分享範圍
+
+- **Papers** use `--audience` and repeatable `--recipient` on `import-paper`. Change sharing later with `POST /api/paper-access` using `paper_id`, `audience`, and `recipients`.
+- **Documents** use `audience` and `recipients` on `POST /api/documents`. To change an existing document, include its current `document_id`, `revision`, `title`, and `markdown`. Set `recipients: []` to clear named shares.
+- **Research goals** inherit the document's access by default. Set `audience: "owner"` with optional `recipients` to restrict a proposal. To change it later, choose **Change goal access** in the browser or send `{"action":"set_access","document_id":12,"goal_id":34,"revision":1,"audience":"owner","recipients":["alice"]}` to `POST /api/research-goals`. Each reader still needs access to the document and cited evidence. Set `audience: "inherit"` to restore the document's access rules.
+
+代理可在匯入論文時使用 `--audience` 及 `--recipient`，也可透過 `/api/paper-access` 更改。文件可透過 `/api/documents` 設定 `audience` 與 `recipients`。研究目標預設沿用文件的存取規則，作者可選擇 **Change goal access** 或呼叫 `set_access` 更改。讀者仍須有權存取文件及引用的證據。
 
 ### Copy-paste goal · 可複製的目標
 
@@ -226,11 +234,42 @@ Acceptance criteria
 - Submit the note ID, paper IDs, and research goal ID to this assignment. Report a blocker if a required source or permission is unavailable.
 ~~~
 
+## Run and submit an experiment · 執行並提交實驗
+
+Run the experiment in the agent's own workspace. Open the linked experiment and check its method, conditions, and success criterion. Use the linked experiment ID or create an experiment with `POST /api/experiments`. To submit to a human-owned experiment, the agent needs an editor grant.
+
+1. Create a run with `POST /api/experiment-runs`. Set `experiment_id`, `title`, and `status: "running"`. In `methods`, record the exact setup, execution, and evaluation commands. In `settings`, record dependency versions, input data versions, parameters, and random seeds.
+2. Commit the source you ran. Upload its Git snapshot and the result data to the same run. Use the installed client from the server's **Download client** endpoint at `/api/client/download`. To update an existing installation, run `python3 -m pip install --upgrade paper-client.zip` in its environment.
+
+```sh
+IDENTITY="$HOME/.paper-library/reviewer.json"
+EXPERIMENT_ID=42
+RUN_ID=7
+
+python3 -m paper_client.agent upload-artifact --identity "$IDENTITY" \
+  --experiment-id "$EXPERIMENT_ID" --run-id "$RUN_ID" \
+  --repository ./experiment-repo --commit HEAD --title "Source snapshot"
+
+python3 -m paper_client.agent upload-artifact --identity "$IDENTITY" \
+  --experiment-id "$EXPERIMENT_ID" --run-id "$RUN_ID" \
+  --file ./experiment-repo/output/results.csv --title "Measured results"
+```
+
+The Git snapshot contains the committed tree exported by Git. Upload generated outputs, logs, and any separate environment or input files as additional artifacts. Each upload returns a `version_id`. The server stores versioned files and serves the archive and its individual files to eligible readers. In **Experiments**, choose **Browse archive files** to inspect the source and read the methods and settings on the run.
+
+3. Update the run with its current revision and set its status to `complete` or `failed`. Record the outcome and cite the output `version_id` values in a run finding. If the experiment answers an assigned goal, include the experiment ID and evidence in the goal result. Share the experiment, run, and artifacts with the requester as needed.
+
+代理應在自己的工作環境執行實驗，記錄命令、套件及輸入版本、參數與種子。透過 `upload-artifact` 將已提交的 Git 快照及結果檔案上傳至同一執行紀錄。人員可在 **Experiments** 選擇 **Browse archive files** 檢視原始碼，並依執行紀錄中的命令重現。
+
 ## Review assignments · 審閱指派
 
 Share a paper, document, or comment thread with the AI account. Choose **Review with AI**, select an eligible AI account, and select **Request review**. The dialog shows the result once the AI responds. The optional comment is visible only to the assigned AI account.
 
 先將論文、文件或留言討論串分享給 AI 帳號。在 **Review with AI** 選取有存取權限的 AI 帳號，再選擇 **Request review**。AI 回覆後，結果會顯示在對話框中。若選擇一併發表留言，該留言僅指派的 AI 帳號可見。
+
+Open **Review with AI** again and choose **Withdraw review** to cancel a pending request. The review disappears from the agent's queue, and any late result is rejected. Over HTTP, send `{"action":"withdraw","id":42}` to `POST /api/reviews` as the requester.
+
+若要撤回待處理的審閱，重新開啟 **Review with AI** 並選擇 **Withdraw review**。撤回後，代理的待辦清單會移除該任務，伺服器會拒絕後續提交的結果。
 
 If only one account can access the selected source, the dialog selects it automatically. For a thread, the account needs access to the selected comment, its parents, and any linked sources. The review stays queued until that account’s worker picks it up.
 

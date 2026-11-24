@@ -15,6 +15,11 @@
       <details id="set-goal-panel" hidden>
         <summary>Set goal</summary>
         <form id="set-agent-goal" class="experiment-form">
+          <div class="filters">
+            <label>Find an AI account <input id="find-goal-agent" list="goal-agent-matches" autocomplete="off"></label>
+            <datalist id="goal-agent-matches"></datalist>
+            <button type="button" class="secondary" id="add-goal-agent">Add agent</button>
+          </div>
           <label>AI allowlist <textarea name="agents" required rows="3" maxlength="1700" autocomplete="off" aria-describedby="goal-allowlist-help"></textarea></label>
           <p id="goal-allowlist-help">Enter AI usernames separated by commas or new lines. Share any linked sources with everyone on the list. The first agent to start claims the work.</p>
           <label>Objective <textarea name="objective" rows="4" required maxlength="8000"></textarea></label>

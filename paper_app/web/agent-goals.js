@@ -8,6 +8,8 @@ const list = element("agent-goal-list");
 const historyList = element("agent-goal-history");
 const moreGoals = element("more-agent-goals");
 const moreEvents = element("more-agent-goal-events");
+const agentSearch = element("find-goal-agent");
+const agentMatches = element("goal-agent-matches");
 const labels = {
   assigned: "Assigned", in_progress: "In progress", blocked: "Blocked", paused: "Paused",
   submitted: "Submitted", completed: "Completed", canceled: "Canceled",
@@ -17,6 +19,51 @@ const labels = {
 };
 
 let activeGoal, goalCursor, eventCursor, pending, busy;
+let agentSearchTimer;
+
+function agentNames(value) {
+  return value.split(/[\n,]+/).map(name => name.trim()).filter(Boolean);
+}
+
+agentSearch.addEventListener("input", () => {
+  clearTimeout(agentSearchTimer);
+  const query = agentSearch.value.trim();
+  if (query.length < 2) {
+    agentMatches.replaceChildren();
+    return;
+  }
+  agentSearchTimer = setTimeout(async () => {
+    try {
+      const matches = await api(`usernames?role=ai&q=${encodeURIComponent(query)}`);
+      if (agentSearch.value.trim() !== query) return;
+      agentMatches.replaceChildren();
+      for (const match of matches) {
+        const option = add(agentMatches, "option");
+        option.value = match.username;
+        option.label = match.display_name;
+      }
+    } catch {
+      if (agentSearch.value.trim() === query) agentMatches.replaceChildren();
+    }
+  }, 200);
+});
+
+function addSearchedAgent() {
+  const value = agentSearch.value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{1,31}$/.test(value)) return;
+  const allowlist = createForm.elements.agents;
+  const names = agentNames(allowlist.value);
+  if (!names.some(name => name.toLowerCase() === value.toLowerCase())) allowlist.value = [...names, value].join("\n");
+  agentSearch.value = "";
+  agentMatches.replaceChildren();
+}
+
+element("add-goal-agent").addEventListener("click", addSearchedAgent);
+agentSearch.addEventListener("keydown", event => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  addSearchedAgent();
+});
 
 function add(parent, tag, value, className) {
   const node = document.createElement(tag);
@@ -149,7 +196,7 @@ createForm.addEventListener("submit", event => {
   event.preventDefault();
   run(async () => {
     const {agents, objective, acceptance_criteria, sources} = createForm.elements;
-    const usernames = agents.value.split(/[\n,]+/).map(name => name.trim()).filter(Boolean);
+    const usernames = agentNames(agents.value);
     const result = await post({action: "create", agents: usernames, objective: objective.value,
       acceptance_criteria: acceptance_criteria.value, sources: references(sources.value)});
     createForm.reset();

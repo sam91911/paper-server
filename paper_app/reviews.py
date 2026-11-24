@@ -2,8 +2,8 @@
 
 from . import accounts, library, sharing
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS review_requests (
+REVIEW_TABLE = """
+CREATE TABLE IF NOT EXISTS {table} (
     id INTEGER PRIMARY KEY,
     requester_id INTEGER NOT NULL REFERENCES accounts(id),
     agent_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -12,10 +12,12 @@ CREATE TABLE IF NOT EXISTS review_requests (
     target_id INTEGER NOT NULL,
     position INTEGER,
     post INTEGER NOT NULL CHECK (post IN (0,1)),
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','complete','failed')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','complete','failed','withdrawn')),
     response TEXT NOT NULL DEFAULT '',
     comment_id INTEGER REFERENCES comments(id)
 );
+"""
+SCHEMA = REVIEW_TABLE.format(table="review_requests") + """
 CREATE INDEX IF NOT EXISTS reviews_requester ON review_requests(requester_id,kind,target_id,id);
 CREATE INDEX IF NOT EXISTS reviews_agent ON review_requests(agent_id,status,id);
 """
@@ -23,6 +25,21 @@ CREATE INDEX IF NOT EXISTS reviews_agent ON review_requests(agent_id,status,id);
 AI_ROLES = ("local", "cloud")
 KINDS = ("paper", "document", "thread")
 ACCOUNT_FIELDS = f"a.id,a.username,{accounts.ROLE_SQL.format(alias='a')} AS role"
+
+
+def initialize(db):
+    sql, = db.execute("SELECT sql FROM sqlite_schema WHERE name='review_requests'").fetchone()
+    if "'withdrawn'" in sql:
+        return
+    db.execute(REVIEW_TABLE.format(table="new_review_requests"))
+    db.execute(
+        "INSERT INTO new_review_requests SELECT id,requester_id,agent_id,agent_role,kind,target_id,position,post,"
+        "status,response,comment_id FROM review_requests"
+    )
+    db.execute("DROP TABLE review_requests")
+    db.execute("ALTER TABLE new_review_requests RENAME TO review_requests")
+    db.execute("CREATE INDEX reviews_requester ON review_requests(requester_id,kind,target_id,id)")
+    db.execute("CREATE INDEX reviews_agent ON review_requests(agent_id,status,id)")
 
 
 def valid_id(value):
@@ -116,6 +133,13 @@ def thread_context(db, comment_id):
     )]
 
 
+def check_read_access(db, account, row, *, is_agent):
+    if not is_agent and row["status"] in ("pending", "withdrawn"):
+        target(db, account, row["kind"], row["target_id"], row["position"])
+    else:
+        check_access(db, row)
+
+
 def read(db, account, *, review_id=None, kind=None, target_id=None):
     is_agent = account["role"] in AI_ROLES
     scope = "r.agent_id=?" if is_agent else "r.requester_id=?"
@@ -125,7 +149,7 @@ def read(db, account, *, review_id=None, kind=None, target_id=None):
         if row is None:
             raise LookupError("Review unavailable.")
         try:
-            check_access(db, row)
+            check_read_access(db, account, row, is_agent=is_agent)
         except (sharing.AccessDenied, ValueError):
             raise LookupError("Review unavailable.") from None
         result = summary(row)
@@ -142,7 +166,7 @@ def read(db, account, *, review_id=None, kind=None, target_id=None):
     results = []
     for row in query_rows(db, scope, params, pending=is_agent):
         try:
-            check_access(db, row)
+            check_read_access(db, account, row, is_agent=is_agent)
         except (sharing.AccessDenied, ValueError):
             continue
         results.append(summary(row))
@@ -190,6 +214,21 @@ def create(db, account, data):
     return read(db, account, review_id=review_id)
 
 
+def withdraw(db, account, data):
+    review_id = data.get("id")
+    if not valid_id(review_id):
+        raise ValueError("Choose a review to withdraw.")
+    row = query_rows(db, "r.id=? AND r.requester_id=?", (review_id, account["id"])).fetchone()
+    if row is None or account["role"] in AI_ROLES:
+        raise LookupError("Review unavailable.")
+    if row["status"] == "withdrawn":
+        return {"review": summary(row)}
+    if row["status"] != "pending":
+        raise sharing.EditConflict("Only pending reviews can be withdrawn.")
+    db.execute("UPDATE review_requests SET status='withdrawn' WHERE id=?", (review_id,))
+    return {"review": {**summary(row), "status": "withdrawn"}}
+
+
 def complete(db, account, data):
     review_id = data.get("id")
     status, response = data.get("status"), data.get("response")
@@ -201,6 +240,8 @@ def complete(db, account, data):
                      (review_id, account["id"], account["role"])).fetchone()
     if row is None:
         raise LookupError("Review unavailable.")
+    if row["status"] == "withdrawn":
+        raise sharing.EditConflict("This review was withdrawn.")
     comment = check_access(db, row)
     response = response.strip()
     if row["status"] != "pending":

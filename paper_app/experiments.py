@@ -2,13 +2,20 @@
 import hashlib
 import json
 import re
+import stat
+import struct
+import zlib
+from io import BytesIO
 from urllib.parse import urlsplit
+from zipfile import BadZipFile, ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 from . import accounts, sharing
 
 MAX_FILE_BYTES = 100 * 1024 * 1024
 KINDS = ('code', 'environment', 'equipment', 'tool_record', 'data')
 VERSION_BATCH_SIZE = 500
+MAX_ARCHIVE_ENTRIES = 5_000
+MAX_ARCHIVE_DIRECTORY_BYTES = 4 * 1024 * 1024
 GRANT_SCOPES = {
     'experiment': ('experiments', 'id'),
     'run': ('experiment_runs', 'experiment_id'),
@@ -377,3 +384,41 @@ def version_content(db, account, version_id):
     if hashlib.sha256(payload).hexdigest() != row['sha256']:
         raise ValueError('The stored file failed its integrity check.')
     return row['filename'], payload
+
+
+def archive_version(db, account, version_id, path=None):
+    """Browse an uploaded ZIP snapshot without extracting it to disk."""
+    filename, payload = version_content(db, account, version_id)
+    if not filename.lower().endswith(".zip"):
+        raise LookupError("This version is not a ZIP archive.")
+    footer = payload.rfind(b"PK\x05\x06", max(0, len(payload) - 65_557))
+    if footer < 0 or footer + 22 > len(payload):
+        raise ValueError("This ZIP archive is incomplete.")
+    disk, directory_disk, disk_entries, entries, size, offset, comment_size = struct.unpack_from("<4H2IH", payload, footer + 4)
+    if (disk or directory_disk or disk_entries != entries or entries > MAX_ARCHIVE_ENTRIES
+            or size > MAX_ARCHIVE_DIRECTORY_BYTES or offset + size != footer or footer + 22 + comment_size != len(payload)):
+        raise ValueError("Use a single ZIP archive of up to 5,000 entries with a standard directory.")
+    try:
+        with ZipFile(BytesIO(payload)) as bundle:
+            files = {}
+            for entry in bundle.infolist():
+                name = entry.orig_filename
+                if entry.is_dir() or stat.S_ISLNK(entry.external_attr >> 16):
+                    continue
+                if (len(name) > 1024 or "\\" in name or any(ord(char) < 32 for char in name)
+                        or any(part in ("", ".", "..") for part in name.split("/")) or name in files):
+                    raise ValueError("The ZIP contains an invalid or duplicate file path.")
+                files[name] = entry
+            if path is not None:
+                entry = files.get(path)
+                if entry is None or entry.file_size > MAX_FILE_BYTES:
+                    raise LookupError("This archive file is unavailable.")
+                if entry.compress_type not in (ZIP_STORED, ZIP_DEFLATED):
+                    raise ValueError("This file uses an unsupported ZIP compression method.")
+                return path.rsplit("/", 1)[-1], bundle.read(entry)
+            comment = bundle.comment.decode("ascii", errors="ignore").strip()
+            commit = comment if re.fullmatch(r"(?:[a-f0-9]{40}|[a-f0-9]{64})", comment) else None
+            return {"commit": commit, "files": [{"path": name, "size": entry.file_size}
+                                                for name, entry in sorted(files.items())]}
+    except (BadZipFile, RuntimeError, NotImplementedError, EOFError, zlib.error) as error:
+        raise ValueError("This ZIP archive cannot be read.") from error

@@ -7,7 +7,7 @@
 | 1 | Write literature notes under **Documents**. Cite PDF pages, Markdown lines, or exact artifact versions in **Research findings**. | 在 **Documents** 撰寫文獻筆記，並在 **Research findings** 引用 PDF 頁碼、Markdown 行範圍或確切的產出版本。 |
 | 2 | Under **What to do next**, propose a question, explain why it matters, and link supporting findings. The human workspace owner ranks and selects goals. | 在 **What to do next** 提出問題、說明理由，並連結支持證據。由人員工作區擁有者排序並選擇目標。 |
 | 3 | Draft a feasibility brief with a baseline, success criterion, conditions, and budget. Confirm it to create a linked experiment. | 撰寫可行性測試計畫，列出基準、成功標準、測試條件及預算。確認後即可建立關聯實驗。 |
-| 4 | Run the experiment externally. In **Experiments**, record methods and results, upload outputs, and cite the exact version in a run finding. | 在外部執行實驗，再於 **Experiments** 記錄方法與結果、上傳產出，並在實驗發現中引用具體版本。 |
+| 4 | Run the experiment in your own workspace. In **Experiments**, record the reproduction commands, upload the source snapshot and results, and cite exact artifact versions in a run finding. | 在自己的工作環境執行實驗，再於 **Experiments** 記錄重現命令、上傳原始碼快照及結果，並在實驗發現引用具體版本。 |
 | 5 | Compare results with the baseline. Numeric comparisons require matching metrics, units, and conditions. Record whether to iterate, draft a full design, or set the goal aside. | 將結果與基準比較。數值比較須使用相同指標、單位與條件。記錄要再試一次、撰寫完整設計，或擱置目標。 |
 
 Use **Papers** to search Crossref by topic, publisher, or year. The background lookup can fill blank metadata using a DOI. Owners can opt in to sending a title or filename for lookup. PDF bytes are processed locally.

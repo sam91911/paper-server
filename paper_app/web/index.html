@@ -410,6 +410,7 @@
             <label>Research question <input name="question" maxlength="160" required></label>
             <label>Why it matters now <textarea name="rationale" maxlength="4000" required></textarea></label>
             <label>Uncertainty to resolve <textarea name="uncertainty" maxlength="4000" required></textarea></label>
+            <div id="goal-proposal-access"></div>
             <fieldset>
               <legend>Supporting findings</legend>
               <div id="goal-evidence-options"></div>
@@ -563,6 +564,7 @@
     <button id="send-agent-review">Request review</button>
   </form>
   <p id="agent-review-status" role="status"></p>
+  <button id="withdraw-agent-review" type="button" class="secondary" hidden>Withdraw review</button>
   <p id="agent-review-result" class="comment-body" hidden></p>
   <p><a href="/skills?skill=default">API skill for AI clients</a></p>
 </dialog>

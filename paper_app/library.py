@@ -116,6 +116,7 @@ def initialize(path):
         accounts.initialize(db)
         ai_accounts.initialize(db)
         human_keys.initialize(db)
+        reviews.initialize(db)
         sharing.initialize(db)
         columns = {row["name"] for row in db.execute("PRAGMA table_info(comments)")}
         if "document_id" not in columns:
@@ -144,6 +145,7 @@ def initialize(path):
             ("experiment_runs", "settings", "TEXT NOT NULL DEFAULT ''"),
             ("comments", "finding_id", "INTEGER REFERENCES research_findings(id)"),
             ("comments", "goal_id", "INTEGER REFERENCES research_goals(id)"),
+            ("research_goals", "audience", goals.AUDIENCE_COLUMN),
         ):
             if name not in {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}:
                 db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
@@ -155,7 +157,8 @@ def initialize(path):
         db.execute("CREATE INDEX IF NOT EXISTS comments_document_root ON comments(document_id, parent_id)")
         db.execute("CREATE INDEX IF NOT EXISTS documents_updated ON documents(updated DESC, id DESC)")
         db.execute("INSERT INTO comment_id_sequence SELECT 1, COALESCE(MAX(id), 0) FROM comments WHERE TRUE ON CONFLICT DO NOTHING")
-        for table in ("comments", "comment_authors", "item_grants", "agent_goal_events", "agent_goal_readers"):
+        for table in ("comments", "comment_authors", "item_grants", "agent_goal_events", "agent_goal_readers",
+                      "review_requests"):
             if db.execute(f"PRAGMA foreign_key_check({table})").fetchone():
                 raise sqlite3.IntegrityError("Invalid library references during migration")
 

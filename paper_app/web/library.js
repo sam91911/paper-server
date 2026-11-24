@@ -951,6 +951,8 @@ ${command} import-paper --identity ${identity} --url "$PDF_URL" --recipient "$RE
 
 Record each successful paper ID, title, DOI if available, source URL, and why it helps the goal. Post that to the goal as progress with evidence objects {"kind":"paper","id":PAPER_ID}. Revisit the recorded paper IDs on the next check. If a needed PDF is unavailable or a reusable paper needs sharing, report the gap and continue with accessible evidence where possible.
 
+If the goal requires an experiment, run it in your own workspace. Record exact reproduction commands and settings in the run. Use the default API skill to upload the committed Git snapshot, outputs, and logs to that run. Cite the experiment and result artifact versions in your report.
+
 ${idle}
 
 Repeat the check about every 60 seconds if your environment supports recurring execution. Finish a check before starting another. For longer tasks, keep a separate heartbeat process running by omitting --once. If authentication is denied, stop and report it.`;
@@ -1397,12 +1399,14 @@ const agentAvailability = element("agent-availability");
 const agentPosition = element("agent-position");
 const agentPost = element("agent-post");
 const agentSubmit = element("send-agent-review");
+const agentWithdraw = element("withdraw-agent-review");
 const agentStatus = element("agent-review-status");
 const agentResult = element("agent-review-result");
 let agentTarget;
 let agentView = 0;
 let agentPoll;
 let agentPending = false;
+let agentReviewId;
 const eligibleAgents = new Map();
 
 function syncAgentChoice() {
@@ -1414,10 +1418,14 @@ function syncAgentChoice() {
 function showAgentReview(review, view) {
   const pending = review.status === "pending";
   agentPending = pending;
+  agentReviewId = pending ? review.id : undefined;
+  agentWithdraw.hidden = !pending;
+  agentWithdraw.disabled = false;
   syncAgentChoice();
-  agentResult.hidden = pending;
+  agentResult.hidden = !review.response;
   agentResult.textContent = pending ? "" : review.response;
   agentStatus.textContent = pending ? `Waiting for ${review.agent} to pick up review #${review.id}.`
+    : review.status === "withdrawn" ? `Review #${review.id} withdrawn.`
     : review.status === "failed" ? "The AI account could not complete the review."
     : review.comment_id ? "Review complete. A private AI comment was posted." : "Review complete.";
   if (pending) {
@@ -1450,6 +1458,8 @@ async function openAgent(kind, id, label, position = "") {
   agentResult.hidden = true;
   agentResult.textContent = "";
   agentStatus.textContent = "";
+  agentReviewId = undefined;
+  agentWithdraw.hidden = true;
   const previous = agentAccount.value;
   eligibleAgents.clear();
   agentAccount.replaceChildren();
@@ -1462,7 +1472,7 @@ async function openAgent(kind, id, label, position = "") {
     const query = new URLSearchParams(agentTarget);
     const [data, availability] = await Promise.all([api(`reviews?${query}`), api(`review-agents?${query}`)]);
     if (view !== agentView) return;
-    const latest = data.reviews[0];
+    const latest = data.reviews.find(review => review.status === "pending") ?? data.reviews[0];
     for (const agent of availability.agents) {
       eligibleAgents.set(agent.username, agent);
       const account = agent.display_name ? `${agent.display_name} (@${agent.username})` : agent.username;
@@ -1480,6 +1490,30 @@ async function openAgent(kind, id, label, position = "") {
 }
 
 agentAccount.addEventListener("change", syncAgentChoice);
+agentWithdraw.addEventListener("click", async () => {
+  const id = agentReviewId;
+  if (!id || agentWithdraw.disabled) return;
+  const view = ++agentView;
+  clearTimeout(agentPoll);
+  agentWithdraw.disabled = true;
+  try {
+    const {review} = await api("reviews", {action: "withdraw", id});
+    if (view === agentView) showAgentReview(review, view);
+  } catch (error) {
+    if (view !== agentView) return;
+    agentWithdraw.disabled = false;
+    agentStatus.textContent = error.message;
+    try {
+      const {review} = await api(`reviews?id=${id}`);
+      if (view === agentView) {
+        showAgentReview(review, view);
+        if (review.status === "pending") agentStatus.textContent = error.message;
+      }
+    } catch {
+      // Retain the status and allow another withdrawal attempt.
+    }
+  }
+});
 agentDialog.addEventListener("close", () => {
   ++agentView;
   clearTimeout(agentPoll);

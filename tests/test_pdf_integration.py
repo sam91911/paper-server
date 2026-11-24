@@ -45,6 +45,8 @@ class PdfIntegrationTests(unittest.TestCase):
             with library.connect(path) as db:
                 owner = accounts.create_account(db, "alice", "owner password", "user")
                 session = accounts.start_session(db, owner, None)
+                reader = accounts.create_account(db, "local-reader", "reader password", "local")
+                reader_key = accounts.create_key(db, reader, "local reader")
             status, invitation = request(path, "/api/ai/invitations", cookie=session,
                                          data={"username": "reviewer", "role": "local"})
             self.assertEqual(status, 200, invitation)
@@ -64,11 +66,12 @@ class PdfIntegrationTests(unittest.TestCase):
 
             with patch("paper_client.agent.fetch_pdf", return_value=("paper.pdf", fixture_pdf())), \
                  patch.object(client.opener, "open", side_effect=send):
-                imported = agent.import_paper(client, "https://repository.example.org/paper.pdf", None, ["alice"])
+                imported = agent.import_paper(client, "https://repository.example.org/paper.pdf", None, ["alice"], audience="local")
                 paper_id = imported["paper_id"]
-                document = json.loads(client.request("/api/documents", {
+                doc = json.loads(client.request("/api/documents", {
                     "title": "Paper notes", "markdown": f"Paper #{paper_id}, page 1.", "recipients": ["alice"],
-                }))["document_id"]
+                }))
+                document = doc["document_id"]
                 finding = json.loads(client.request("/api/research-findings", {
                     "document_id": document, "statement": "Measured power was 12.5 mW.",
                     "evidence": [{"kind": "pdf", "id": paper_id, "page": 1}],
@@ -76,8 +79,19 @@ class PdfIntegrationTests(unittest.TestCase):
                 goal = json.loads(client.request("/api/research-goals", {
                     "action": "propose", "document_id": document, "question": "Can we reproduce this measurement?",
                     "rationale": "Establish a baseline.", "uncertainty": "Measurement conditions.", "evidence_ids": [finding],
+                    "audience": "local",
                 }))["id"]
+                self.assertEqual(request(path, f"/api/paper-detail?paper_id={paper_id}", key=reader_key)[1]["paper"]["audience"], "local")
+                self.assertEqual(request(path, f"/api/research-goals?document_id={document}", key=reader_key)[0], 404)
+                client.request("/api/paper-access", {"paper_id": paper_id, "audience": "owner", "recipients": ["alice"]})
+                doc = json.loads(client.request("/api/documents", {
+                    **doc, "title": "Paper notes", "markdown": "Shared notes.", "audience": "local",
+                }))
+                client.request("/api/documents", {**doc, "title": "Paper notes", "markdown": "Updated shared notes."})
+                self.assertEqual(request(path, f"/api/document?id={document}", key=reader_key)[1]["document"]["audience"], "local")
+                self.assertEqual(request(path, f"/api/research-goals?document_id={document}", key=reader_key)[1]["goals"], [])
             self.assertEqual(request(path, f"/papers/{paper_id}/source.pdf", cookie=session), (200, fixture_pdf()))
+            self.assertEqual(request(path, f"/papers/{paper_id}/source.pdf", key=reader_key)[0], 404)
             self.assertEqual(request(path, f"/api/document?id={document}", cookie=session)[1]["document"]["title"], "Paper notes")
             self.assertEqual(request(path, f"/api/research-goals?document_id={document}", cookie=session)[1]["goals"][0]["id"], goal)
 

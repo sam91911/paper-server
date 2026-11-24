@@ -266,6 +266,41 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.request(f"/research-versions/{artifact}/file", expected=404)
         self.assertNotIn(brief["experiment_id"], {row["id"] for row in self.request("/api/experiments")["experiments"]})
 
+    def test_agent_controls_goal_access_within_document_and_evidence_access(self):
+        fields = {
+            "question": "Is a smaller test useful?", "rationale": "Reduce setup time.",
+            "uncertainty": "Hardware availability.", "evidence_ids": [self.pilot["baseline"]],
+        }
+        self.goal_request("propose", expected=400, recipients=[self.pilot["human_username"]], **fields)
+        proposal = self.goal_request("propose", audience="owner", **fields)
+        goal_id = proposal["id"]
+        authored = self.goal_request()["goals"][0]
+        self.assertTrue(authored["can_manage"])
+        self.assertEqual(authored["revision"], proposal["revision"])
+        self.assertEqual(self.goal_request(actor="human")["goals"], [])
+        root = self.request("/api/comments", {
+            "document_id": self.document, "goal_id": goal_id, "body": "Goal discussion", "audience": "local",
+        })
+        def discussion_ids():
+            return {row["id"] for row in self.request(self.comments, actor="human")["comments"]}
+
+        self.assertNotIn(root["comment_id"], discussion_ids())
+
+        shared = self.goal_request("set_access", goal_id=goal_id, revision=proposal["revision"],
+                                   recipients=[self.pilot["human_username"]])
+        visible = self.goal_request(actor="human")["goals"][0]
+        self.assertEqual(visible["id"], goal_id)
+        self.assertNotIn("recipients", visible)
+        self.assertIn(root["comment_id"], discussion_ids())
+        self.goal_request("set_access", actor="human", goal_id=goal_id, revision=shared["revision"],
+                          audience="local", expected=403)
+        self.goal_request("set_access", goal_id=goal_id, revision=proposal["revision"], recipients=[], expected=409)
+        revoked = self.goal_request("set_access", goal_id=goal_id, revision=shared["revision"], recipients=[])
+        self.assertEqual(self.goal_request(actor="human")["goals"], [])
+        self.assertNotIn(root["comment_id"], discussion_ids())
+        self.goal_request("set_access", goal_id=goal_id, revision=revoked["revision"], audience="inherit")
+        self.assertEqual(self.goal_request(actor="human")["goals"][0]["audience"], "inherit")
+
     def test_integrity_reports_corruption_and_backup_rejects_it(self):
         version = self.pilot["runs"][0]["id"]
         with library.connect(self.database) as db:

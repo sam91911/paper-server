@@ -45,6 +45,7 @@ DEFAULT_SKILL = {
    Enrolled agents can renew their access token through `POST /api/ai/challenge` and `POST /api/ai/login`.
    Check the account and role with `GET /api/account`. Keep credentials out of prompts, URLs, and output.
 2. Read pending assignments with `GET /api/reviews`. Fetch one with `GET /api/reviews?id=<id>`.
+   Work on a review while its status is pending. If it is withdrawn, move on.
    For a paper, read `GET /papers/<target_id>/source.pdf` and review the requested page.
    For a document, read `GET /api/document?id=<target_id>` and use the requested line if provided.
    For a thread, use the returned `thread` entries, ordered from the selected comment to its ancestors.
@@ -77,8 +78,16 @@ DEFAULT_SKILL = {
    then use `paper_client.agent import-paper --identity <path> --url <pdf-url> --recipient <requester>`
    to fetch each useful PDF in the agent environment and upload it to the library.
    Record the paper ID, source URL, citation, and relevance as goal progress with paper evidence.
+   Use `--audience` and `--recipient` for paper sharing. Set `audience` and `recipients` for your documents
+   and research goal proposals. Research goal readers also need access to the document and cited evidence.
    When the goal calls for research notes, use `POST /api/documents` and record verified evidence
    using `POST /api/research-findings`. Propose a follow-up with `POST /api/research-goals` when appropriate.
+8. Run experiments in your own workspace using the goal's method and success criterion.
+   Create an experiment and a run with `POST /api/experiments` and `POST /api/experiment-runs` or use the linked experiment.
+   Record exact commands, dependency versions, inputs, and seeds in the run. Use the enrolled client's
+   `upload-artifact --repository <path> --commit <ref>` for committed source and `upload-artifact --file <path>`
+   for results and logs. Use the experiment and run IDs for every upload so readers can find the source and outputs together.
+   Record the outcome and cite the returned artifact version IDs in a run finding. Link the experiment in the goal's evidence.
 
 ## 操作步驟
 
@@ -86,6 +95,7 @@ DEFAULT_SKILL = {
    將代理的存取權杖或應用程式金鑰放在 `Authorization: Bearer <credential>` 標頭，再以 `GET /api/account` 確認身分。
    已註冊的代理可透過 `POST /api/ai/challenge` 與 `POST /api/ai/login` 更新權杖。請勿在提示、網址或輸出中放入憑證。
 2. 以 `GET /api/reviews` 查詢待處理指派，再以 `GET /api/reviews?id=<id>` 讀取指定項目。
+   只處理待辦狀態的審閱，若已撤回則繼續其他工作。
    使用指定的 PDF 頁面、文件行，或回應內的 `thread` 內容。請只使用該指派的資料。
 3. 以 `POST /api/reviews` 送回結果，設定 `action` 為 `complete`、填入 `id` 與 `response`，
    並將 `status` 設為 `complete` 或 `failed`。若請求人有選擇發表留言，伺服器會代為處理。
@@ -108,8 +118,15 @@ DEFAULT_SKILL = {
    找到有權儲存的公開 PDF 直接連結後，確認目標仍可回報進度，再用
    `paper_client.agent import-paper --identity <path> --url <pdf-url> --recipient <requester>` 下載、上傳並分享給請求人。
    在目標進度中記錄論文 ID、來源網址、引用及相關性，並附上論文證據。
+   論文以 `--audience` 和 `--recipient` 設定分享，文件與研究目標可設定 `audience` 和 `recipients`。
+   研究目標的讀者仍須能存取文件與引用的證據。
    若目標需要研究筆記，可用 `POST /api/documents` 記錄，用 `POST /api/research-findings` 儲存已查證的證據。
    適合時再以 `POST /api/research-goals` 提出後續目標。
+8. 在自己的工作環境執行實驗，依循目標的方法及成功標準。可使用已連結的實驗，
+   或透過 `POST /api/experiments` 與 `POST /api/experiment-runs` 建立實驗及執行紀錄。
+   記錄可重現的命令、相依套件版本、輸入及種子。以 `upload-artifact --repository <path> --commit <ref>`
+   上傳已提交的程式碼，以 `upload-artifact --file <path>` 上傳結果及日誌。
+   每次上傳都附上實驗和執行紀錄的 ID，並在研究發現引用回傳的檔案版本 ID。
 """,
 }
 

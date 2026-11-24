@@ -4,6 +4,9 @@ import json
 
 from . import experiments, findings, sharing
 
+AUDIENCE_COLUMN = """TEXT NOT NULL DEFAULT 'inherit' CHECK (audience IN ('inherit','owner','users','local','all','ai'))"""
+ACCESS = sharing.access_sql("g.author_id", "g.audience", "research_goal", "g.id")
+
 SCHEMA = (
     """CREATE TABLE IF NOT EXISTS research_goals (
         id INTEGER PRIMARY KEY, document_id INTEGER NOT NULL REFERENCES documents(id),
@@ -61,6 +64,11 @@ def _evidence_ids(db, goal_id):
 
 def _check_goal(db, account, row):
     findings.require_document(db, account, row["document_id"])
+    if row["audience"] != "inherit" and not db.execute(
+        f"SELECT 1 FROM research_goals g WHERE g.id=:goal AND {ACCESS}",
+        sharing.viewer_params(account, goal=row["id"]),
+    ).fetchone():
+        raise sharing.AccessDenied
     for finding_id in _evidence_ids(db, row["id"]):
         findings.require_finding(db, account, row["document_id"], finding_id)
 
@@ -153,6 +161,16 @@ def _record_change(db, account, goal, action, *, priority=None, selected=None, d
     return revision
 
 
+def _access_settings(data, default):
+    audience = data.get("audience", default)
+    recipients = data.get("recipients")
+    if audience == "inherit":
+        if recipients is not None and recipients != []:
+            raise ValueError("Choose a goal audience to share with specific usernames.")
+        return audience, []
+    return sharing.validate_audience(audience), recipients
+
+
 def _proposal(db, account, document, data):
     ids = data.get("evidence_ids")
     if not isinstance(ids, list) or not 1 <= len(ids) <= 20:
@@ -160,13 +178,16 @@ def _proposal(db, account, document, data):
     ids = list(dict.fromkeys(findings.positive_id(value) for value in ids))
     for finding_id in ids:
         findings.require_finding(db, account, document["id"], finding_id)
+    audience, recipients = _access_settings(data, "inherit")
     goal_id = db.execute(
-        "INSERT INTO research_goals(document_id,author_id,author_role,question,rationale,uncertainty) VALUES (?,?,?,?,?,?) RETURNING id",
+        "INSERT INTO research_goals(document_id,author_id,author_role,question,rationale,uncertainty,audience) "
+        "VALUES (?,?,?,?,?,?,?) RETURNING id",
         (document["id"], account["id"], account["role"], _text(data, "question", 160),
-         _text(data, "rationale"), _text(data, "uncertainty")),
+         _text(data, "rationale"), _text(data, "uncertainty"), audience),
     ).fetchone()[0]
     db.executemany("INSERT INTO research_goal_evidence(goal_id,finding_id) VALUES (?,?)",
                    [(goal_id, finding_id) for finding_id in ids])
+    sharing.set_recipients(db, "research_goal", goal_id, recipients)
     return {"id": goal_id, "revision": 1}
 
 
@@ -278,6 +299,16 @@ def update(db, account, data):
     if action == "propose":
         return _proposal(db, account, document, data)
     goal = require_goal(db, account, document["id"], data.get("goal_id"))
+    if action == "set_access":
+        if not sharing.is_owner(db, account, goal["author_id"]):
+            raise sharing.AccessDenied
+        if type(data.get("revision")) is not int or data["revision"] != goal["revision"]:
+            raise sharing.EditConflict("This goal changed. Reload it before saving.")
+        audience, recipients = _access_settings(data, goal["audience"])
+        db.execute("UPDATE research_goals SET audience=? WHERE id=?", (audience, goal["id"]))
+        sharing.set_recipients(db, "research_goal", goal["id"], recipients)
+        revision = _record_change(db, account, goal, action)
+        return {"id": goal["id"], "revision": revision}
     if action == "draft":
         return _draft(db, account, goal, data)
     if account["role"] not in ("user", "member") or not sharing.is_owner(db, account, document["owner_id"]):
@@ -367,8 +398,12 @@ def read(db, account, document_id):
             )]
         else:
             row.pop("priority")
-            row.pop("revision")
         available.append(row)
+    sharing.attach_recipients(db, "research_goal", available, account, "author_id")
+    if not manager:
+        for row in available:
+            if not row.get("can_manage"):
+                row.pop("revision")
     return {"goals": available, "can_manage": manager,
             "findings": [{"id": item["id"], "statement": item["statement"], "kind": item["kind"],
                           "conditions": item["conditions"],

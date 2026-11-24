@@ -74,6 +74,15 @@ class PostgreSQLTests(unittest.TestCase):
         doc_id = document["document_id"]
         thread = {"document_id": doc_id}
         comment = self.api("/api/comments", key=token, data={**thread, "body": "Private note"})
+        review = self.api("/api/reviews", cookie=cookie, data={
+            "action": "create", "kind": "document", "target_id": doc_id, "agent": username, "agent_role": "local",
+        })["review"]
+        withdrawn = self.api("/api/reviews", cookie=cookie, data={"action": "withdraw", "id": review["id"]})["review"]
+        self.assertEqual(withdrawn["status"], "withdrawn")
+        self.assertEqual(self.api("/api/reviews", key=token)["reviews"], [])
+        self.api("/api/reviews", key=token, expected=409, data={
+            "action": "complete", "id": review["id"], "status": "complete", "response": "Late result",
+        })
         self.api("/api/ai/deactivate", cookie=cookie, data={"username": username})
         self.api("/api/ai/heartbeat", key=token, data={}, expected=401)
         self.assertTrue(self.api(f"/api/document?id={doc_id}", cookie=cookie)["document"]["can_manage"])
@@ -245,6 +254,11 @@ class PostgreSQLTests(unittest.TestCase):
         findings_path = f"/api/research-findings?document_id={document}"
         goals_path = f"/api/research-goals?document_id={document}"
         comment_path = f"/api/document-comments?document_id={document}"
+        shared_goal = self.api("/api/research-goals", target=source, key=key, data={
+            "action": "propose", "document_id": document, "question": "Try a smaller sample?",
+            "rationale": "Reduce cost.", "uncertainty": "Sample quality.", "evidence_ids": [pilot["baseline"]],
+            "audience": "owner", "recipients": [pilot["human_username"]],
+        })["id"]
         expected_findings = self.api(findings_path, target=source, key=key)
         expected_goals = self.api(goals_path, target=source, key=key)
         expected_comments = self.api(comment_path, target=source, key=key)
@@ -280,6 +294,7 @@ class PostgreSQLTests(unittest.TestCase):
             migrate.migrate(source, self.target)
         self.assertEqual(self.api(findings_path, key=key), expected_findings)
         self.assertEqual(self.api(goals_path, key=key), expected_goals)
+        self.assertIn(shared_goal, {goal["id"] for goal in self.api(goals_path, cookie=cookie)["goals"]})
         self.assertEqual(self.api(comment_path, key=key), expected_comments)
         self.assertEqual(self.api(f"/api/skills/{migrated_skill['id']}", key=key)["skill"], migrated_skill)
         self.assertEqual(self.api(history_path, cookie=cookie), expected_history)

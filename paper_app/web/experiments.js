@@ -82,6 +82,71 @@ function editRun(run = null) {
   }
 }
 
+function previewFile(url, parent) {
+  const preview = text("details", "", parent);
+  text("summary", "Preview text", preview);
+  const source = text("pre", "", preview);
+  source.className = "goal-brief-text";
+  preview.addEventListener("toggle", async () => {
+    if (!preview.open || source.textContent) return;
+    source.textContent = "Loading…";
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Could not open this file.");
+      const content = await response.text();
+      source.textContent = content.includes("\0") ? "Download this binary file to inspect it." : content || "Empty file.";
+    } catch (error) {
+      source.textContent = error.message;
+    }
+  });
+}
+
+function archiveTree(files, base, parent) {
+  const tree = text("ul", "", parent);
+  const folders = new Map([["", tree]]);
+  for (const file of files) {
+    const parts = file.path.split("/");
+    let key = "";
+    for (const name of parts.slice(0, -1)) {
+      const folder = key + name + "/";
+      if (!folders.has(folder)) {
+        const section = text("details", "", text("li", "", folders.get(key)));
+        text("summary", name, section);
+        folders.set(folder, text("ul", "", section));
+      }
+      key = folder;
+    }
+    const row = text("li", "", folders.get(key));
+    const name = parts.at(-1);
+    const link = text("a", name, row);
+    link.href = `${base}/entry?path=${encodeURIComponent(file.path)}`;
+    link.download = name;
+    if (file.size <= 128 * 1024) previewFile(link.href, row);
+  }
+}
+
+function browseArchive(version, parent) {
+  const panel = text("details", "", parent);
+  text("summary", "Browse archive files", panel);
+  const contents = text("div", "", panel);
+  const base = `/research-versions/${version.id}`;
+  panel.addEventListener("toggle", async () => {
+    if (!panel.open || contents.childElementCount) return;
+    const status = text("p", "Loading files…", contents);
+    try {
+      const response = await fetch(`${base}/entries`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not list files in this archive.");
+      const {commit, files} = result;
+      status.textContent = commit ? `Git commit ${commit}` : files.length ? "" : "No files to display.";
+      status.hidden = !status.textContent;
+      archiveTree(files, base, contents);
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
+}
+
 function renderExperiment(result) {
   const {experiment, runs, items, brief} = result;
   if (runBrief?.id !== brief?.id) {
@@ -113,8 +178,14 @@ function renderExperiment(result) {
     text("h4", `${run.title} (#${run.id}) · ${run.status}`, box);
     if (run.brief_id) text("p", `Tested brief #${run.brief_id}`, box);
     if (run.description) text("p", run.description, box);
-    if (run.methods) text("p", `Methods — ${run.methods}`, box);
-    if (run.settings) text("p", `Settings — ${run.settings}`, box);
+    if (run.methods) {
+      text("h5", "Methods and reproduction commands", box);
+      text("pre", run.methods, box).className = "goal-brief-text";
+    }
+    if (run.settings) {
+      text("h5", "Environment and settings", box);
+      text("pre", run.settings, box).className = "goal-brief-text";
+    }
     if (run.can_edit) {
       const edit = text("button", "Edit run", box);
       edit.type = "button";
@@ -130,12 +201,19 @@ function renderExperiment(result) {
   const itemList = $("items");
   itemList.replaceChildren();
   for (const item of items) {
-    const box = text("div", `${item.kind}: ${item.title} (#${item.id}, revision ${item.revision})`, itemList);
+    const run = runs.find(row => row.id === item.run_id);
+    const box = text("article", "", itemList);
+    text("h4", item.title, box);
+    text("p", `${item.kind} · #${item.id}, revision ${item.revision}${run ? ` · Run #${run.id}: ${run.title}` : ""}`, box);
     for (const version of item.versions) {
       const line = text("p", `v${version.number} (version ID ${version.id}) · ${version.description} ${version.external_ref} `, box);
       if (version.sha256) {
         const link = text("a", `Download ${version.filename}`, line);
         link.href = `/research-versions/${version.id}/file`;
+        if (version.filename.toLowerCase().endsWith(".zip")) browseArchive(version, box);
+        else if (version.size <= 128 * 1024 && /\.(csv|tsv|txt|jsonl?|log|md|ya?ml|toml|py|sh)$/i.test(version.filename)) {
+          previewFile(link.href, box);
+        }
       }
     }
   }

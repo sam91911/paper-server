@@ -324,17 +324,31 @@ class Handler(BaseHTTPRequestHandler):
             except storage.ERRORS as error:
                 LOG.error("Research read failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read research data."})
-        elif match := re.fullmatch(r"/research-versions/([1-9][0-9]{0,18})/file", route):
+        elif match := re.fullmatch(r"/research-versions/([1-9][0-9]{0,18})/(file|entries|entry)", route):
+            action = match[2]
             try:
                 with library.connect(self.server.database) as db:
+                    storage.begin(db)
                     account = self.require_account(db)
-                    filename, payload = experiments.version_content(db, account, int(match[1]))
-                self.send_data(200, payload, "application/octet-stream", pdf_download=filename)
+                    version = int(match[1])
+                    if action == "entries":
+                        result = experiments.archive_version(db, account, version)
+                    elif action == "entry":
+                        path = parse_qs(url.query).get("path", [""])[0]
+                        filename, payload = experiments.archive_version(db, account, version, path)
+                    else:
+                        filename, payload = experiments.version_content(db, account, version)
+                if action == "entries":
+                    self.send_json(200, result)
+                else:
+                    self.send_data(200, payload, "application/octet-stream", pdf_download=filename)
             except accounts.SignInRequired:
                 self.send_json(401, {"error": "Sign in to continue."})
             except (sharing.AccessDenied, LookupError, OverflowError):
                 self.send_json(404, {"error": "File unavailable."})
-            except storage.ERRORS + (ValueError,):
+            except ValueError as error:
+                self.send_json(500 if action == "file" else 400, {"error": str(error)})
+            except storage.ERRORS:
                 self.send_json(500, {"error": "Could not read this file."})
         elif route in ("/api/usernames", "/api/agent-options", "/api/document"):
             try:
@@ -351,8 +365,9 @@ class Handler(BaseHTTPRequestHandler):
                             raise LookupError
                         data = {"document": sharing.attach_recipients(db, "document", [dict(document)], account)[0]}
                     elif route == "/api/usernames":
-                        query = parse_qs(url.query).get("q", [""])[0]
-                        data = accounts.suggest_usernames(db, query)
+                        params = parse_qs(url.query)
+                        data = accounts.suggest_usernames(db, params.get("q", [""])[0],
+                                                          ai_only=params.get("role") == ["ai"])
                     else:
                         data = {"server_os": platform.system(), "pdf_text": bool(shutil.which("pdftotext")),
                                 "llama": bool(shutil.which("llama-completion"))}
@@ -676,7 +691,9 @@ class Handler(BaseHTTPRequestHandler):
             with library.connect(self.server.database) as db:
                 storage.begin(db, write=True)
                 item_id = experiments.save_item(db, self.require_account(db), metadata, payload)
-            self.send_json(200, {"ok": True, "id": item_id})
+                version_id = db.execute("SELECT id FROM research_versions WHERE item_id=? ORDER BY number DESC LIMIT 1",
+                                        (item_id,)).fetchone()[0]
+            self.send_json(200, {"ok": True, "id": item_id, "version_id": version_id})
         except accounts.SignInRequired:
             self.send_json(401, {"error": "Sign in to upload files."})
         except sharing.AccessDenied:
@@ -769,7 +786,9 @@ class Handler(BaseHTTPRequestHandler):
                 return reviews.create(db, account, data)
             if data.get("action") == "complete":
                 return reviews.complete(db, account, data)
-            raise ValueError("Choose create or complete.")
+            if data.get("action") == "withdraw":
+                return reviews.withdraw(db, account, data)
+            raise ValueError("Choose create, complete, or withdraw.")
         if self.path == "/api/skills":
             return {"skill": skills.save(db, self.require_account(db), data)}
         if self.path == "/api/research-goals":

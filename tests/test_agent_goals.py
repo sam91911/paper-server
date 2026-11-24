@@ -36,6 +36,15 @@ class AgentGoalTests(unittest.TestCase):
         return {"action": "create", "request_id": uuid4().hex, "agent": "worker",
                 "objective": "Write a baseline report", "acceptance_criteria": "Cite a source", **extra}
 
+    def test_allowlist_search_suggests_active_ai_accounts(self):
+        with library.connect(self.database) as db:
+            accounts.create_account(db, "work-human", "sample password", "member")
+            accounts.create_account(db, "work-inactive", "sample password", "cloud")
+            db.execute("UPDATE accounts SET disabled_at=1 WHERE username='work-inactive'")
+        query = "/api/usernames?q=work&role=ai"
+        self.assertEqual([row["username"] for row in self.api(query)], ["worker"])
+        self.assertEqual([row["username"] for row in self.api("/api/usernames?q=work")], ["work-human", "worker"])
+
     def action(self, goal, action, *, user="worker", expected=200, **extra):
         return self.api(user=user, expected=expected, data={
             "id": goal["id"], "revision": goal["revision"], "action": action, "request_id": uuid4().hex, **extra,

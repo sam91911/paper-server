@@ -1,10 +1,11 @@
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from paper_app import accounts, library
+from paper_app import accounts, library, reviews
 from paper_client import review
 from test_skill_api import request
 
@@ -69,10 +70,57 @@ class ReviewAPITests(unittest.TestCase):
             "recipients": [],
         })
         self.assertEqual(self.api("/api/reviews", key=self.reviewer)["reviews"], [])
-        self.api(f"/api/reviews?id={job['id']}", cookie=self.cookie, status=404)
+        self.assertEqual(self.api(f"/api/reviews?id={job['id']}", cookie=self.cookie)["review"], job)
         self.api("/api/reviews", key=self.reviewer, status=403, data={
             "action": "complete", "id": job["id"], "status": "complete", "response": "No longer accessible.",
         })
+        withdrawn = self.api("/api/reviews", cookie=self.cookie, data={"action": "withdraw", "id": job["id"]})
+        self.assertEqual(withdrawn["review"]["status"], "withdrawn")
+
+    def test_only_requester_can_withdraw_and_no_result_is_posted(self):
+        job = self.create()
+        route = "/api/reviews"
+        payload = {"action": "withdraw", "id": job["id"]}
+        self.api(route, key=self.reviewer, data=payload, status=404)
+        self.api(route, key=self.other_human, data=payload, status=404)
+        withdrawn = self.api(route, cookie=self.cookie, data=payload)["review"]
+        self.assertEqual(withdrawn["status"], "withdrawn")
+        self.assertEqual(self.api(route, cookie=self.cookie, data=payload)["review"], withdrawn)
+        self.assertEqual(self.api(route, key=self.reviewer)["reviews"], [])
+        self.assertEqual(self.api(f"{route}?id={job['id']}", key=self.reviewer)["review"], withdrawn)
+        self.api(route, key=self.reviewer, data={
+            "action": "complete", "id": job["id"], "status": "complete", "response": "Late result",
+        }, status=409)
+        comments = self.api(f"/api/document-comments?document_id={self.document}", key=self.reviewer)
+        self.assertEqual(comments["comments"], [])
+        self.assertNotEqual(self.create()["id"], job["id"])
+
+    def test_withdrawal_and_completion_race_has_one_winner(self):
+        job = self.create()
+        route = "/api/reviews"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            withdrawal = pool.submit(request, self.database, route, cookie=self.cookie,
+                                     data={"action": "withdraw", "id": job["id"]})
+            completion = pool.submit(request, self.database, route, key=self.reviewer,
+                                     data={"action": "complete", "id": job["id"], "status": "complete", "response": "Use a baseline."})
+        withdrawn, completed = withdrawal.result(), completion.result()
+        self.assertEqual(sorted([withdrawn[0], completed[0]]), [200, 409])
+        saved = self.api(f"{route}?id={job['id']}", cookie=self.cookie)["review"]
+        self.assertEqual(saved["status"], "withdrawn" if withdrawn[0] == 200 else "complete")
+        self.assertEqual(saved["comment_id"] is None, withdrawn[0] == 200)
+
+    def test_legacy_pending_review_can_be_withdrawn_after_migration(self):
+        job = self.create()
+        with library.connect(self.database) as db:
+            legacy = reviews.REVIEW_TABLE.format(table="legacy_review_requests").replace(",'withdrawn'", "")
+            db.execute(legacy)
+            db.execute("INSERT INTO legacy_review_requests SELECT * FROM review_requests")
+            db.execute("DROP TABLE review_requests")
+            db.execute("ALTER TABLE legacy_review_requests RENAME TO review_requests")
+        library.initialize(self.database)
+        self.assertEqual(self.api("/api/reviews", key=self.reviewer)["reviews"], [job])
+        result = self.api("/api/reviews", cookie=self.cookie, data={"action": "withdraw", "id": job["id"]})
+        self.assertEqual(result["review"]["status"], "withdrawn")
 
     def test_thread_supplies_only_selected_comment_and_parents(self):
         def comment(body, parent_id=None, recipients=()):
