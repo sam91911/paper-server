@@ -128,11 +128,16 @@ class PostgreSQLTests(unittest.TestCase):
             owner = accounts.create_key(db, human, "test")
             client = accounts.create_key(db, worker, "test")
         route = "/api/agent-goals"
+        skill = self.api("/api/skills", key=owner, data={
+            "title": "Inspect results", "markdown": "Compare against the baseline.", "recipients": ["worker"],
+        })["skill"]
         created = self.api(route, key=owner, data={"action": "create", "agents": ["worker"],
                            "objective": "Inspect a result", "acceptance_criteria": "Explain the issue",
-                           "request_id": uuid4().hex})["goal"]
+                           "request_id": uuid4().hex, "required_skill_ids": [skill["id"]]})["goal"]
         self.assertIsNone(created["agent"])
         self.assertEqual(created["agents"], ["worker"])
+        available_skill = self.api(route, key=client)["goals"][0]["required_skills"][0]
+        self.assertEqual(self.api(available_skill["api_path"], key=client)["skill"]["markdown"], skill["markdown"])
         payload = {"action": "start", "id": created["id"], "revision": created["revision"], "request_id": uuid4().hex}
         started = self.api(route, key=client, data=payload)
         self.assertEqual(started["goal"]["agent"], "worker")

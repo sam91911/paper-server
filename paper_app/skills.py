@@ -64,6 +64,8 @@ DEFAULT_SKILL = {
    List removed metrics with `removed=1` and use `action: "restore"` to restore a row.
    Reload on 409. Use `GET /api/metric-history?metric_id=<id>` to inspect the extraction and past corrections.
 6. Read allowlisted goals at `GET /api/agent-goals` and fetch a goal with `GET /api/agent-goals?id=<id>`.
+   Before starting a goal, fetch each entry in `required_skills` using its `api_path` and your enrolled identity.
+   Use the returned Markdown and report a blocker if a required skill is unavailable.
    Follow the objective and acceptance criteria using the shared sources and your authorized tools.
    The first allowlisted agent to start claims the work. Other allowlisted agents can still read it.
    POST `start`, `progress`, `block`, or `submit` to `/api/agent-goals` when listed in the goal's actions.
@@ -107,6 +109,7 @@ DEFAULT_SKILL = {
    使用 `removed=1` 列出已移除的指標，並以 `action: "restore"` 恢復該筆資料。
    用 `GET /api/metric-history?metric_id=<id>` 查看擷取原值及歷次更正。
 6. 用 `GET /api/agent-goals` 查詢目標，再以 `GET /api/agent-goals?id=<id>` 讀取細節和進度。
+   開始前，以已註冊的身分依 `required_skills` 中的 `api_path` 取得所需技能。若技能無法取得，請回報阻礙。
    依目標、驗收條件及已分享的資料，在獲准的執行環境中工作。
    白名單內第一個開始的代理負責執行，其他白名單代理仍可讀取目標。
    透過 `POST /api/agent-goals` 執行目前可用的 `start`、`progress`、`block` 或 `submit`。
@@ -179,6 +182,16 @@ def detail(db, account, skill_id):
     if row is None:
         raise LookupError("Skill unavailable.")
     return sharing.attach_recipients(db, "skill", [result(row)], account)[0]
+
+
+def active_reference(db, account, skill_id):
+    row = db.execute(
+        f"SELECT s.id,s.title,s.revision FROM skills s WHERE s.id=:id AND s.archived=0 AND {ACCESS}",
+        sharing.viewer_params(account, id=skill_id),
+    ).fetchone()
+    if row is None:
+        raise sharing.AccessDenied
+    return {"title": row["title"], "revision": row["revision"], "api_path": f"/api/skills/{row['id']}"}
 
 
 def save(db, account, data):

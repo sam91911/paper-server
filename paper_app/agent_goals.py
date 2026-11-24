@@ -5,7 +5,7 @@ import json
 import re
 import time
 
-from . import accounts, experiments, findings, goals, reviews, sharing
+from . import accounts, experiments, findings, goals, reviews, sharing, skills
 
 GOAL_TABLE = """CREATE TABLE IF NOT EXISTS {table} (
         id INTEGER PRIMARY KEY, requester_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -34,6 +34,7 @@ SCHEMA = (
 )
 
 PAGE_SIZE = 50
+MAX_REQUIRED_SKILLS = 10
 HUMAN_ROLES = ("user", "member")
 SOURCE_KINDS = ("paper", "document", "thread", "finding", "research_goal", "experiment")
 STATES = ("assigned", "in_progress", "blocked", "paused", "submitted", "completed", "canceled")
@@ -98,6 +99,8 @@ def check_reference(db, account, item):
             return {key: target[key] for key in ("paper_id", "document_id") if target[key] is not None}
     elif kind == "experiment":
         experiments.require_experiment(db, item_id, account)
+    elif kind == "skill":
+        return skills.active_reference(db, account, item_id)
     else:
         table, require = (("research_findings", findings.require_finding) if kind == "finding" else
                           ("research_goals", goals.require_goal))
@@ -196,7 +199,10 @@ def summary(db, account, row):
         return {**result, "source_unavailable": True,
                 "actions": [action for action in actions if action in ("pause", "cancel", "release")]}
     return {**result, "objective": row["objective"], "acceptance_criteria": row["acceptance_criteria"],
-            "sources": source_items, "source_unavailable": False, "actions": actions}
+            "sources": [item for item in source_items if item["kind"] != "skill"],
+            "required_skills": [{key: value for key, value in item.items() if key != "kind"}
+                                for item in source_items if item["kind"] == "skill"],
+            "source_unavailable": False, "actions": actions}
 
 
 def read(db, account, *, goal_id=None, before=None):
@@ -250,10 +256,15 @@ def create(db, account, data, now):
             raise ValueError("Choose active Local AI or Cloud AI accounts.")
         agents[agent["id"]] = agent
     sources = references(data.get("sources", []))
+    skill_ids = data.get("required_skill_ids", [])
+    if (not isinstance(skill_ids, list) or len(skill_ids) > MAX_REQUIRED_SKILLS
+            or any(not reviews.valid_id(item) for item in skill_ids)):
+        raise ValueError(f"Choose up to {MAX_REQUIRED_SKILLS} required skill IDs.")
+    sources.extend({"kind": "skill", "id": skill_id} for skill_id in dict.fromkeys(skill_ids))
     try:
         check_references(db, (account, *agents.values()), sources)
     except (sharing.AccessDenied, LookupError, ValueError):
-        raise ValueError("Share every source and its supporting evidence with each allowlisted agent first.") from None
+        raise ValueError("Share every source, supporting evidence, and required skill with each allowlisted agent first.") from None
     claimant = next(iter(agents.values())) if legacy else None
     goal_id = db.execute(
         """INSERT INTO agent_goals(requester_id,agent_id,agent_role,objective,acceptance_criteria,sources,status,revision,created,updated)

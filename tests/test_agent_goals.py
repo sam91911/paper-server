@@ -45,6 +45,28 @@ class AgentGoalTests(unittest.TestCase):
         self.assertEqual([row["username"] for row in self.api(query)], ["worker"])
         self.assertEqual([row["username"] for row in self.api("/api/usernames?q=work")], ["work-human", "worker"])
 
+    def test_required_skill_is_fetchable_by_each_allowed_agent(self):
+        skill = self.api("/api/skills", data={"title": "Benchmark procedure", "markdown": "Run the local benchmark.",
+                                             "recipients": ["worker"]})["skill"]
+        payload = self.assignment(agents=["worker", "other"], required_skill_ids=[skill["id"]])
+        del payload["agent"]
+        self.api(data=payload, expected=400)
+        skill = self.api("/api/skills", data={"action": "update", "id": skill["id"], "revision": skill["revision"],
+                                             "title": skill["title"], "markdown": skill["markdown"],
+                                             "recipients": ["worker", "other"]})["skill"]
+        goal = self.api(data=payload)["goal"]
+        path = f"{ROUTE}?id={goal['id']}"
+        for agent in ("worker", "other"):
+            required = self.api(path, user=agent)["goal"]["required_skills"]
+            self.assertEqual(required, [{"id": skill["id"], "api_path": f"/api/skills/{skill['id']}",
+                                        "title": skill["title"], "revision": skill["revision"]}])
+            self.assertEqual(self.api(required[0]["api_path"], user=agent)["skill"]["markdown"], skill["markdown"])
+        self.api(path, user="outsider", expected=404)
+        self.api(required[0]["api_path"], user="outsider", expected=404)
+        self.api("/api/skills", data={"action": "archive", "id": skill["id"], "revision": skill["revision"]})
+        self.api(path, user="worker", expected=404)
+        self.assertTrue(self.api(path)["goal"]["source_unavailable"])
+
     def action(self, goal, action, *, user="worker", expected=200, **extra):
         return self.api(user=user, expected=expected, data={
             "id": goal["id"], "revision": goal["revision"], "action": action, "request_id": uuid4().hex, **extra,

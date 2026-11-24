@@ -1,13 +1,27 @@
 name: CI
 on: [push, pull_request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: SQLite and browser scripts (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -15,7 +29,9 @@ jobs:
       - run: python -m pip install .
       - run: bash scripts/check.sh
   postgres:
+    name: PostgreSQL 16 migrations and restore
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -38,3 +54,63 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y poppler-utils postgresql-client-16
       - run: python -m pip install '.[postgres]'
       - run: bash scripts/check.sh --postgres
+
+  package:
+    name: Installed server and enrolled agent workflow
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: sudo apt-get update && sudo apt-get install -y poppler-utils
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/v0.')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"v0\.(0|[1-9]\d*)\.(0|[1-9]\d*)", tag):
+              raise SystemExit(f"Expected a v0.x.y release tag, received {tag!r}.")
+          for package in ("pyproject.toml", "paper_client/pyproject.toml"):
+              version = tomllib.loads(Path(package).read_text())["project"]["version"]
+              if f"v{version}" != tag:
+                  raise SystemExit(f"{package} declares {version}, which differs from {tag}.")
+          PY
+      - run: bash scripts/check-install.sh "$RUNNER_TEMP/paper-release"
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v0.')
+        with:
+          name: paper-release
+          path: ${{ runner.temp }}/paper-release
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v0.')
+    needs: [test, postgres, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: paper-release
+          path: ${{ runner.temp }}/paper-release
+      - name: Publish tested packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cd "$RUNNER_TEMP/paper-release"
+          sha256sum -- *.whl paper-client.zip > SHA256SUMS.txt
+          gh release create "$RELEASE_TAG" --verify-tag --generate-notes --title "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" *.whl paper-client.zip SHA256SUMS.txt

@@ -128,6 +128,8 @@ SCHEMAS = {
     "AgentGoal": obj({"id": ID, "agent": nullable(STRING), "agent_role": nullable(AI_ROLE),
                       "agents": array(STRING), "requester": STRING,
                       "objective": STRING, "acceptance_criteria": STRING, "sources": AGENT_GOAL_REFERENCES,
+                      "required_skills": array(obj({"id": ID, "title": STRING, "revision": ID, "api_path": STRING},
+                                                   ("id", "title", "revision", "api_path"))),
                       "status": AGENT_GOAL_STATUS, "revision": ID, "created": COUNT, "updated": COUNT,
                       "source_unavailable": BOOLEAN, "actions": array(AGENT_GOAL_ACTION)},
                      ("id", "status", "revision", "agent", "agent_role", "agents", "requester", "source_unavailable", "actions")),
@@ -222,7 +224,8 @@ PATHS = {
             body={"oneOf": [
                 {**obj({"action": enum("create"), "request_id": AGENT_GOAL_REQUEST_ID, "agent": STRING,
                      "agents": schema("array", items=STRING, minItems=1, maxItems=50),
-                     "objective": STRING, "acceptance_criteria": STRING, "sources": AGENT_GOAL_REFERENCES},
+                     "objective": STRING, "acceptance_criteria": STRING, "sources": AGENT_GOAL_REFERENCES,
+                     "required_skill_ids": schema("array", items=ID, maxItems=agent_goals.MAX_REQUIRED_SKILLS)},
                     ("action", "request_id", "objective", "acceptance_criteria")),
                  "oneOf": [{"required": ["agents"]}, {"required": ["agent"]}]},
                 obj({"action": AGENT_GOAL_ACTION, "request_id": AGENT_GOAL_REQUEST_ID, "id": ID, "revision": ID,

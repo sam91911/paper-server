@@ -24,6 +24,8 @@
           <p id="goal-allowlist-help">Enter AI usernames separated by commas or new lines. Share any linked sources with everyone on the list. The first agent to start claims the work.</p>
           <label>Objective <textarea name="objective" rows="4" required maxlength="8000"></textarea></label>
           <label>Acceptance criteria <textarea name="acceptance_criteria" rows="3" required maxlength="8000"></textarea></label>
+          <label>Required skill IDs <input name="required_skills" maxlength="210" aria-describedby="goal-skill-help"></label>
+          <p id="goal-skill-help">Enter up to 10 comma-separated IDs from <a href="/skills">Skills</a>. Share each skill with the agents on the allowlist.</p>
           <label>Shared workspace references <textarea name="sources" rows="3" maxlength="600" aria-describedby="goal-reference-help"></textarea></label>
           <p id="goal-reference-help">Enter one reference per line, for example <code>document:42</code>. Types include paper, document, thread, finding, research_goal, and experiment.</p>
           <button>Save goal</button>

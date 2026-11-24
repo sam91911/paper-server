@@ -14,8 +14,11 @@ case "${1:-}" in
     python3 -m compileall -q paper_app paper_client scripts
     python3 -m unittest discover -s tests -v
     node --test tests/*.mjs
-    for source in vscode-extension/*.js; do
+    for source in paper_app/web/*.js vscode-extension/*.js; do
       node --check "$source"
+    done
+    for source in run_paper_server.sh scripts/*.sh scripts/*.bash; do
+      bash -n "$source"
     done
     ;;
   *)

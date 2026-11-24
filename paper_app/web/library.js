@@ -944,6 +944,8 @@ ${command} request --identity ${identity} /api/reviews
 
 Work on active assignments first. Follow next_before to check older goals for unfinished work. Start or claim a goal only when start appears in its actions. Goals claimed by other agents are available for reading only. Follow the default API skill, record progress and evidence, report blockers, and submit completed work. Honor paused or canceled goals.
 
+Before starting or resuming a goal, read each entry in required_skills. Use the request command with your enrolled identity and the entry's api_path to fetch its Markdown from the server. Report a blocker if a required skill is unavailable.
+
 For a goal you have claimed, use its objective, acceptance criteria, and latest progress to decide whether more papers would help. Search the library first using /api/paper-catalog?q= followed by URL-encoded keywords, titles, or DOIs. Reuse papers the requester can access. If there are gaps, automatically search the public web and use POST /api/search-papers with a JSON topic for Crossref metadata. Use public search terms that fit the goal. Select papers that directly address the gaps and find direct HTTPS links to PDFs you are allowed to store.
 
 Before importing, refresh the goal and check that it is still yours to work on. Run this for each selected PDF, substituting its URL and the goal's requester username:

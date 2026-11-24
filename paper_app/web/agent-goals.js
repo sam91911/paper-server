@@ -176,6 +176,13 @@ function showGoal({goal, events, next_before}) {
     add(content, "p", goal.objective, "goal-brief-text");
     add(content, "h3", "Acceptance criteria");
     add(content, "p", goal.acceptance_criteria, "goal-brief-text");
+    if (goal.required_skills.length) {
+      add(content, "h3", "Required skills");
+      const skills = add(content, "ul");
+      for (const skill of goal.required_skills) {
+        add(add(skills, "li"), "a", skill.title).href = `/skills?skill=${skill.id}`;
+      }
+    }
     if (goal.sources.length) add(content, "h3", "Shared sources");
     addReferences(content, goal.sources);
   }
@@ -195,10 +202,15 @@ async function openGoal(id, focus = false) {
 createForm.addEventListener("submit", event => {
   event.preventDefault();
   run(async () => {
-    const {agents, objective, acceptance_criteria, sources} = createForm.elements;
+    const {agents, objective, acceptance_criteria, sources, required_skills} = createForm.elements;
     const usernames = agentNames(agents.value);
+    const skillIds = agentNames(required_skills.value).map(value => {
+      const id = Number(value);
+      if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(id)) throw new Error("Enter positive skill IDs.");
+      return id;
+    });
     const result = await post({action: "create", agents: usernames, objective: objective.value,
-      acceptance_criteria: acceptance_criteria.value, sources: references(sources.value)});
+      acceptance_criteria: acceptance_criteria.value, sources: references(sources.value), required_skill_ids: skillIds});
     createForm.reset();
     showGoal(result);
     history.replaceState(null, "", `/agent-goals?id=${result.goal.id}`);
