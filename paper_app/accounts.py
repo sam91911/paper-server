@@ -14,6 +14,7 @@ ROLES = ("user", "member", "local", "cloud")
 ROLE_SQL = """CASE WHEN {alias}.role = 'user' THEN
     CASE WHEN {alias}.trusted=1 THEN 'user' ELSE 'member' END ELSE {alias}.ai_location END"""
 SESSION_SECONDS = 7 * 24 * 60 * 60
+HUMAN_INVITE_SECONDS = 24 * 60 * 60
 AI_SESSION_PREFIX = "pl_ai_"
 TOKEN_PATTERN = r"[A-Za-z0-9_-]{43}"
 
@@ -91,6 +92,12 @@ def initialize(db):
             db.execute(f"ALTER TABLE accounts ADD COLUMN {name} {declaration}")
     db.execute("DROP INDEX IF EXISTS accounts_email")
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS trusted_account_email ON accounts(email) WHERE trusted=1")
+    invite_columns = {row["name"] for row in db.execute("PRAGMA table_info(human_invites)")}
+    if "invite_id" not in invite_columns:
+        db.execute("ALTER TABLE human_invites ADD COLUMN invite_id TEXT")
+        db.execute("ALTER TABLE human_invites ADD COLUMN issuer_id INTEGER REFERENCES accounts(id)")
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS human_invites_identity ON human_invites(invite_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS human_invites_issuer ON human_invites(issuer_id,expires)")
 
 
 def current_account(db, token, *, application_key=False, ai_session=False):
@@ -127,13 +134,40 @@ def person_name(name):
     return name
 
 
-def create_invite(db, email):
+def create_invite(db, email, *, issuer_id=None):
     email = email_address(email)
-    token = secrets.token_urlsafe(32)
     now = int(time.time())
+    if issuer_id is not None and db.execute(
+        "SELECT 1 FROM human_invites WHERE email=? AND expires>? AND issuer_id IS DISTINCT FROM ?",
+        (email, now, issuer_id),
+    ).fetchone():
+        raise ValueError("An invitation for this email address is already pending.")
+    token, invite_id = secrets.token_urlsafe(32), secrets.token_hex(16)
     db.execute("DELETE FROM human_invites WHERE expires<=? OR email=?", (now, email))
-    db.execute("INSERT INTO human_invites VALUES (?,?,?)", (token_hash(token), email, now + 86400))
-    return token
+    db.execute(
+        "INSERT INTO human_invites(token_hash,email,expires,invite_id,issuer_id) VALUES (?,?,?,?,?)",
+        (token_hash(token), email, now + HUMAN_INVITE_SECONDS, invite_id, issuer_id),
+    )
+    return token, invite_id
+
+
+def invite_url(origin, token):
+    return f"{origin}/account#invite={token}"
+
+
+def pending_invites(db, issuer_id):
+    return [dict(row) for row in db.execute(
+        "SELECT invite_id,email,expires FROM human_invites WHERE issuer_id=? AND expires>? "
+        "ORDER BY expires DESC, email", (issuer_id, int(time.time())),
+    )]
+
+
+def revoke_invite(db, issuer_id, invite_id):
+    if not isinstance(invite_id, str) or not re.fullmatch(r"[a-f0-9]{32}", invite_id):
+        raise ValueError("Choose a pending invitation.")
+    if not db.execute("DELETE FROM human_invites WHERE issuer_id=? AND invite_id=? AND expires>?",
+                      (issuer_id, invite_id, int(time.time()))).rowcount:
+        raise LookupError("Human invitation unavailable.")
 
 
 def register_human(db, data, *, key_only=False):
@@ -237,6 +271,8 @@ def set_role(db, username, role):
     other_keys = "ai_public_keys" if role in ("user", "member") else "human_public_keys"
     for table in ("sessions", "application_keys", other_keys):
         db.execute(f"DELETE FROM {table} WHERE account_id=?", (row["id"],))
+    if role != "user":
+        db.execute("DELETE FROM human_invites WHERE issuer_id=?", (row["id"],))
 
 
 def authenticate(db, username, password):

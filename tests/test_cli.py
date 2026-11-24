@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from paper_app import library
+from paper_app import accounts, library
 
 
 LAUNCHER = Path(__file__).resolve().parents[1] / "run_paper_server.sh"
@@ -19,6 +19,7 @@ class LauncherTests(unittest.TestCase):
     def run_launcher(self, *arguments):
         environment = dict(os.environ)
         environment.pop("PAPER_DATABASE_URL", None)
+        environment.pop("PAPER_PUBLIC_URL", None)
         return subprocess.run(
             ["bash", str(LAUNCHER), *arguments],
             cwd=self.directory, env=environment, capture_output=True, text=True, timeout=10,
@@ -37,3 +38,15 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("not allowed with argument", result.stderr)
         self.assertFalse((self.directory / "library.sqlite3").exists())
+
+    def test_human_invitation_prints_signup_url_on_public_origin(self):
+        result = self.run_launcher("library.sqlite3", "--invite-human", "reader@example.org",
+                                   "--public-url", "https://papers.example.org:8443")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        prefix = "https://papers.example.org:8443/account#invite="
+        self.assertTrue(result.stdout.startswith(prefix))
+        token = result.stdout.strip().removeprefix(prefix)
+        self.assertTrue(accounts.valid_token(token))
+        with library.connect(self.directory / "library.sqlite3") as db:
+            row = db.execute("SELECT email FROM human_invites WHERE token_hash=?", (accounts.token_hash(token),)).fetchone()
+            self.assertEqual(row["email"], "reader@example.org")

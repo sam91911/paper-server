@@ -23,7 +23,6 @@ New human accounts are members. Members can create items and receive direct shar
 新註冊的人員帳號為一般成員，可建立項目並接收指定分享。受信任人員資格可透過邀請授予。若只想與特定人員或 AI 帳號分享，請選擇 **Owner only** 並在 **Share with usernames** 輸入帳號名稱。移除名稱後，權限立即撤回。論文權限也適用於相關指標、留言與 CSV 資料列。查看標註來源位置的留言時，須有來源及所有上層留言的存取權。
 
 ```sh
-./run_paper_server.sh ./papers.sqlite3 --invite-human reader@example.org
 ./run_paper_server.sh ./papers.sqlite3 --create-account reviewer local
 ./run_paper_server.sh ./papers.sqlite3 --set-account-role reviewer cloud
 ```
@@ -32,9 +31,30 @@ Roles are `member`, `user` (trusted human), `local` (local AI), and `cloud` (clo
 
 角色包含 `member`（一般成員）、`user`（受信任人員）、`local`（本機 AI）與 `cloud`（雲端 AI）。在 **Account** 建立應用程式金鑰並妥善保管。金鑰沿用帳號權限。變更密碼或角色會登出既有工作階段，並撤銷應用程式金鑰。
 
+## Invite a friend · 邀請朋友
+
+Sign in as a trusted human and open **Account → Invite a friend**. Enter your friend's email address, choose **Generate invitation link**, then choose **Copy link** and send it to them privately. The link opens **Account** and fills in the invitation code. Your friend can sign up with a private key or password using that email address. The link grants trusted access, expires after 24 hours, and is consumed by the first successful signup.
+
+以受信任人員帳號登入，開啟 **Account → Invite a friend**。輸入朋友的電子郵件地址，選擇 **Generate invitation link** 及 **Copy link**，再私下傳送給對方。開啟網址後，**Account** 頁面會自動填入邀請碼。受邀者須以該電子郵件地址及私鑰或密碼註冊。邀請會授予受信任權限，有效期為 24 小時，首次成功註冊後即失效。
+
+Use **Pending invitations** to check expiry or revoke an unused link you issued. The URL appears when you generate it. If you need to copy a link again after reloading, generate a replacement for the same address. That invalidates your previous link.
+
+在 **Pending invitations** 可查看自己發出的邀請何時到期，或撤銷尚未使用的邀請。產生邀請時會顯示網址。如果重新載入後需要再次複製網址，請為同一地址重新產生邀請，舊網址隨即失效。
+
+The browser uses the server's configured public HTTPS address when available. To generate a link from the command line, use `--invite-human`. For a remote library, set the same `PAPER_PUBLIC_URL` or pass `--public-url`. For a loopback library, pass `--port` if the server uses a custom port.
+
+瀏覽器會優先使用伺服器設定的公開 HTTPS 位址。也可在命令列使用 `--invite-human` 產生邀請。若論文庫部署於遠端，請使用相同的 `PAPER_PUBLIC_URL` 或提供 `--public-url`。若本機伺服器使用自訂連接埠，請提供相同的 `--port`。
+
+```sh
+./run_paper_server.sh ./papers.sqlite3 --invite-human reader@example.org \
+  --public-url https://papers.example.org
+```
+
 Trusted humans can also create an invitation under **Account → Register an AI agent**. The agent enrolls its public key and signs in with its private key. Changing an enrolled account to a human role revokes its public-key sign-in. [AI registration and connection guide](ai-api.md#register-an-ai-agent--註冊-ai-代理)
 
 受信任人員也可在 **Account → Register an AI agent** 發出邀請。代理註冊公鑰後，便可使用私鑰登入。將代理帳號改為人員角色時，會撤銷公鑰登入。
+
+## Google sign-in · 使用 Google 登入
 
 For optional Google sign-in, install `python3 -m pip install '.[google]'`. Register the library's origin followed by `/auth/google/callback`, for example `http://127.0.0.1:8765/auth/google/callback` for loopback. Set `PAPER_GOOGLE_CLIENT_ID` and `PAPER_GOOGLE_CLIENT_SECRET`, then restart and open the app at that origin. Google sign-in creates a member account with a generated username.
 

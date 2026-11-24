@@ -27,14 +27,23 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
   const origin = 'http://127.0.0.1:8765';
   const invitation = {registration_path: '/api/ai/register/example',
     registration_url: 'https://papers.example.org/api/ai/register/example', username: 'reviewer', role: 'cloud'};
+  const humanInvite = 'x'.repeat(43);
+  const friendUrl = 'https://papers.example.org/account#invite=' + humanInvite;
+  const hash = path === '/account' ? '#invite=' + humanInvite : '';
+  let replaced;
   let clipboard = '';
-  const context = {document, location: {pathname: path, search: '', href: origin + path, origin}, URLSearchParams,
-    localStorage: {getItem() {return null;}}, history: {replaceState() {}},
+  const context = {document, location: {pathname: path, search: '', href: origin + path + hash, origin, hash}, URLSearchParams,
+    localStorage: {getItem() {return null;}}, history: {replaceState(_state, _title, url) {replaced = url;}},
     navigator: {clipboard: {async writeText(value) {clipboard = value;}}},
     FormData: function(form) {
       return ['username', 'role'].map(name => [name, form.elements[name].value]);
     },
     fetch: async (route, options) => {
+      if (route === '/api/human-invitations') {
+        if (!options) return {ok: true, json: async () => ({invitations: []})};
+        assert.deepEqual(JSON.parse(options.body), {email: 'friend@example.org'});
+        return {ok: true, json: async () => ({invitation_url: friendUrl, invite_id: 'fixture'})};
+      }
       if (route === '/api/ai/invitations') {
         if (!options) return {ok: true, json: async () => ({agents: [], invitations: []})};
         assert.deepEqual(JSON.parse(options.body), {username: invitation.username, role: invitation.role});
@@ -48,11 +57,25 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(document.title, expectedTitle);
   const status = document.getElementById(path === '/account' ? 'account-status' : path === '/documents' ? 'document-status' : path === '/papers' ? 'library-status' : 'status');
-  assert.equal(status.textContent, '', `Unexpected startup error on ${path}: ${status.textContent}`);
+  assert.equal(status.textContent, path === '/account' ?
+    'Sign out if needed, then sign up with the email address that received this invitation.' : '',
+  `Unexpected startup message on ${path}: ${status.textContent}`);
   if (path === '/account') {
+    assert.equal(replaced, '/account');
+    assert.equal(document.getElementById('human-key-signup-panel').open, true);
+    assert.equal(document.getElementById('human-key-register').elements.invite.value, humanInvite);
+    assert.equal(document.getElementById('signup').elements.invite.value, humanInvite);
+    assert.equal(document.getElementById('human-invitation-panel').hidden, true);
     assert.equal(document.getElementById('ai-registration-panel').hidden, true);
     response.account = {id: 1, username: 'owner', role: 'user'};
     await vm.runInContext('loadLibrary()', context);
+    assert.equal(document.getElementById('human-invitation-panel').hidden, false);
+    const friendForm = document.getElementById('create-human-invitation');
+    friendForm.elements.email.value = 'friend@example.org';
+    await friendForm.fire('submit');
+    assert.equal(document.getElementById('human-invitation-result').hidden, false);
+    await document.getElementById('copy-human-invitation').fire('click');
+    assert.equal(clipboard, friendUrl);
     assert.equal(document.getElementById('ai-registration-panel').hidden, false);
     const form = document.getElementById('create-ai-invitation');
     form.elements.username.value = invitation.username;

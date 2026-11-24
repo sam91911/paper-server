@@ -83,6 +83,18 @@ class PostgreSQLTests(unittest.TestCase):
         signed = {"challenge": login["challenge"], "signature": agent.encode(private_key.sign(login["message"].encode()))}
         self.assertEqual(self.api("/api/human-key/login", data=signed)["account"], account)
 
+    def test_human_browser_invitation_management(self):
+        library.initialize(self.target)
+        with library.connect(self.target) as db:
+            issuer = accounts.create_account(db, "owner", "sample password", "user")
+            cookie = accounts.start_session(db, issuer, None)
+        route = "/api/human-invitations"
+        invite = self.api(route, cookie=cookie, data={"email": "reader@example.org"})
+        pending = self.api(route, cookie=cookie)["invitations"]
+        self.assertEqual([item["invite_id"] for item in pending], [invite["invite_id"]])
+        self.api(route, cookie=cookie, data={"action": "revoke", "invite_id": invite["invite_id"]})
+        self.assertEqual(self.api(route, cookie=cookie)["invitations"], [])
+
     def test_agent_goal_updates_and_replay(self):
         library.initialize(self.target)
         with library.connect(self.target) as db:

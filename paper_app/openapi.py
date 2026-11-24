@@ -285,6 +285,23 @@ PATHS = {
                  ("username", "challenge", "signature")), security=[],
         description="Sign the ASCII string paper-library:login:<username>:<challenge>."
                     " The access token expires in 15 minutes.")},
+    "/api/human-invitations": {
+        "get": operation("List human signup invitations you issued that are still pending",
+            obj({"invitations": array(obj({"invite_id": STRING, "email": schema("string", format="email"), "expires": COUNT},
+                                         ("invite_id", "email", "expires")))}, ("invitations",)),
+            description="Requires a trusted human browser session. Expiry is a Unix timestamp.",
+            security=[{"BrowserSession": []}]),
+        "post": operation("Create or revoke a one-time human signup link",
+            acknowledgement(invitation_url=schema("string", format="uri"), invite_id=STRING, expires_in=COUNT),
+            body={"oneOf": [
+                obj({"action": enum("create"), "email": schema("string", format="email")}, ("email",)),
+                obj({"action": enum("revoke"), "invite_id": STRING}, ("action", "invite_id")),
+            ]},
+            description="Requires a trusted human browser session. Creation returns the link, its ID, and its lifetime in seconds. "
+                        "The email-bound link grants trusted access on signup and expires after 24 hours. "
+                        "You can replace or revoke your own pending link.",
+            security=[{"BrowserSession": []}]),
+    },
     "/api/account": {"get": operation("Check the current account",
         obj({"account": nullable(ref("Account")), "google_available": BOOLEAN,
              "sign_in_keys": array(obj({"key_id": STRING, "label": STRING, "created": nullable(COUNT)}))}, ("account",)),

@@ -130,6 +130,12 @@ class Handler(BaseHTTPRequestHandler):
             raise sharing.AccessDenied
         return account
 
+    def human_invitation_issuer(self, db):
+        account = self.require_browser_account(db)
+        if account["role"] != "user":
+            raise sharing.AccessDenied
+        return account["id"]
+
     def request_origin(self):
         host = (self.headers.get("Host") or "").lower()
         public = getattr(self.server, "public_url", None)
@@ -214,6 +220,8 @@ class Handler(BaseHTTPRequestHandler):
             self.read_health()
         elif route == "/api/openapi.json":
             self.send_json(200, openapi.document(self.server.server_port, getattr(self.server, "public_url", None)))
+        elif route == "/api/human-invitations":
+            self.read_human_invitations()
         elif route == "/api/ai/invitations":
             self.read_ai_invitations(url)
         elif route == "/api/agent-goals":
@@ -457,6 +465,20 @@ class Handler(BaseHTTPRequestHandler):
             LOG.error("Agent goal read failed (%s)", type(error).__name__)
             self.send_json(500, {"error": "Could not read agent goals."})
 
+    def read_human_invitations(self):
+        try:
+            with library.connect(self.server.database) as db:
+                storage.begin(db)
+                invitations = accounts.pending_invites(db, self.human_invitation_issuer(db))
+            self.send_json(200, {"invitations": invitations})
+        except accounts.SignInRequired:
+            self.send_json(401, {"error": "Sign in to continue."})
+        except sharing.AccessDenied:
+            self.send_json(403, {"error": "A trusted human account is required."})
+        except storage.ERRORS as error:
+            LOG.error("Human invitation read failed (%s)", type(error).__name__)
+            self.send_json(500, {"error": "Could not read human invitations."})
+
     def read_ai_invitations(self, url):
         try:
             before = parse_qs(url.query, keep_blank_values=True).get("before", [None])[0]
@@ -615,6 +637,7 @@ class Handler(BaseHTTPRequestHandler):
         except LookupError:
             errors = {"/api/skills": "Skill unavailable.", "/api/reviews": "Review unavailable.",
                       "/api/agent-goals": "Agent goal unavailable.", "/api/ai/invitations": "AI invitation or account unavailable.",
+                      "/api/human-invitations": "Human invitation unavailable.",
                       "/api/human-key/revoke": "Sign-in key unavailable."}
             self.send_json(404, {"error": errors.get(self.path, "Unknown route")})
 
@@ -693,6 +716,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(500, {"error": "Could not save the local PDF import"})
 
     def update(self, db, data):
+        if self.path == "/api/human-invitations":
+            issuer_id = self.human_invitation_issuer(db)
+            action = data.get("action", "create")
+            if action == "revoke":
+                accounts.revoke_invite(db, issuer_id, data.get("invite_id"))
+                return
+            if action != "create":
+                raise ValueError("Choose create or revoke.")
+            token, invite_id = accounts.create_invite(db, data.get("email"), issuer_id=issuer_id)
+            origin = getattr(self.server, "public_url", None) or self.request_origin()
+            return {"invitation_url": accounts.invite_url(origin, token), "invite_id": invite_id,
+                    "expires_in": accounts.HUMAN_INVITE_SECONDS}
         if self.path == "/api/agent-goals":
             return agent_goals.update(db, self.require_account(db), data)
         if self.path == "/api/ai/invitations":
@@ -768,7 +803,7 @@ def main():
                         help="Public HTTPS origin served through a local reverse proxy")
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--import-csv", type=Path, help="Import a metrics CSV and exit")
-    modes.add_argument("--invite-human", metavar="EMAIL", help="Issue a one-time browser signup code")
+    modes.add_argument("--invite-human", metavar="EMAIL", help="Print a one-time browser signup URL")
     modes.add_argument("--create-account", nargs=2, metavar=("USERNAME", "ROLE"))
     modes.add_argument("--set-account-role", nargs=2, metavar=("USERNAME", "ROLE"))
     modes.add_argument("--set-tool-approver", metavar="USERNAME", help="Authorize a trusted human to approve tool jobs")
@@ -808,10 +843,13 @@ def main():
             print(f"Registered tool {tool_id}.")
             return
         if args.invite_human:
+            if not args.public_url and not 0 < args.port <= 65535:
+                raise ValueError("Choose the library's port or set its public URL.")
+            origin = public_url(args.public_url) if args.public_url else f"http://127.0.0.1:{args.port}"
             with library.connect(database) as db:
                 storage.begin(db, write=True)
-                token = accounts.create_invite(db, args.invite_human)
-            print(f"Invitation for {args.invite_human} (valid for 24 hours): {token}")
+                token, _ = accounts.create_invite(db, args.invite_human)
+            print(accounts.invite_url(origin, token))
             return
         if args.create_account or args.set_account_role:
             username, role = args.create_account or args.set_account_role

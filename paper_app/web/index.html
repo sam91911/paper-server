@@ -243,7 +243,7 @@
       <label>Paper Library private key file <input name="key_file" type="file" accept=".json,application/json" required></label>
       <button>Sign in with private key</button>
     </form>
-    <details>
+    <details id="human-key-signup-panel">
       <summary>Create an account with a private key</summary>
       <form id="human-key-register">
         <label>Name <input name="display_name" autocomplete="name" required maxlength="120"></label>
@@ -289,6 +289,21 @@
       <a data-download-key hidden>Download private key</a>
       <button data-save-key disabled>Save sign-in key</button>
     </form>
+  </details>
+  <details id="human-invitation-panel" hidden>
+    <summary>Invite a friend</summary>
+    <form id="create-human-invitation" class="account-actions">
+      <label>Friend’s email address <input name="email" type="email" required maxlength="254" autocomplete="off"></label>
+      <button>Generate invitation link</button>
+    </form>
+    <div id="human-invitation-result" hidden>
+      <p>Send this link privately to your friend. It grants trusted access and can be used once within 24 hours.</p>
+      <label>Invitation link <input id="human-invitation-url" readonly autocomplete="off" spellcheck="false"></label>
+      <button id="copy-human-invitation" type="button" class="secondary">Copy link</button>
+    </div>
+    <h3>Pending invitations</h3>
+    <button id="refresh-human-invitations" type="button" class="secondary">Refresh invitations</button>
+    <div id="pending-human-invitations"></div>
   </details>
   <details id="ai-registration-panel" hidden>
     <summary>Register an AI agent</summary>

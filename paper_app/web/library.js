@@ -83,6 +83,7 @@ function showAccount() {
   username.hidden = !account;
   username.textContent = account ? `Username: ${account.username}` : "";
   element("key-panel").hidden = !account;
+  element("human-invitation-panel").hidden = account?.role !== "user";
   element("ai-registration-panel").hidden = account?.role !== "user";
   const email = element("account-email");
   email.hidden = !account?.email;
@@ -617,6 +618,10 @@ async function loadLibrary(paperId) {
   libraryData = await api(route);
   if (accountPage) {
     if (previousAccount !== libraryData.account?.id) {
+      element("human-invitation-url").value = "";
+      element("human-invitation-result").hidden = true;
+      delete element("human-invitation-result").dataset.inviteId;
+      element("pending-human-invitations").replaceChildren();
       element("ai-invitation-prompt").value = "";
       element("ai-invitation-result").hidden = true;
       element("managed-ai-agents").replaceChildren();
@@ -861,6 +866,7 @@ submit(signupForm, async () => {
   try {
     await api("register", Object.fromEntries(new FormData(signupForm)));
     signupForm.reset();
+    element("human-key-register").elements.invite.value = "";
     notifySessionChange();
     await loadLibrary();
     accountStatus.textContent = "Account created.";

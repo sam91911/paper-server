@@ -89,15 +89,23 @@ class HttpTests(unittest.TestCase):
         api("/api/account", headers={"Host": "unconfigured.example.org"}, status=403)
         invitation = api("/api/ai/invitations", {"username": "reviewer", "role": "cloud"}, auth=True)
         self.assertEqual(invitation["registration_url"], origin + invitation["registration_path"])
-        with library.connect(self.db) as db:
-            invite = accounts.create_invite(db, "reader@example.org")
+        human_invite = api("/api/human-invitations", {"email": "reader@example.org"}, auth=True)
+        self.assertEqual(human_invite["expires_in"], 86400)
+        prefix = origin + "/account#invite="
+        self.assertTrue(human_invite["invitation_url"].startswith(prefix))
+        invite = human_invite["invitation_url"].removeprefix(prefix)
         registration = {**prove("register"), "email": "reader@example.org", "display_name": "Reader",
                         "public_key": encode(private_key.public_key().public_bytes_raw()), "invite": invite}
         api("/api/human-key/register", registration, headers={"Host": "127.0.0.1:8765"}, status=401)
+        api("/api/human-key/register", {**registration, "email": "another@example.org"}, status=400)
         account = api("/api/human-key/register", registration)["account"]
         self.assertEqual((account["role"], account["key_only"]), ("user", True))
         self.assertTrue(SimpleCookie(self.response_headers["Set-Cookie"])[accounts.COOKIE]["secure"])
         api("/api/human-key/register", registration, status=401)
+        replay = api("/api/register", {"username": "another-reader", "password": "sample new password",
+                                       "email": "reader@example.org", "display_name": "Reader", "invite": invite},
+                     status=400)
+        self.assertIn("valid invitation", replay["error"])
         login = prove("login")
         self.assertEqual(api("/api/human-key/login", login)["account"]["username"], "Reader")
         self.token = SimpleCookie(self.response_headers["Set-Cookie"])[accounts.COOKIE].value
@@ -117,6 +125,47 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(api("/api/human-key/login", prove("login"))["account"]["id"], account["id"])
         private_key = original
         api("/api/human-key/login", prove("login"), status=401)
+
+    def test_human_invitation_issuance_requires_trusted_browser_session(self):
+        route = "/api/human-invitations"
+        email = {"email": "friend@example.org"}
+        with library.connect(self.db) as db:
+            member_id = accounts.create_account(db, "member", "sample member password", "member")
+            member_token = accounts.start_session(db, member_id, None)
+            other_id = accounts.create_account(db, "other-issuer", "sample issuer password", "user")
+            other_token = accounts.start_session(db, other_id, None)
+            key = accounts.create_key(db, 1, "test")
+        self.assertEqual(self.request(route, False, email)[0], 401)
+        self.assertEqual(self.request(route, True, email, headers={"Authorization": "Bearer " + key})[0], 401)
+        self.assertEqual(self.request(route, False, email, headers={"Cookie": "paper_session=" + member_token})[0], 403)
+        self.assertEqual(self.request(route, False, headers={"Cookie": "paper_session=" + member_token})[0], 403)
+        self.assertEqual(self.request(route, True, email, headers={"Origin": "https://unrelated.example.org"})[0], 403)
+        public = "https://papers.example.org"
+        original = json.loads(self.request(route, True, email, public_url=public)[1])
+        replacement = json.loads(self.request(route, True, email, public_url=public)[1])
+        first, second = original["invitation_url"], replacement["invitation_url"]
+        self.assertTrue(first.startswith(public + "/account#invite="))
+        self.assertTrue(second.startswith(public + "/account#invite="))
+        self.assertNotEqual(first, second)
+        with library.connect(self.db) as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM human_invites WHERE token_hash=?",
+                                         (accounts.token_hash(first.split("=", 1)[1]),)).fetchone())
+        pending = json.loads(self.get(route)[1])["invitations"]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending, [{"invite_id": replacement["invite_id"], "email": email["email"],
+                                    "expires": pending[0]["expires"]}])
+        other = {"Cookie": "paper_session=" + other_token}
+        self.assertEqual(json.loads(self.request(route, False, headers=other)[1]), {"invitations": []})
+        self.assertEqual(self.request(route, False, email, headers=other)[0], 400)
+        revoke = {"action": "revoke", "invite_id": replacement["invite_id"]}
+        self.assertEqual(self.request(route, False, revoke, headers=other)[0], 404)
+        self.assertEqual(self.request(route, True, {"action": "revoke", "invite_id": original["invite_id"]})[0], 404)
+        self.assertEqual(self.request(route, True, revoke)[0], 200)
+        self.assertEqual(json.loads(self.get(route)[1]), {"invitations": []})
+        status, body = self.request("/api/register", False, {**email, "username": "friend", "display_name": "Friend",
+                                    "password": "sample new password", "invite": second.split("=", 1)[1]})
+        self.assertEqual(status, 400)
+        self.assertIn("valid invitation", json.loads(body)["error"])
 
     def test_existing_human_can_attach_a_key_after_sign_in(self):
         private_key = Ed25519PrivateKey.generate()
