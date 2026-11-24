@@ -724,9 +724,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if action != "create":
                 raise ValueError("Choose create or revoke.")
-            token, invite_id = accounts.create_invite(db, data.get("email"), issuer_id=issuer_id)
+            role = data.get("role", "member")
+            token, invite_id = accounts.create_invite(db, data.get("email"), issuer_id=issuer_id, role=role)
             origin = getattr(self.server, "public_url", None) or self.request_origin()
-            return {"invitation_url": accounts.invite_url(origin, token), "invite_id": invite_id,
+            return {"invitation_url": accounts.invite_url(origin, token), "invite_id": invite_id, "role": role,
                     "expires_in": accounts.HUMAN_INVITE_SECONDS}
         if self.path == "/api/agent-goals":
             return agent_goals.update(db, self.require_account(db), data)

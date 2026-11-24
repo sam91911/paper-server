@@ -287,18 +287,20 @@ PATHS = {
                     " The access token expires in 15 minutes.")},
     "/api/human-invitations": {
         "get": operation("List human signup invitations you issued that are still pending",
-            obj({"invitations": array(obj({"invite_id": STRING, "email": schema("string", format="email"), "expires": COUNT},
-                                         ("invite_id", "email", "expires")))}, ("invitations",)),
+            obj({"invitations": array(obj({"invite_id": STRING, "email": schema("string", format="email"), "expires": COUNT,
+                                         "role": enum("member", "user")}, ("invite_id", "email", "expires", "role")))}, ("invitations",)),
             description="Requires a trusted human browser session. Expiry is a Unix timestamp.",
             security=[{"BrowserSession": []}]),
         "post": operation("Create or revoke a one-time human signup link",
-            acknowledgement(invitation_url=schema("string", format="uri"), invite_id=STRING, expires_in=COUNT),
+            acknowledgement(invitation_url=schema("string", format="uri"), invite_id=STRING, expires_in=COUNT,
+                            role=enum("member", "user")),
             body={"oneOf": [
-                obj({"action": enum("create"), "email": schema("string", format="email")}, ("email",)),
+                obj({"action": enum("create"), "email": schema("string", format="email"),
+                     "role": {**enum("member", "user"), "default": "member"}}, ("email",)),
                 obj({"action": enum("revoke"), "invite_id": STRING}, ("action", "invite_id")),
             ]},
             description="Requires a trusted human browser session. Creation returns the link, its ID, and its lifetime in seconds. "
-                        "The email-bound link grants trusted access on signup and expires after 24 hours. "
+                        "The email-bound link grants the chosen role on signup and expires after 24 hours. "
                         "You can replace or revoke your own pending link.",
             security=[{"BrowserSession": []}]),
     },

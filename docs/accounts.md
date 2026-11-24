@@ -33,17 +33,17 @@ Roles are `member`, `user` (trusted human), `local` (local AI), and `cloud` (clo
 
 ## Invite a friend · 邀請朋友
 
-Sign in as a trusted human and open **Account → Invite a friend**. Enter your friend's email address, choose **Generate invitation link**, then choose **Copy link** and send it to them privately. The link opens **Account** and fills in the invitation code. Your friend can sign up with a private key or password using that email address. The link grants trusted access, expires after 24 hours, and is consumed by the first successful signup.
+Sign in as a trusted human and open **Account → Invite a friend**. Enter your friend's email address and choose an access level. **Member** is the default and lets your friend create items and open items shared directly with them. Choose **Trusted human** to grant access to trusted-only items. Generate the link, check its displayed access level, then choose **Copy link** and send it privately. The link fills in the invitation code for signup with the invited email. Your friend can use a private key or password. The link expires after 24 hours or after the first successful signup.
 
-以受信任人員帳號登入，開啟 **Account → Invite a friend**。輸入朋友的電子郵件地址，選擇 **Generate invitation link** 及 **Copy link**，再私下傳送給對方。開啟網址後，**Account** 頁面會自動填入邀請碼。受邀者須以該電子郵件地址及私鑰或密碼註冊。邀請會授予受信任權限，有效期為 24 小時，首次成功註冊後即失效。
+以受信任人員帳號登入，開啟 **Account → Invite a friend**，輸入朋友的電子郵件地址並選擇權限。預設的 **Member** 可建立項目及開啟直接分享的項目；選擇 **Trusted human** 才能授予受信任人員的存取權。產生連結後請確認顯示的權限，再選擇 **Copy link** 私下傳送。開啟網址會自動填入邀請碼，受邀者須以指定信箱及私鑰或密碼註冊。邀請有效期為 24 小時，首次成功註冊後即失效。
 
 Use **Pending invitations** to check expiry or revoke an unused link you issued. The URL appears when you generate it. If you need to copy a link again after reloading, generate a replacement for the same address. That invalidates your previous link.
 
 在 **Pending invitations** 可查看自己發出的邀請何時到期，或撤銷尚未使用的邀請。產生邀請時會顯示網址。如果重新載入後需要再次複製網址，請為同一地址重新產生邀請，舊網址隨即失效。
 
-The browser uses the server's configured public HTTPS address when available. To generate a link from the command line, use `--invite-human`. For a remote library, set the same `PAPER_PUBLIC_URL` or pass `--public-url`. For a loopback library, pass `--port` if the server uses a custom port.
+The browser uses the server's configured public HTTPS address when available. Invitations issued before access levels were added retain trusted access. To generate a trusted invitation from the command line, use `--invite-human`. For a remote library, set the same `PAPER_PUBLIC_URL` or pass `--public-url`. For a loopback library, pass `--port` if the server uses a custom port.
 
-瀏覽器會優先使用伺服器設定的公開 HTTPS 位址。也可在命令列使用 `--invite-human` 產生邀請。若論文庫部署於遠端，請使用相同的 `PAPER_PUBLIC_URL` 或提供 `--public-url`。若本機伺服器使用自訂連接埠，請提供相同的 `--port`。
+瀏覽器會優先使用伺服器設定的公開 HTTPS 位址。加入權限選項前已發出的邀請仍授予受信任權限。可在命令列使用 `--invite-human` 產生受信任邀請。若論文庫部署於遠端，請使用相同的 `PAPER_PUBLIC_URL` 或提供 `--public-url`。若本機伺服器使用自訂連接埠，請提供相同的 `--port`。
 
 ```sh
 ./run_paper_server.sh ./papers.sqlite3 --invite-human reader@example.org \

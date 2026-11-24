@@ -90,8 +90,10 @@ class PostgreSQLTests(unittest.TestCase):
             cookie = accounts.start_session(db, issuer, None)
         route = "/api/human-invitations"
         invite = self.api(route, cookie=cookie, data={"email": "reader@example.org"})
+        self.assertEqual(invite["role"], "member")
         pending = self.api(route, cookie=cookie)["invitations"]
         self.assertEqual([item["invite_id"] for item in pending], [invite["invite_id"]])
+        self.assertEqual(pending[0]["role"], "member")
         self.api(route, cookie=cookie, data={"action": "revoke", "invite_id": invite["invite_id"]})
         self.assertEqual(self.api(route, cookie=cookie)["invitations"], [])
 

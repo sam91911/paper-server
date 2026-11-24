@@ -41,8 +41,8 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     fetch: async (route, options) => {
       if (route === '/api/human-invitations') {
         if (!options) return {ok: true, json: async () => ({invitations: []})};
-        assert.deepEqual(JSON.parse(options.body), {email: 'friend@example.org'});
-        return {ok: true, json: async () => ({invitation_url: friendUrl, invite_id: 'fixture'})};
+        assert.deepEqual(JSON.parse(options.body), {email: 'friend@example.org', role: 'member'});
+        return {ok: true, json: async () => ({invitation_url: friendUrl, invite_id: 'fixture', role: 'member'})};
       }
       if (route === '/api/ai/invitations') {
         if (!options) return {ok: true, json: async () => ({agents: [], invitations: []})};
@@ -72,8 +72,10 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     assert.equal(document.getElementById('human-invitation-panel').hidden, false);
     const friendForm = document.getElementById('create-human-invitation');
     friendForm.elements.email.value = 'friend@example.org';
+    friendForm.elements.role.value = 'member';
     await friendForm.fire('submit');
     assert.equal(document.getElementById('human-invitation-result').hidden, false);
+    assert.equal(document.getElementById('human-invitation-access').textContent, 'Access level: Member');
     await document.getElementById('copy-human-invitation').fire('click');
     assert.equal(clipboard, friendUrl);
     assert.equal(document.getElementById('ai-registration-panel').hidden, false);

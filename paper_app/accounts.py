@@ -96,6 +96,8 @@ def initialize(db):
     if "invite_id" not in invite_columns:
         db.execute("ALTER TABLE human_invites ADD COLUMN invite_id TEXT")
         db.execute("ALTER TABLE human_invites ADD COLUMN issuer_id INTEGER REFERENCES accounts(id)")
+    if "role" not in invite_columns:
+        db.execute("ALTER TABLE human_invites ADD COLUMN role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('member','user'))")
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS human_invites_identity ON human_invites(invite_id)")
     db.execute("CREATE INDEX IF NOT EXISTS human_invites_issuer ON human_invites(issuer_id,expires)")
 
@@ -134,8 +136,10 @@ def person_name(name):
     return name
 
 
-def create_invite(db, email, *, issuer_id=None):
+def create_invite(db, email, *, issuer_id=None, role="user"):
     email = email_address(email)
+    if role not in ("member", "user"):
+        raise ValueError("Choose Member or Trusted human access.")
     now = int(time.time())
     if issuer_id is not None and db.execute(
         "SELECT 1 FROM human_invites WHERE email=? AND expires>? AND issuer_id IS DISTINCT FROM ?",
@@ -145,8 +149,8 @@ def create_invite(db, email, *, issuer_id=None):
     token, invite_id = secrets.token_urlsafe(32), secrets.token_hex(16)
     db.execute("DELETE FROM human_invites WHERE expires<=? OR email=?", (now, email))
     db.execute(
-        "INSERT INTO human_invites(token_hash,email,expires,invite_id,issuer_id) VALUES (?,?,?,?,?)",
-        (token_hash(token), email, now + HUMAN_INVITE_SECONDS, invite_id, issuer_id),
+        "INSERT INTO human_invites(token_hash,email,expires,invite_id,issuer_id,role) VALUES (?,?,?,?,?,?)",
+        (token_hash(token), email, now + HUMAN_INVITE_SECONDS, invite_id, issuer_id, role),
     )
     return token, invite_id
 
@@ -157,7 +161,7 @@ def invite_url(origin, token):
 
 def pending_invites(db, issuer_id):
     return [dict(row) for row in db.execute(
-        "SELECT invite_id,email,expires FROM human_invites WHERE issuer_id=? AND expires>? "
+        "SELECT invite_id,email,expires,role FROM human_invites WHERE issuer_id=? AND expires>? "
         "ORDER BY expires DESC, email", (issuer_id, int(time.time())),
     )]
 
@@ -173,19 +177,21 @@ def revoke_invite(db, issuer_id, invite_id):
 def register_human(db, data, *, key_only=False):
     email = email_address(data.get("email"))
     token = data.get("invite") or ""
+    role = "member"
     if token:
         message = "Enter a valid invitation for this email address or leave it blank."
         if not valid_token(token):
             raise ValueError(message)
         used = db.execute(
-            "DELETE FROM human_invites WHERE token_hash=? AND email=? AND expires>?",
+            "DELETE FROM human_invites WHERE token_hash=? AND email=? AND expires>? RETURNING role",
             (token_hash(token), email, int(time.time())),
-        ).rowcount
+        ).fetchone()
         if not used:
             raise ValueError(message)
+        role = used["role"]
     try:
-        return create_account(db, data.get("username"), data.get("password"), "user",
-                              display_name=person_name(data.get("display_name")), email=email, trusted=bool(token),
+        return create_account(db, data.get("username"), data.get("password"), role,
+                              display_name=person_name(data.get("display_name")), email=email,
                               key_only=key_only)
     except storage.INTEGRITY_ERRORS as error:
         raise ValueError("That username or email address is already in use.") from error

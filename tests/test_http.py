@@ -89,7 +89,8 @@ class HttpTests(unittest.TestCase):
         api("/api/account", headers={"Host": "unconfigured.example.org"}, status=403)
         invitation = api("/api/ai/invitations", {"username": "reviewer", "role": "cloud"}, auth=True)
         self.assertEqual(invitation["registration_url"], origin + invitation["registration_path"])
-        human_invite = api("/api/human-invitations", {"email": "reader@example.org"}, auth=True)
+        human_invite = api("/api/human-invitations", {"email": "reader@example.org", "role": "user"}, auth=True)
+        self.assertEqual(human_invite["role"], "user")
         self.assertEqual(human_invite["expires_in"], 86400)
         prefix = origin + "/account#invite="
         self.assertTrue(human_invite["invitation_url"].startswith(prefix))
@@ -153,7 +154,7 @@ class HttpTests(unittest.TestCase):
         pending = json.loads(self.get(route)[1])["invitations"]
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending, [{"invite_id": replacement["invite_id"], "email": email["email"],
-                                    "expires": pending[0]["expires"]}])
+                                    "expires": pending[0]["expires"], "role": "member"}])
         other = {"Cookie": "paper_session=" + other_token}
         self.assertEqual(json.loads(self.request(route, False, headers=other)[1]), {"invitations": []})
         self.assertEqual(self.request(route, False, email, headers=other)[0], 400)
@@ -166,6 +167,30 @@ class HttpTests(unittest.TestCase):
                                     "password": "sample new password", "invite": second.split("=", 1)[1]})
         self.assertEqual(status, 400)
         self.assertIn("valid invitation", json.loads(body)["error"])
+
+    def test_default_member_invitation_grants_direct_sharing_only(self):
+        route = "/api/human-invitations"
+        email = {"email": "friend@example.org"}
+        self.assertEqual(self.request(route, True, {**email, "role": "local"})[0], 400)
+        status, body = self.request(route, True, email)
+        self.assertEqual(status, 200)
+        invitation = json.loads(body)
+        self.assertEqual(invitation["role"], "member")
+        status, body = self.request("/api/register", False, {
+            **email, "username": "friend", "display_name": "Friend", "password": "sample new password",
+            "invite": invitation["invitation_url"].split("=", 1)[1], "role": "user",
+        })
+        self.assertEqual(status, 200)
+        account = json.loads(body)["account"]
+        self.assertEqual(account["role"], "member")
+        cookie = self.response_headers["Set-Cookie"].split(";", 1)[0]
+        with library.connect(self.db) as db:
+            db.execute("UPDATE paper_access SET audience='users' WHERE paper_id=?", (self.papers[1],))
+            db.execute("INSERT INTO item_grants VALUES ('paper',?,?)", (self.papers[0], account["id"]))
+        self.assertEqual(self.request(f"/api/paper-detail?paper_id={self.papers[0]}", False,
+                                      headers={"Cookie": cookie})[0], 200)
+        self.assertEqual(self.request(f"/api/paper-detail?paper_id={self.papers[1]}", False,
+                                      headers={"Cookie": cookie})[0], 404)
 
     def test_existing_human_can_attach_a_key_after_sign_in(self):
         private_key = Ed25519PrivateKey.generate()

@@ -139,7 +139,7 @@ if (accountPage) {
     for (const invitation of invitations) {
       const form = add(pendingList, "form", undefined, "archive-row");
       const expires = new Date(invitation.expires * 1000).toLocaleString();
-      add(form, "span", `${invitation.email} · Expires ${expires}`);
+      add(form, "span", `${invitation.email} · ${roleLabels[invitation.role]} · Expires ${expires}`);
       add(form, "button", "Revoke invitation", "secondary");
       submit(form, async () => {
         await api("human-invitations", {action: "revoke", invite_id: invitation.invite_id});
@@ -154,9 +154,12 @@ if (accountPage) {
   submit(inviteForm, async () => {
     const accountId = libraryData.account?.id;
     clearInviteLink();
-    const {invitation_url, invite_id} = await api("human-invitations", {email: inviteForm.elements.email.value});
+    const {invitation_url, invite_id, role} = await api("human-invitations", {
+      email: inviteForm.elements.email.value, role: inviteForm.elements.role.value,
+    });
     if (libraryData.account?.id !== accountId || libraryData.account?.role !== "user") return;
     inviteUrl.value = invitation_url;
+    element("human-invitation-access").textContent = `Access level: ${roleLabels[role]}`;
     inviteResult.dataset.inviteId = invite_id;
     inviteResult.hidden = false;
     accountStatus.textContent = "";

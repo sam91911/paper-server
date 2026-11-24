@@ -294,10 +294,17 @@
     <summary>Invite a friend</summary>
     <form id="create-human-invitation" class="account-actions">
       <label>Friend’s email address <input name="email" type="email" required maxlength="254" autocomplete="off"></label>
+      <label><span id="human-invitation-role-label">Access</span>
+        <select name="role" aria-labelledby="human-invitation-role-label">
+          <option value="member">Member</option>
+          <option value="user">Trusted human</option>
+        </select>
+      </label>
       <button>Generate invitation link</button>
     </form>
     <div id="human-invitation-result" hidden>
-      <p>Send this link privately to your friend. It grants trusted access and can be used once within 24 hours.</p>
+      <p>Send this one-time link privately to your friend. It expires after 24 hours.</p>
+      <p id="human-invitation-access"></p>
       <label>Invitation link <input id="human-invitation-url" readonly autocomplete="off" spellcheck="false"></label>
       <button id="copy-human-invitation" type="button" class="secondary">Copy link</button>
     </div>
