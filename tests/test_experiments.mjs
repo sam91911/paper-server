@@ -13,8 +13,11 @@ function element() {
     hidden: false,
     disabled: false,
     children: [],
+    get childElementCount() { return this.children.length; },
     append(child) { this.children.push(child); },
     replaceChildren() { this.children = []; this.value = ''; },
+    setAttribute(name, value) { this[name] = value; },
+    focus() { this.focused = true; },
     addEventListener(type, listener) { listeners.set(type, listener); },
     fire(type) { return listeners.get(type)({preventDefault() {}}); },
   };
@@ -80,9 +83,11 @@ async function setup(search = '') {
   const document = {getElementById: get, createElement: element, querySelectorAll: () => []};
   async function fetch(route, options) {
     calls.push({route, options});
+    const request = queued.get(route)?.shift();
+    if (request) return request.promise;
     return {ok: true, json: async () => ({id: 4})};
   }
-  vm.runInNewContext(source, {document, api, fetch, location: {search}, URLSearchParams});
+  vm.runInNewContext(source, {document, api, fetch, location: {search}, URLSearchParams, TextDecoder});
   await new Promise(resolve => setImmediate(resolve));
   const picker = get('experiments');
   function select(id) {
@@ -97,6 +102,45 @@ test('a research document link opens and prefills the new experiment form', asyn
   const {get} = await setup('?document=7');
   assert.equal(get('new-experiment').open, true);
   assert.equal(get('experiment-form').elements.research_document_id.value, '7');
+});
+
+test('archives navigate directories and preview text with line numbers', async () => {
+  const {get, next, select} = await setup();
+  const experiment = result(1);
+  experiment.items = [{title: 'Snapshot', kind: 'code', id: 1, revision: 1, versions: [{
+    id: 7, sha256: 'hash', number: 1, filename: 'source.zip',
+  }]}];
+  const loading = next('experiment-detail?id=1');
+  const selection = select(1);
+  loading.resolve(experiment);
+  await selection;
+  const archive = get('items').children[0].children.at(-1);
+  const entries = next('/research-versions/7/entries');
+  archive.open = true;
+  const browsing = archive.fire('toggle');
+  entries.resolve({ok: true, json: async () => ({commit: 'a'.repeat(40), files: [
+    {path: 'README.md', size: 22},
+    {path: 'src/model.py', size: 22},
+  ]})});
+  await browsing;
+  const browser = archive.children[1].children.at(-1);
+  const view = browser.children[1];
+  const tree = () => view.children[1];
+  assert.deepEqual(tree().children.map(row => row.children[0].textContent), ['src', 'README.md']);
+  tree().children[0].children[0].fire('click');
+  assert.equal(tree().children[0].children[0].textContent, 'model.py');
+  const bytes = next('/research-versions/7/entry?path=src%2Fmodel.py');
+  tree().children[0].children[0].fire('click');
+  bytes.resolve({ok: true, arrayBuffer: async () => new TextEncoder().encode('alpha\n<em>literal</em>\n')});
+  await new Promise(resolve => setImmediate(resolve));
+  const code = view.children.at(-1).children.at(-1);
+  assert.equal(code.children[0].textContent, '1\n2');
+  assert.equal(code.children[1].children[0].textContent, 'alpha\n<em>literal</em>');
+  assert.equal(view.children[0].children[1].href, '/research-versions/7/entry?path=src%2Fmodel.py');
+  const crumbs = view.children[0].children[0];
+  assert.equal(crumbs.children.at(-1).textContent, 'model.py');
+  crumbs.children[0].fire('click');
+  assert.equal(tree().children[1].children[0].textContent, 'README.md');
 });
 
 for (const staleError of [false, true]) {

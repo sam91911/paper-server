@@ -14,6 +14,7 @@
 <nav id="library-nav" class="workspace-nav" aria-label="Library pages">
   <a id="compare-link" href="/">Compare</a>
   <a id="papers-link" href="/papers">Papers</a>
+  <a id="news-link" href="/news">News</a>
   <a id="documents-link" href="/documents">Documents</a>
   <a href="/experiments">Experiments</a>
   <a href="/skills">Skills</a>
@@ -38,42 +39,9 @@
   <p id="unit-status" role="status"></p>
 </details>
 <section id="library" hidden>
-  <div class="paper-tools">
-    <details>
-      <summary>Find related papers on Crossref</summary>
-      <form id="related-paper-search">
-        <label>Topic keywords <input name="topic" required maxlength="500" placeholder="AI accelerator"></label>
-        <label>Related keyword groups, one per line
-          <textarea name="keywords" rows="3" placeholder="neural network accelerator"></textarea>
-        </label>
-        <div class="search-filters">
-          <label>Publisher <input name="publisher" list="crossref-publishers" maxlength="160" placeholder="e.g. IEEE"></label>
-          <datalist id="crossref-publishers"></datalist>
-          <label>From year <input name="year_from" type="number" min="1000" max="9999" placeholder="Any"></label>
-          <label>Through year <input name="year_to" type="number" min="1000" max="9999" placeholder="Any"></label>
-        </div>
-        <button>Search titles</button>
-      </form>
-      <p id="related-paper-status" role="status"></p>
-      <a id="download-related-dois" download="related_paper_dois.txt" hidden>Download DOIs</a>
-      <div id="related-paper-results"></div>
-    </details>
-    <details>
-      <summary>Import PDFs</summary>
-      <p id="pdf-sign-in"><a href="/account">Sign in to upload PDFs</a>.</p>
-      <form id="pdf-import" hidden>
-        <label>Add paper PDFs <input id="paper-pdf" type="file" accept=".pdf,application/pdf" multiple required></label>
-        <label>Metric keywords (comma-separated) <input name="metric_keywords" maxlength="1220" placeholder="e.g. peak power, PSNR"></label>
-        <label>File access <select name="audience" class="audience-options"></select></label>
-        <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
-        <button id="import-pdf-button">Import and extract metrics</button>
-      </form>
-      <ul id="import-results" aria-label="PDF import results" hidden></ul>
-    </details>
-  </div>
-  <div class="paper-browser">
-    <div class="paper-catalog-panel">
-      <h2>Browse papers</h2>
+  <div class="paper-browser detail-layout">
+    <details class="paper-catalog-panel browse-controls" id="paper-browse-controls" open>
+      <summary>Browse papers</summary>
       <label>Search papers <input type="search" id="paper-search" maxlength="500" placeholder="Title, author, DOI, venue, or filename"></label>
       <details>
         <summary>Filters and groups</summary>
@@ -97,7 +65,47 @@
         <span id="paper-page-status" role="status"></span>
         <button id="paper-page-next" type="button">Next</button>
       </div>
-    </div>
+      <div class="paper-tools">
+        <details>
+          <summary>Find related papers on Crossref</summary>
+          <form id="related-paper-search">
+            <label>Topic keywords <input name="topic" required maxlength="500" placeholder="AI accelerator"></label>
+            <label>Related keyword groups, one per line
+              <textarea name="keywords" rows="3" placeholder="neural network accelerator"></textarea>
+            </label>
+            <div class="search-filters">
+              <label>Publisher <input name="publisher" list="crossref-publishers" maxlength="160" placeholder="e.g. IEEE"></label>
+              <datalist id="crossref-publishers"></datalist>
+              <label>From year <input name="year_from" type="number" min="1000" max="9999" placeholder="Any"></label>
+              <label>Through year <input name="year_to" type="number" min="1000" max="9999" placeholder="Any"></label>
+            </div>
+            <button>Search titles</button>
+          </form>
+          <p id="related-paper-status" role="status"></p>
+          <a id="download-related-dois" download="related_paper_dois.txt" hidden>Download DOIs</a>
+          <div id="related-paper-results"></div>
+        </details>
+        <details>
+          <summary>Import PDFs</summary>
+          <p id="pdf-sign-in"><a href="/account">Sign in to upload PDFs</a>.</p>
+          <form id="pdf-import" hidden>
+            <label>Add paper PDFs <input id="paper-pdf" type="file" accept=".pdf,application/pdf" multiple required></label>
+            <label>Metric keywords (comma-separated) <input name="metric_keywords" maxlength="1220" placeholder="e.g. peak power, PSNR"></label>
+            <label>File access <select name="audience" class="audience-options"></select></label>
+            <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
+            <button id="import-pdf-button">Import and extract metrics</button>
+          </form>
+          <ul id="import-results" aria-label="PDF import results" hidden></ul>
+        </details>
+      </div>
+      <details id="paper-archive">
+        <summary id="archive-summary">Archived papers</summary>
+        <p>Archived papers stay on disk and are hidden from comparisons and CSV exports.</p>
+        <p id="paper-archive-status" role="status"></p>
+        <button id="paper-archive-retry" type="button" hidden>Retry loading archived papers</button>
+        <div id="archived-papers"></div>
+      </details>
+    </details>
     <div class="paper-record">
   <p id="library-status" role="status"></p>
   <p id="paper-detail-status" role="status"></p>
@@ -106,7 +114,7 @@
     <h2>Select a paper</h2>
     <p>Choose a paper to open its PDF, review its measurements, or join the discussion.</p>
   </div>
-  <div id="paper-detail" hidden>
+  <div id="paper-detail" class="focus-detail" hidden>
     <h2 id="paper-detail-title" tabindex="-1"></h2>
     <p id="paper-detail-byline" class="record-byline"></p>
     <details open>
@@ -269,13 +277,6 @@
   </div>
     </div>
   </div>
-  <details id="paper-archive">
-    <summary id="archive-summary">Archived papers</summary>
-    <p>Archived papers stay on disk and are hidden from comparisons and CSV exports.</p>
-    <p id="paper-archive-status" role="status"></p>
-    <button id="paper-archive-retry" type="button" hidden>Retry loading archived papers</button>
-    <div id="archived-papers"></div>
-  </details>
 </section>
 <section id="account-page" hidden>
   <h2 id="account-summary">Sign in</h2>
@@ -321,7 +322,8 @@
   <p id="google-option" hidden><a href="/auth/google">Sign in with Google</a></p>
   <p id="account-username" hidden></p>
   <p id="account-email" hidden></p>
-  <details id="attach-human-key-panel" hidden>
+  <div class="account-options">
+  <details id="attach-human-key-panel" name="account-panel" hidden>
     <summary>Private sign-in keys</summary>
     <div id="human-key-list"></div>
     <form id="human-key-attach">
@@ -331,7 +333,7 @@
       <button data-save-key disabled>Save sign-in key</button>
     </form>
   </details>
-  <details id="human-invitation-panel" hidden>
+  <details id="human-invitation-panel" name="account-panel" hidden>
     <summary>Invite a friend</summary>
     <form id="create-human-invitation" class="account-actions">
       <label>Friend’s email address <input name="email" type="email" required maxlength="254" autocomplete="off"></label>
@@ -353,7 +355,7 @@
     <button id="refresh-human-invitations" type="button" class="secondary">Refresh invitations</button>
     <div id="pending-human-invitations"></div>
   </details>
-  <details id="ai-registration-panel" hidden>
+  <details id="ai-registration-panel" name="account-panel" hidden>
     <summary>Register an AI agent</summary>
     <form id="create-ai-invitation" class="account-actions">
       <label>Agent username <input name="username" required minlength="2" maxlength="32"
@@ -367,6 +369,9 @@
       <button id="copy-ai-invitation" type="button" class="secondary">Copy prompt</button>
     </div>
     <h3>Managed agents</h3>
+    <label>Direction for the guided goal prompt
+      <textarea id="ai-heartbeat-direction" rows="2" maxlength="2000" placeholder="What should the agent investigate next?"></textarea>
+    </label>
     <button id="refresh-ai-invitations" type="button" class="secondary">Refresh status</button>
     <div id="managed-ai-agents"></div>
     <label id="ai-heartbeat-result" hidden>Heartbeat prompt
@@ -376,7 +381,7 @@
     <div id="ai-invitation-history"></div>
     <button id="older-ai-invitations" type="button" class="secondary" hidden>Older invitations</button>
   </details>
-  <details id="key-panel" hidden>
+  <details id="key-panel" name="account-panel" hidden>
     <summary>Application keys</summary>
     <p>Use an application key to sign API requests. Each key has your account's access.</p>
     <form id="create-key" class="account-actions">
@@ -388,30 +393,47 @@
     </label>
     <div id="application-key-list"></div>
   </details>
-  <form id="change-password" hidden>
-    <h3>Change password</h3>
-    <label>Current password <input name="current_password" type="password" autocomplete="current-password" required maxlength="256"></label>
-    <label>New password <input name="new_password" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label>
-    <button>Change password</button>
-  </form>
+  <details id="change-password-panel" name="account-panel" hidden>
+    <summary>Change password</summary>
+    <form id="change-password" hidden>
+      <label>Current password <input name="current_password" type="password" autocomplete="current-password" required maxlength="256"></label>
+      <label>New password <input name="new_password" type="password" autocomplete="new-password" required maxlength="256"></label>
+      <button>Change password</button>
+    </form>
+  </details>
+  </div>
   <form id="sign-out" hidden><button class="secondary">Sign out</button></form>
   <p id="account-status" role="status"></p>
 </section>
 <section id="markdown-documents" hidden>
     <p id="documents-sign-in"><a href="/account">Sign in to create a document</a>.</p>
-    <div id="documents-workspace" hidden>
+    <div id="documents-workspace" class="detail-layout" hidden>
+      <details id="document-browse-controls" class="browse-controls" open>
+        <summary id="document-browse-label">Browse documents</summary>
+      <section id="news-feed" aria-labelledby="news-feed-title" hidden>
+        <h2 id="news-feed-title">Shared news</h2>
+        <ul id="news-list" class="skill-results"></ul>
+      </section>
       <div class="account-actions">
-        <label>Document <select id="document-picker"></select></label>
+        <label><span id="document-picker-label">Document</span><select id="document-picker"></select></label>
         <button type="button" id="new-document" class="secondary">New document</button>
+      </div>
+      </details>
+      <div class="document-record">
+      <div class="account-actions document-actions">
         <button type="button" id="download-document" class="secondary" hidden>Download Markdown</button>
         <button type="button" id="review-document" class="secondary" hidden>Review with AI</button>
       </div>
       <p id="document-owner"></p>
+      <p id="news-source" hidden><a id="news-source-link" target="_blank" rel="noopener noreferrer">Read the source</a></p>
       <div class="document-layout" id="document-layout">
         <form id="document-editor" hidden>
           <h2>Edit Markdown</h2>
           <div class="document-fields">
             <label class="document-title-field">Title <input name="title" maxlength="160" required></label>
+            <label id="news-source-field" class="document-title-field" hidden>Source URL
+              <input name="source_url" type="url" maxlength="2048" placeholder="https://">
+            </label>
             <label>Document access <select name="audience" class="audience-options"></select></label>
             <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
           </div>
@@ -427,9 +449,9 @@
               <button type="button" id="view-document-pdf" class="secondary">View PDF here</button>
             </div>
           </div>
-          <button>Save document</button>
+          <button id="save-document">Save document</button>
         </form>
-        <section id="document-preview-panel" class="document-preview-panel" aria-labelledby="preview-title" hidden>
+        <section id="document-preview-panel" class="document-preview-panel focus-detail" aria-labelledby="preview-title" hidden>
           <h2 id="preview-title">Preview</h2>
           <div id="document-preview" class="document-preview"></div>
         </section>
@@ -521,16 +543,20 @@
         </form>
       </details>
       <p id="document-status" role="status"></p>
+      </div>
     </div>
 </section>
 <div id="results" hidden>
-  <section class="filters" aria-label="Comparison filters">
+  <details id="comparison-browse-controls" class="compare-panel" open>
+    <summary>Comparison filters</summary>
+    <div class="filters">
     <label id="chart-group-label" hidden>Paper group <select id="library-group"></select></label>
     <label>Metric and unit <select id="group"></select></label>
     <label>Paper <input id="paper" type="search" placeholder="Filter by filename"></label>
     <label>Conditions <input id="conditions" type="search" placeholder="e.g. INT8"></label>
     <label>Sort by value <select id="sort"><option value="desc">Highest first</option><option value="asc">Lowest first</option></select></label>
-  </section>
+    </div>
+  </details>
   <details id="compare-2d" class="compare-panel">
     <summary>2D comparison</summary>
     <div class="filters">

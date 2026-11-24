@@ -299,7 +299,12 @@ const matchPaperOnly = element("match-paper-only");
 const xPreference = element("x-preference");
 const yPreference = element("y-preference");
 const comparisonPanel = element("compare-2d");
-comparisonPanel.addEventListener("toggle", () => { if (comparisonPanel.open) render(); });
+comparisonPanel.addEventListener("toggle", () => {
+  if (comparisonPanel.open) {
+    element("comparison-browse-controls").open = false;
+    render();
+  }
+});
 const comparisonStorageKey = "paper-metrics-comparison-settings";
 let comparisonSettings = {};
 try {

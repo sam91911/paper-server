@@ -173,6 +173,7 @@ function showGoal({goal, events, next_before}) {
   activeGoal = goal;
   element("agent-goal-empty").hidden = true;
   element("agent-goal-detail").hidden = false;
+  element("goal-browse-controls").open = false;
   markSelectedGoal();
   const title = element("agent-goal-title");
   title.textContent = `Goal #${goal.id}`;

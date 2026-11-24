@@ -413,9 +413,11 @@ def snapshot(db, view="library", account=None, *, include_comments=True, documen
     if not is_human:
         for paper in data["papers"]:
             paper["path"] = Path(paper["path"]).name
-    if view == "documents":
-        return {"account": account, "documents": sharing.documents_for(db, account, summaries=document_summaries), "papers": data["papers"],
-                "comments": comment_snapshot(db, account, documents=True) if include_comments else []}
+    if view in ("documents", "news"):
+        news = view == "news"
+        return {"account": account, "documents": sharing.documents_for(db, account, summaries=document_summaries or news,
+                                                                        news_only=news), "papers": data["papers"],
+                "comments": comment_snapshot(db, account, documents=True) if include_comments and not news else []}
     if view in ("paper-details", "compare"):
         data["account"] = account
     if view == "paper-details":

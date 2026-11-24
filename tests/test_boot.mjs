@@ -6,7 +6,8 @@ import { Blob } from 'node:buffer';
 const files = ['api.js', 'metrics.js', 'library.js', 'human-keys.js', 'documents.js', 'findings.js', 'goals.js', 'boot.js'];
 const sources = files.map(name => fs.readFileSync(new URL(`../paper_app/web/${name}`, import.meta.url), 'utf8'));
 
-for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Papers'], ['/documents', 'Markdown documents'], ['/account', 'Account']]) {
+for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Papers'], ['/news', 'News'],
+  ['/documents', 'Markdown documents'], ['/account', 'Account']]) {
   const elements = new Map();
   function makeElement() {
     const fields = new Map();
@@ -17,7 +18,7 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
       addEventListener(type, listener) {listeners.set(type, listener);},
       fire(type) {return listeners.get(type)({preventDefault() {}});},
       setAttribute() {}, removeAttribute() {}, replaceChildren() {}, append() {}, reset() {}, closest() {return makeElement();},
-      querySelector() {return makeElement();}, querySelectorAll() {return [];}, before() {}, setCustomValidity() {}};
+      querySelector() {return makeElement();}, querySelectorAll() {return [];}, before() {}, focus() {}, setCustomValidity() {}};
   }
   const document = {title: '', getElementById(id) {if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id);},
     querySelectorAll() {return [];}, createElement() {return makeElement();}};
@@ -90,7 +91,7 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     assert.ok(clipboard.includes(invitation.client_download_url));
     assert.ok(clipboard.includes('-m pip install "$archive"'));
     assert.ok(clipboard.includes('paper_client.agent register --username reviewer'));
-    await vm.runInContext('copyHeartbeatPrompt("reviewer", false)', context);
+    await vm.runInContext('copyHeartbeatPrompt("reviewer", "tasks")', context);
     assert.ok(clipboard.includes('heartbeat --identity ~/.paper-library/reviewer.json --once'));
     assert.ok(clipboard.includes('/api/agent-goals'));
     assert.ok(clipboard.includes('/api/reviews'));
@@ -99,9 +100,17 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     assert.ok(clipboard.includes('POST /api/search-papers'));
     assert.ok(clipboard.includes('import-paper --identity ~/.paper-library/reviewer.json --url "$PDF_URL" --recipient "$REQUESTER"'));
     assert.ok(clipboard.includes('{"kind":"paper","id":PAPER_ID}'));
-    await vm.runInContext('copyHeartbeatPrompt("reviewer", true)', context);
-    assert.ok(clipboard.includes('one useful follow-up'));
-    assert.ok(clipboard.includes('within our agreed research scope'));
+    const taskPrompt = clipboard;
+    await vm.runInContext('copyHeartbeatPrompt("reviewer", "guided")', context);
+    assert.equal(clipboard, taskPrompt);
+    document.getElementById('ai-heartbeat-direction').value = 'Evaluate the new dataset release.';
+    await vm.runInContext('copyHeartbeatPrompt("reviewer", "guided")', context);
+    assert.ok(clipboard.includes('Evaluate the new dataset release.'));
+    assert.ok(clipboard.includes('POST /api/research-goals'));
+    await vm.runInContext('copyHeartbeatPrompt("reviewer", "discovery")', context);
+    assert.ok(clipboard.includes('independently look for one promising new research topic'));
+    assert.ok(clipboard.includes('GET /api/news'));
+    assert.ok(!clipboard.includes('Evaluate the new dataset release.'));
     assert.ok(clipboard.includes('import-paper --identity ~/.paper-library/reviewer.json'));
   }
 }

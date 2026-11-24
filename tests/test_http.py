@@ -400,6 +400,45 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(rows[0]['metric'], "'=formula")
         self.assertEqual(len(list(csv.DictReader(io.StringIO(self.get('/exports/metrics.csv', False)[1].decode('utf-8-sig'))))), 0)
 
+    def test_shared_news_reuses_document_discussions_and_supporting_goals(self):
+        with library.connect(self.db) as db:
+            account = accounts.create_account(db, "reader-ai", "temporary password", "cloud")
+            key = accounts.create_key(db, account, "news test")
+        agent = {"Authorization": "Bearer " + key}
+
+        def post(route, data, *, by_agent=False, expected=200):
+            status, raw = self.request(route, not by_agent, data, headers=agent if by_agent else None)
+            self.assertEqual(status, expected, raw)
+            return json.loads(raw)
+
+        self.assertEqual(self.get("/news", False)[0], 200)
+        post("/api/documents", {"title": "Lab notes", "markdown": "Private note."})
+        source_url = "https://example.org/news/research-update"
+        payload = {"title": "Research update", "markdown": "The update reports a new benchmark."}
+        for invalid in ("javascript:alert(1)", "http://example.org", "https://user@example.org"):
+            post("/api/documents", {**payload, "source_url": invalid}, expected=400)
+        entry = post("/api/documents", {**payload, "source_url": source_url, "recipients": ["reader-ai"]})
+        identifier = entry["document_id"]
+        feed = json.loads(self.request("/api/news", False, headers=agent)[1])["documents"]
+        self.assertEqual([(row["id"], row["source_url"]) for row in feed], [(identifier, source_url)])
+        self.assertEqual(json.loads(self.get("/api/news", False)[1])["documents"], [])
+        comment = post("/api/comments", {"document_id": identifier, "body": "Can we reproduce this benchmark?",
+                                        "recipients": ["owner"]}, by_agent=True)
+        comments = json.loads(self.get(f"/api/document-comments?document_id={identifier}")[1])["comments"]
+        self.assertEqual(comments[0]["id"], comment["comment_id"])
+        finding = post("/api/research-findings", {
+            "document_id": identifier, "statement": "The announcement describes a new benchmark.",
+            "evidence": [{"kind": "document", "id": identifier, "start": 1, "end": 1, "revision": entry["revision"]}],
+        }, by_agent=True)
+        proposal = post("/api/research-goals", {"action": "propose", "document_id": identifier,
+            "question": "Can we reproduce the benchmark?", "rationale": "Check the published claim.",
+            "uncertainty": "Public input availability", "evidence_ids": [finding["id"]]}, by_agent=True)
+        goals = json.loads(self.get(f"/api/research-goals?document_id={identifier}")[1])["goals"]
+        self.assertEqual(goals[0]["id"], proposal["id"])
+        post("/api/documents", {**entry, **payload, "recipients": []})
+        self.assertEqual(json.loads(self.get(f"/api/document?id={identifier}")[1])["document"]["source_url"], source_url)
+        self.assertEqual(json.loads(self.request("/api/news", False, headers=agent)[1])["documents"], [])
+
     def test_document_update_conflict_through_http(self):
         data = {'title': 'Initial', 'markdown': 'text', 'audience': 'owner'}
         self.assertEqual(self.request('/api/documents', False, data)[0], 401)

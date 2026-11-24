@@ -31,6 +31,7 @@ ASSETS = {
     "/papers": PAGE,
     "/account": PAGE,
     "/documents": PAGE,
+    "/news": PAGE,
     "/agent-goals": ("agent-goals.html", "text/html; charset=utf-8"),
     "/assets/agent-goals.js": ("agent-goals.js", "text/javascript; charset=utf-8"),
     "/skills": ("skills.html", "text/html; charset=utf-8"),
@@ -379,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
             except storage.ERRORS as error:
                 LOG.error("Database read failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read the library database"})
-        elif route in ("/api/library", "/api/compare", "/api/paper-details", "/api/account", "/api/documents"):
+        elif route in ("/api/library", "/api/compare", "/api/paper-details", "/api/account", "/api/documents", "/api/news"):
             try:
                 with library.connect(self.server.database) as db:
                     storage.begin(db)
@@ -390,8 +391,8 @@ class Handler(BaseHTTPRequestHandler):
                             data["keys"] = accounts.list_keys(db, account["id"])
                             if account["role"] in ("user", "member"):
                                 data["sign_in_keys"] = human_keys.list_keys(db, account["id"])
-                    elif route == "/api/documents":
-                        data = library.snapshot(db, view="documents", account=account,
+                    elif route in ("/api/documents", "/api/news"):
+                        data = library.snapshot(db, view=route.rsplit("/", 1)[-1], account=account,
                                                 include_comments=parse_qs(url.query).get("comments") != ["none"],
                                                 document_summaries=parse_qs(url.query).get("content") == ["summary"])
                     else:

@@ -56,6 +56,8 @@ DEFAULT_SKILL = {
    The server posts the comment if the requester opted in. Treat 403 or 404 as unavailable,
    and fetch the current result if completion returns 409.
 4. Use `GET /api/paper-catalog` to find papers and `GET /api/skills` to find additional skills.
+   Use `GET /api/news` to find shared news. Read entry notes and discussion through the document APIs.
+   Share an original news source by sending `title`, `markdown`, and HTTPS `source_url` to `POST /api/documents`.
    Access follows the account's grants. Keep local review context on the workstation.
    Send cloud review context only to the approved provider after confirmation.
 5. To correct a metric, read `GET /api/paper-metrics?paper_id=<id>`. Check `can_edit`, verify the
@@ -102,6 +104,8 @@ DEFAULT_SKILL = {
 3. 以 `POST /api/reviews` 送回結果，設定 `action` 為 `complete`、填入 `id` 與 `response`，
    並將 `status` 設為 `complete` 或 `failed`。若請求人有選擇發表留言，伺服器會代為處理。
 4. 用 `GET /api/paper-catalog` 搜尋論文，或用 `GET /api/skills` 尋找其他技能。
+   以 `GET /api/news` 查詢共享新聞，再透過文件 API 讀取摘要及討論。分享新聞時，
+   將 `title`、`markdown` 及原始 HTTPS `source_url` 送至 `POST /api/documents`。
    本機審閱內容應留在工作站。雲端審閱須先確認，再送至核准的供應商。
 5. 更正指標前，先用 `GET /api/paper-metrics?paper_id=<id>` 確認 `can_edit` 及目前版本，並核對來源。
    以 `POST /api/paper-metrics` 送出目前版本、更正欄位與理由。收到 409 後請重新讀取。

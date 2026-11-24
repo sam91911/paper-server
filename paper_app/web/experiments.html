@@ -14,6 +14,7 @@
   <nav class="workspace-nav" aria-label="Library pages">
     <a href="/">Compare</a>
     <a href="/papers">Papers</a>
+    <a href="/news">News</a>
     <a href="/documents">Documents</a>
     <a href="/experiments" aria-current="page">Experiments</a>
     <a href="/skills">Skills</a>
@@ -24,8 +25,9 @@
   <main class="page-content" id="workspace-content" tabindex="-1">
     <p id="status" role="status"></p>
     <button type="button" id="retry-experiment-load" class="secondary" hidden>Retry loading</button>
-    <section aria-labelledby="experiment-picker-heading">
-      <h2 id="experiment-picker-heading">Find an experiment</h2>
+    <div class="detail-layout">
+    <details id="experiment-browse-controls" class="browse-controls" open>
+      <summary>Find an experiment</summary>
       <label class="experiment-picker">Choose experiment
         <select id="experiments"><option value="">Choose</option></select>
       </label>
@@ -42,9 +44,9 @@
           <div><button>Save experiment</button></div>
         </form>
       </details>
-    </section>
+    </details>
 
-    <section id="detail" aria-labelledby="experiment-title" hidden>
+    <section id="detail" class="focus-detail" aria-labelledby="experiment-title" hidden>
       <h2 id="experiment-title"></h2>
       <p id="experiment-description"></p>
       <p id="experiment-workspace"></p>
@@ -135,6 +137,7 @@
         <div><button>Update sharing</button></div>
       </form>
     </section>
+    </div>
 
     <section aria-labelledby="tools-heading">
       <h2 id="tools-heading">Tools</h2>

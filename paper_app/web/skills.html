@@ -14,6 +14,7 @@
   <nav class="workspace-nav" aria-label="Library pages">
     <a href="/">Compare</a>
     <a href="/papers">Papers</a>
+    <a href="/news">News</a>
     <a href="/documents">Documents</a>
     <a href="/experiments">Experiments</a>
     <a href="/skills" aria-current="page">Skills</a>
@@ -24,10 +25,10 @@
   <main class="page-content" id="workspace-content" tabindex="-1">
     <p id="skill-status" role="status"></p>
     <p id="skill-sign-in" hidden><a href="/account">Sign in to use the skill library</a>.</p>
-    <div id="skill-library" hidden>
-      <p><button id="default-skill" type="button" class="secondary">Default API skill</button></p>
-      <section aria-labelledby="skill-search-heading">
-        <h2 id="skill-search-heading">Find a skill</h2>
+    <div id="skill-library" class="detail-layout" hidden>
+      <details id="skill-browse-controls" class="browse-controls" open>
+        <summary>Find a skill</summary>
+        <p><button id="default-skill" type="button" class="secondary">Default API skill</button></p>
         <form id="skill-search" class="filters">
           <label>Search <input name="q" type="search" maxlength="200" placeholder="Title, description, or tag"></label>
           <label>Tag <input name="tag" maxlength="40"></label>
@@ -37,8 +38,8 @@
         </form>
         <ul id="skill-results" class="skill-results"></ul>
         <button id="more-skills" class="secondary" type="button" hidden>Load more</button>
-      </section>
-      <section id="skill-detail" aria-labelledby="skill-title" hidden>
+      </details>
+      <section id="skill-detail" class="focus-detail" aria-labelledby="skill-title" hidden>
         <h2 id="skill-title" tabindex="-1"></h2>
         <p id="skill-description"></p>
         <p id="skill-meta"></p>
@@ -46,7 +47,7 @@
         <button id="edit-skill" type="button" hidden>Edit</button>
         <button id="archive-skill" type="button" class="secondary" hidden></button>
       </section>
-      <section id="skill-editor" aria-labelledby="skill-editor-title" hidden>
+      <section id="skill-editor" class="focus-detail" aria-labelledby="skill-editor-title" hidden>
         <h2 id="skill-editor-title">New skill</h2>
         <form id="skill-form" class="skill-form">
           <label>Title <input name="title" maxlength="160" required></label>

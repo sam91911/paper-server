@@ -5,6 +5,7 @@ const documentEditor = element("document-editor");
 const documentFile = element("document-file");
 const documentStatus = element("document-status");
 const documentPreview = element("document-preview");
+const newsWorkspace = globalThis.location?.pathname === "/news";
 let editingDocument;
 let editingRevision;
 let documentParent = null;
@@ -102,6 +103,19 @@ submit(documentCommentForm, async () => {
 
 function selectedDocument() {
   return libraryData.documents.find(item => item.id === Number(documentPicker.value));
+}
+
+function renderNewsFeed(item) {
+  const list = element("news-list");
+  list.replaceChildren();
+  if (!libraryData.documents.length) add(list, "li", "No news has been shared with you yet.");
+  for (const entry of libraryData.documents) {
+    const row = add(list, "li");
+    const link = add(row, "a", entry.title);
+    link.href = `/news?document=${entry.id}`;
+    if (entry.id === item?.id) link.setAttribute("aria-current", "true");
+    add(row, "p", `Shared by ${entry.owner_name} · ${entry.updated} UTC`);
+  }
 }
 
 function appendMarkdownLine(parent, line) {
@@ -213,6 +227,7 @@ function openDocument(item, { create = false } = {}) {
   documentEditor.hidden = !canEdit;
   element("document-layout").classList.toggle("is-editing", Boolean(canEdit));
   element("document-preview-panel").hidden = !item && !create;
+  element("document-browse-controls").open = !item && !create;
   closePdf("document");
   element("download-document").hidden = !item;
   element("document-owner").textContent = item
@@ -220,6 +235,16 @@ function openDocument(item, { create = false } = {}) {
     : "";
   documentStatus.textContent = "";
   documentEditor.reset();
+  const isNews = Boolean(item?.source_url) || (newsWorkspace && create);
+  const sourceLink = element("news-source-link");
+  element("news-source").hidden = !item?.source_url;
+  sourceLink.href = item?.source_url || "";
+  element("preview-title").textContent = item?.source_url ? item.title : "Preview";
+  element("news-source-field").hidden = !isNews;
+  documentEditor.elements.source_url.required = isNews;
+  documentEditor.elements.source_url.value = item?.source_url || "";
+  element("save-document").textContent = isNews ? "Save news entry" : "Save document";
+  if (newsWorkspace) renderNewsFeed(item);
   documentEditor.elements.title.value = item?.title || "";
   documentEditor.elements.markdown.value = item?.markdown || "";
   selectAudience(documentEditor.elements.audience, item?.audience || "owner");
@@ -231,6 +256,13 @@ async function showDocuments(accountChanged) {
   const account = libraryData.account;
   element("documents-workspace").hidden = !account;
   element("documents-sign-in").hidden = Boolean(account);
+  element("news-feed").hidden = !newsWorkspace;
+  if (newsWorkspace) {
+    element("documents-sign-in").querySelector("a").textContent = "Sign in to share or discuss news";
+    element("new-document").textContent = "Share news";
+    element("document-picker-label").textContent = "News entry";
+    element("document-browse-label").textContent = "Browse news";
+  }
   setOptions(documentPicker, libraryData.documents.map(item => [item.id, item.title]), "Choose a document");
   setOptions(documentFile, libraryData.papers.filter(paper => paper.has_pdf)
     .map(paper => [paper.id, paper.title || paperFilename(paper)]), "Choose a PDF");
@@ -238,7 +270,10 @@ async function showDocuments(accountChanged) {
   const current = await ensureSelectedDocument();
   if (requested && !current) return;
   if (accountChanged || (!current && editingDocument !== "new")) openDocument(current);
-  else renderDocumentComments(current);
+  else {
+    if (newsWorkspace) renderNewsFeed(current);
+    renderDocumentComments(current);
+  }
 }
 
 function insertMarkdown(text) {
@@ -261,6 +296,7 @@ documentPicker.addEventListener("change", () => {
   ensureSelectedDocument().then(item => {
     if (item === undefined) return;
     openDocument(item);
+    if (newsWorkspace) history.replaceState(null, "", item ? `/news?document=${item.id}` : "/news");
     return loadDocumentComments();
   }).catch(error => { documentStatus.textContent = error.message; });
 });
@@ -318,14 +354,16 @@ submit(documentEditor, async () => {
       document_id: selectedDocument()?.id, revision: editingRevision, title: fields.title.value,
       audience: fields.audience.value, markdown: fields.markdown.value,
       recipients: recipientNames(fields.recipients.value),
+      ...(fields.source_url.required ? {source_url: fields.source_url.value.trim()} : {}),
     });
     await loadLibrary();
     documentPicker.value = String(result.document_id);
     const item = await ensureSelectedDocument();
     if (!item) return;
     openDocument(item);
+    if (newsWorkspace) history.replaceState(null, "", `/news?document=${item.id}`);
     await loadDocumentComments();
-    documentStatus.textContent = "Document saved.";
+    documentStatus.textContent = item.source_url ? "News entry saved." : "Document saved.";
   } catch (error) {
     documentStatus.textContent = error.message;
   }

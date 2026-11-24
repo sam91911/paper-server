@@ -85,6 +85,7 @@ function showSkill(skill) {
   archive.textContent = skill.archived ? "Restore" : "Archive";
   detailPanel.hidden = false;
   editor.hidden = true;
+  byId("skill-browse-controls").open = false;
   byId("skill-title").focus();
 }
 
@@ -112,7 +113,9 @@ function openEditor(skill) {
   }
   statusText.textContent = "";
   byId("skill-editor-title").textContent = skill ? "Edit skill" : "New skill";
+  detailPanel.hidden = true;
   editor.hidden = false;
+  byId("skill-browse-controls").open = false;
   form.elements.title.focus();
 }
 
@@ -148,6 +151,8 @@ archive.addEventListener("click", () => {
 byId("cancel-skill").addEventListener("click", () => {
   ++detailRequest;
   editor.hidden = true;
+  if (selected) showSkill(selected);
+  else byId("skill-browse-controls").open = true;
 });
 form.addEventListener("submit", (event) => {
   event.preventDefault();

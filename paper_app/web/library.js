@@ -2,7 +2,8 @@
 
 const papersPage = location.pathname === "/papers";
 const accountPage = location.pathname === "/account";
-const documentsPage = location.pathname === "/documents";
+const newsPage = location.pathname === "/news";
+const documentsPage = location.pathname === "/documents" || newsPage;
 const comparePage = !papersPage && !accountPage && !documentsPage;
 const libraryPanel = element("library");
 const libraryStatus = element("library-status");
@@ -77,6 +78,7 @@ function showAccount() {
   element("password-account-options").hidden = Boolean(account);
   element("sign-out").hidden = !account;
   element("change-password").hidden = !account || account.google_only || account.key_only;
+  element("change-password-panel").hidden = element("change-password").hidden;
   element("attach-human-key-panel").hidden = !["user", "member"].includes(account?.role);
   element("google-option").hidden = Boolean(account) || !libraryData.google_available;
   const username = element("account-username");
@@ -521,6 +523,7 @@ async function loadSelectedPaper(focus = false) {
   paperDetails = null;
   element("paper-detail").hidden = true;
   element("paper-empty").hidden = Boolean(id);
+  if (!id) element("paper-browse-controls").open = true;
   const status = element("paper-detail-status");
   const retry = element("paper-detail-retry");
   status.textContent = "";
@@ -539,6 +542,7 @@ async function loadSelectedPaper(focus = false) {
     status.textContent = "";
     renderPaperOptions();
     showPaper();
+    element("paper-browse-controls").open = false;
     if (focus === true) element("paper-detail-title").focus();
 
     const params = new URLSearchParams(location.search);
@@ -555,6 +559,7 @@ async function loadSelectedPaper(focus = false) {
     if (error.status === 404 || error.status === 400) {
       paperSelection = "";
       element("paper-empty").hidden = false;
+      element("paper-browse-controls").open = true;
       rememberPaperSelection();
       renderPaperOptions();
     } else {
@@ -653,7 +658,8 @@ async function loadPapersPage(paperId) {
 async function loadLibrary(paperId) {
   const previousAccount = libraryData?.account?.id;
   if (papersPage) return loadPapersPage(paperId);
-  const route = accountPage ? "account" : documentsPage ? "documents?comments=none&content=summary" : "compare";
+  const route = accountPage ? "account" : newsPage ? "news"
+    : documentsPage ? "documents?comments=none&content=summary" : "compare";
   libraryData = await api(route);
   if (accountPage) {
     if (previousAccount !== libraryData.account?.id) {
@@ -664,6 +670,7 @@ async function loadLibrary(paperId) {
       element("ai-invitation-prompt").value = "";
       element("ai-invitation-result").hidden = true;
       element("managed-ai-agents").replaceChildren();
+      element("ai-heartbeat-direction").value = "";
       element("ai-heartbeat-prompt").value = "";
       element("ai-heartbeat-result").hidden = true;
       element("ai-invitation-history").replaceChildren();
@@ -969,12 +976,25 @@ Use the HTTPS URLs as provided. If the library uses loopback on another machine,
   await showAIInvitations();
 }
 
-async function copyHeartbeatPrompt(username, proactive) {
+async function copyHeartbeatPrompt(username, mode) {
   const command = '"$HOME/.paper-library/venv/bin/python" -m paper_client.agent';
   const identity = `~/.paper-library/${username}.json`;
-  const idle = proactive
-    ? "When the assignment queue is clear, look for one useful follow-up within our agreed research scope that has not already been done. Use shared sources or public papers. Save a short note or propose an evidence-backed research goal in the appropriate workspace. If there is no useful follow-up, wait. Ask for direction if the scope is unclear."
-    : "When there is no eligible assigned work, wait for the next check.";
+  const directionField = element("ai-heartbeat-direction");
+  const direction = directionField.value.trim();
+  if (mode === "guided" && !direction) {
+    accountStatus.textContent = "Enter a research direction before copying the guided goal prompt.";
+    directionField.focus();
+    return;
+  }
+  const idle = {
+    tasks: "When there is no eligible assigned work, wait for the next check.",
+    guided: `After handling eligible assignments, use this research direction to propose one new goal:
+
+${direction}
+
+Read relevant News entries and discussions with GET /api/news and GET /api/document-comments?document_id=<id>. Look for evidence that addresses the direction. Check for an existing proposal first. Record supporting findings, then propose the goal in a shared document or news entry using POST /api/research-goals. Include a research question, rationale, uncertainty, and supporting finding IDs. Share the proposal for human review.`,
+    discovery: `After handling eligible assignments, independently look for one promising new research topic. Start with GET /api/news and accessible discussions. Check recent public sources and the paper catalog for corroboration and gaps. Compare against existing goals before proposing one. If a topic is supported, record the source URL and supporting findings, then use POST /api/research-goals to propose an evidence-backed goal in a shared document or news entry. If the evidence is too thin to propose a goal, share a short note on what you found.`,
+  }[mode];
   const prompt = `Check in to my Paper Library as ${username} using the enrolled identity you already use. Replace the example path if your identity was saved elsewhere or rotated.
 
 On each check, run:
@@ -1034,10 +1054,14 @@ async function showAIInvitations(before) {
       add(row, "span", `${agent.username} · ${roleLabels[agent.role]} · ${presence} · ${beat} · ${last}`);
       if (inactive) continue;
       const actions = add(row, "div", undefined, "file-actions");
-      for (const [label, proactive] of [["Copy task prompt", false], ["Copy task + new work prompt", true]]) {
+      for (const [label, mode] of [
+        ["Copy task prompt", "tasks"],
+        ["Copy task + directed goal", "guided"],
+        ["Copy task + discovery", "discovery"],
+      ]) {
         const button = add(actions, "button", label, "secondary");
         button.type = "button";
-        button.addEventListener("click", () => copyHeartbeatPrompt(agent.username, proactive));
+        button.addEventListener("click", () => copyHeartbeatPrompt(agent.username, mode));
       }
       const rotate = add(actions, "form");
       add(rotate, "button", "Rotate key", "secondary");

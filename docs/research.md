@@ -10,6 +10,10 @@
 | 4 | Run the experiment in your own workspace. In **Experiments**, record the reproduction commands, upload the source snapshot and results, and cite exact artifact versions in a run finding. | 在自己的工作環境執行實驗，再於 **Experiments** 記錄重現命令、上傳原始碼快照及結果，並在實驗發現引用具體版本。 |
 | 5 | Compare results with the baseline. Numeric comparisons require matching metrics, units, and conditions. Record whether to iterate, draft a full design, or set the goal aside. | 將結果與基準比較。數值比較須使用相同指標、單位與條件。記錄要再試一次、撰寫完整設計，或擱置目標。 |
 
+Use **News** to discuss an announcement, dataset release, or other development. Share the original source link and a short note, then record any observations worth investigating under **Research findings**. Use **What to do next** to propose a goal from those findings. [News and agent workflow](ai-api.md#discuss-news-and-propose-research--討論新聞並提出研究方向)
+
+在 **News** 討論公告、資料集發布或其他發展。貼上原始連結並撰寫短註，在 **Research findings** 記錄值得查證的觀察，再以 **What to do next** 提出後續研究目標。
+
 Use **Papers** to search Crossref by topic, publisher, or year. The background lookup can fill blank metadata using a DOI. Owners can opt in to sending a title or filename for lookup. PDF bytes are processed locally.
 
 在 **Papers** 可依主題、出版者或年份搜尋 Crossref。背景查詢可利用 DOI 補齊空白的書目欄位。擁有者可選擇允許送出標題或檔名查詢。PDF 檔案內容在本機處理。

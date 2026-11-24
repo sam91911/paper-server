@@ -14,6 +14,7 @@
   <nav class="workspace-nav" aria-label="Library pages">
     <a href="/">Compare</a>
     <a href="/papers">Papers</a>
+    <a href="/news">News</a>
     <a href="/documents">Documents</a>
     <a href="/experiments">Experiments</a>
     <a href="/skills">Skills</a>
@@ -25,39 +26,39 @@
     <p id="agent-goal-status" role="status"></p>
     <p id="agent-goal-sign-in" hidden><a href="/account">Sign in to view agent goals</a>.</p>
     <section id="agent-goal-workspace" hidden>
-      <details id="set-goal-panel" hidden>
-        <summary>Set goal</summary>
-        <form id="set-agent-goal" class="experiment-form">
-          <div class="filters">
-            <label>Find an AI account <input id="find-goal-agent" list="goal-agent-matches" autocomplete="off"></label>
-            <datalist id="goal-agent-matches"></datalist>
-            <button type="button" class="secondary" id="add-goal-agent">Add agent</button>
-          </div>
-          <label>AI allowlist <textarea name="agents" required rows="3" maxlength="1700" autocomplete="off" aria-describedby="goal-allowlist-help"></textarea></label>
-          <p id="goal-allowlist-help">Enter AI usernames separated by commas or new lines. Share any linked sources with everyone on the list. The first agent to start claims the work.</p>
-          <label>Objective <textarea name="objective" rows="4" required maxlength="8000"></textarea></label>
-          <label>Acceptance criteria <textarea name="acceptance_criteria" rows="3" required maxlength="8000"></textarea></label>
-          <label>Required skill IDs <input name="required_skills" maxlength="210" aria-describedby="goal-skill-help"></label>
-          <p id="goal-skill-help">Enter up to 10 comma-separated IDs from <a href="/skills">Skills</a>. Share each skill with the agents on the allowlist.</p>
-          <label>Shared workspace references <textarea name="sources" rows="3" maxlength="600" aria-describedby="goal-reference-help"></textarea></label>
-          <p id="goal-reference-help">Enter one reference per line, for example <code>document:42</code>. Types include paper, document, thread, finding, research_goal, and experiment.</p>
-          <button>Save goal</button>
-        </form>
-      </details>
-      <div class="goal-browser">
-        <div class="goal-index">
-          <h2>Your goals</h2>
+      <div class="goal-browser detail-layout">
+        <details class="goal-index browse-controls" id="goal-browse-controls" open>
+          <summary>Browse goals</summary>
+          <details id="set-goal-panel" hidden>
+            <summary>Set goal</summary>
+            <form id="set-agent-goal" class="experiment-form">
+              <div class="filters">
+                <label>Find an AI account <input id="find-goal-agent" list="goal-agent-matches" autocomplete="off"></label>
+                <datalist id="goal-agent-matches"></datalist>
+                <button type="button" class="secondary" id="add-goal-agent">Add agent</button>
+              </div>
+              <label>AI allowlist <textarea name="agents" required rows="3" maxlength="1700" autocomplete="off" aria-describedby="goal-allowlist-help"></textarea></label>
+              <p id="goal-allowlist-help">Enter AI usernames separated by commas or new lines. Share any linked sources with everyone on the list. The first agent to start claims the work.</p>
+              <label>Objective <textarea name="objective" rows="4" required maxlength="8000"></textarea></label>
+              <label>Acceptance criteria <textarea name="acceptance_criteria" rows="3" required maxlength="8000"></textarea></label>
+              <label>Required skill IDs <input name="required_skills" maxlength="210" aria-describedby="goal-skill-help"></label>
+              <p id="goal-skill-help">Enter up to 10 comma-separated IDs from <a href="/skills">Skills</a>. Share each skill with the agents on the allowlist.</p>
+              <label>Shared workspace references <textarea name="sources" rows="3" maxlength="600" aria-describedby="goal-reference-help"></textarea></label>
+              <p id="goal-reference-help">Enter one reference per line, for example <code>document:42</code>. Types include paper, document, thread, finding, research_goal, and experiment.</p>
+              <button>Save goal</button>
+            </form>
+          </details>
           <ul id="agent-goal-list" class="skill-results"></ul>
           <div class="file-actions">
             <button id="refresh-agent-goals" class="secondary" type="button">Refresh goals</button>
             <button id="more-agent-goals" class="secondary" type="button" hidden>Older goals</button>
           </div>
-        </div>
+        </details>
         <div id="agent-goal-empty" class="empty-record">
           <h2>Select a goal</h2>
           <p>Open a goal to see its objective, required skills, and work history.</p>
         </div>
-        <section id="agent-goal-detail" aria-labelledby="agent-goal-title" hidden>
+        <section id="agent-goal-detail" class="focus-detail" aria-labelledby="agent-goal-title" hidden>
           <h2 id="agent-goal-title" tabindex="-1"></h2>
           <p id="agent-goal-summary"></p>
           <div id="agent-goal-content"></div>

@@ -1,5 +1,7 @@
 """Account-based access to PDFs and Markdown documents."""
 
+from urllib.parse import urlsplit
+
 from . import accounts
 
 AUDIENCES = ("owner", "users", "local", "all", "ai")
@@ -92,8 +94,11 @@ def initialize(db):
         db.execute(f"INSERT INTO {table} SELECT * FROM old_{table}")
         db.execute(f"UPDATE {table} SET audience='local' WHERE audience='all'")
         db.execute(f"DROP TABLE old_{table}")
-    if "revision" not in {row["name"] for row in db.execute("PRAGMA table_info(documents)")}:
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(documents)")}
+    if "revision" not in columns:
         db.execute("ALTER TABLE documents ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+    if "source_url" not in columns:
+        db.execute("ALTER TABLE documents ADD COLUMN source_url TEXT NOT NULL DEFAULT ''")
 
 
 class AccessDenied(Exception):
@@ -189,20 +194,35 @@ def document_for(db, account, document_id):
     ).fetchone()
 
 
-def documents_for(db, account, *, targets_only=False, summaries=False):
+def documents_for(db, account, *, targets_only=False, summaries=False, news_only=False):
     if targets_only:
         return [dict(row) for row in db.execute(
             "SELECT id,title FROM documents d WHERE " + access_sql("d.owner_id", "d.audience", "document", "d.id") + " ORDER BY title",
             viewer_params(account),
         )]
-    columns = "d.id,d.owner_id,d.audience,d.title,d.updated,d.revision" if summaries else "d.*"
+    columns = "d.id,d.owner_id,d.audience,d.title,d.updated,d.revision,d.source_url" if summaries else "d.*"
+    scope = " AND d.source_url<>''" if news_only else ""
     items = [dict(row) for row in db.execute(
         f"SELECT {columns}, a.username AS owner_name, {accounts.ROLE_SQL.format(alias='a')} AS owner_role "
         "FROM documents d JOIN accounts a ON a.id=d.owner_id WHERE "
-        + access_sql("d.owner_id", "d.audience", "document", "d.id") + " ORDER BY d.updated DESC, d.id DESC",
+        + access_sql("d.owner_id", "d.audience", "document", "d.id") + scope + " ORDER BY d.updated DESC, d.id DESC",
         viewer_params(account),
     )]
     return attach_recipients(db, "document", items, account)
+
+
+def validate_news_source(value):
+    message = "Enter an HTTPS news source URL without credentials."
+    if (not isinstance(value, str) or not value or len(value) > 2048
+            or any(char.isspace() or ord(char) < 32 or char in "\\" for char in value)):
+        raise ValueError(message)
+    try:
+        url = urlsplit(value)
+        if url.scheme != "https" or not url.hostname or url.username is not None or url.port == 0:
+            raise ValueError(message)
+    except ValueError:
+        raise ValueError(message) from None
+    return value
 
 
 def save_document(db, account, data):
@@ -213,11 +233,12 @@ def save_document(db, account, data):
         raise ValueError("Enter a document title of up to 160 characters.")
     if not isinstance(markdown, str) or len(markdown) > 100_000:
         raise ValueError("Use up to 100,000 characters of Markdown.")
+    source_url = validate_news_source(data["source_url"]) if "source_url" in data else None
     document_id = data.get("document_id")
     if document_id is None:
         document_id = db.execute(
-            "INSERT INTO documents(title,markdown,audience,owner_id) VALUES (?,?,?,?) RETURNING id",
-            (title.strip(), markdown, validate_audience(data.get("audience", "owner")), account["id"]),
+            "INSERT INTO documents(title,markdown,audience,owner_id,source_url) VALUES (?,?,?,?,?) RETURNING id",
+            (title.strip(), markdown, validate_audience(data.get("audience", "owner")), account["id"], source_url or ""),
         ).fetchone()[0]
     elif type(document_id) is not int:
         raise ValueError("Choose a document.")
@@ -229,8 +250,9 @@ def save_document(db, account, data):
         if expected is not None and (type(expected) is not int or existing["revision"] != expected):
             raise EditConflict("This document changed. Reload it before saving.")
         db.execute(
-            "UPDATE documents SET title=?,markdown=?,audience=?,updated=CURRENT_TIMESTAMP,revision=revision+1 "
-            "WHERE id=?", (title.strip(), markdown, validate_audience(data.get("audience", existing["audience"])), document_id),
+            "UPDATE documents SET title=?,markdown=?,audience=?,source_url=COALESCE(?,source_url),"
+            "updated=CURRENT_TIMESTAMP,revision=revision+1 WHERE id=?",
+            (title.strip(), markdown, validate_audience(data.get("audience", existing["audience"])), source_url, document_id),
         )
     set_recipients(db, "document", document_id, data.get("recipients"))
     return document_id

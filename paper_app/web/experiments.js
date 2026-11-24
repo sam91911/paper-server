@@ -101,48 +101,177 @@ function previewFile(url, parent) {
   });
 }
 
-function archiveTree(files, base, parent) {
-  const tree = text("ul", "", parent);
-  const folders = new Map([["", tree]]);
+const archivePreviewBytes = 128 * 1024;
+const archivePreviewLines = 4000;
+const archiveDownloadBytes = 100 * 1024 * 1024;
+const archiveOrder = new Intl.Collator(undefined, {numeric: true});
+
+function archiveIndex(files) {
+  const folders = new Map([["", {folders: new Map(), files: []}]]);
   for (const file of files) {
     const parts = file.path.split("/");
-    let key = "";
+    let prefix = "";
     for (const name of parts.slice(0, -1)) {
-      const folder = key + name + "/";
-      if (!folders.has(folder)) {
-        const section = text("details", "", text("li", "", folders.get(key)));
-        text("summary", name, section);
-        folders.set(folder, text("ul", "", section));
-      }
-      key = folder;
+      const path = prefix ? `${prefix}/${name}` : name;
+      if (!folders.has(path)) folders.set(path, {folders: new Map(), files: []});
+      folders.get(prefix).folders.set(name, path);
+      prefix = path;
     }
-    const row = text("li", "", folders.get(key));
-    const name = parts.at(-1);
-    const link = text("a", name, row);
-    link.href = `${base}/entry?path=${encodeURIComponent(file.path)}`;
-    link.download = name;
-    if (file.size <= 128 * 1024) previewFile(link.href, row);
+    folders.get(prefix).files.push({...file, name: parts.at(-1)});
   }
+  return folders;
+}
+
+function archiveButton(parent, label, className, run) {
+  const button = text("button", label, parent);
+  button.type = "button";
+  button.className = className;
+  button.addEventListener("click", run);
+  return button;
+}
+
+function archiveFileSize(size) {
+  return size < 1024 ? `${size} B` : size < 1024 ** 2 ? `${(size / 1024).toFixed(1)} KB`
+    : `${(size / 1024 ** 2).toFixed(1)} MB`;
+}
+
+function showArchive(folders, base, parent) {
+  const browser = text("div", "", parent);
+  browser.className = "archive-browser";
+  const sidebar = text("details", "", browser);
+  sidebar.className = "archive-sidebar";
+  sidebar.open = true;
+  text("summary", "Folders", sidebar);
+  const navigation = text("ul", "", sidebar);
+  const view = text("div", "", browser);
+  view.className = "archive-view";
+  let fileRequest = 0;
+
+  function show(path, file = null, focus = true) {
+    const request = ++fileRequest;
+    navigation.replaceChildren();
+    view.replaceChildren();
+    const parts = path ? path.split("/") : [];
+    const ancestors = new Set(["", ...parts.map((_part, index) => parts.slice(0, index + 1).join("/"))]);
+
+    function renderFolder(parent, name, folderPath) {
+      const row = text("li", "", parent);
+      const link = archiveButton(row, name, "archive-folder", () => show(folderPath));
+      if (path === folderPath) link.setAttribute("aria-current", "location");
+      if (!ancestors.has(folderPath)) return;
+      const children = [...folders.get(folderPath).folders].sort(([a], [b]) => archiveOrder.compare(a, b));
+      if (!children.length) return;
+      const branch = text("ul", "", row);
+      for (const [label, child] of children) renderFolder(branch, label, child);
+    }
+    renderFolder(navigation, "Archive root", "");
+
+    const bar = text("div", "", view);
+    bar.className = "archive-path-bar";
+    const breadcrumbs = text("nav", "", bar);
+    breadcrumbs.className = "archive-breadcrumbs";
+    breadcrumbs.setAttribute("aria-label", "Archive path");
+    if (parts.length || file) archiveButton(breadcrumbs, "Archive root", "archive-crumb", () => show(""));
+    parts.forEach((name, index) => {
+      if (!file && index === parts.length - 1) return;
+      archiveButton(breadcrumbs, name, "archive-crumb", () => show(parts.slice(0, index + 1).join("/")));
+    });
+    const title = text("h5", file?.name ?? parts.at(-1) ?? "Archive files", breadcrumbs);
+    title.tabIndex = -1;
+
+    if (file) {
+      if (globalThis.matchMedia?.("(max-width: 47.99rem)").matches) sidebar.open = false;
+      const url = `${base}/entry?path=${encodeURIComponent(file.path)}`;
+      if (file.size <= archiveDownloadBytes) {
+        const link = text("a", "Download file", bar);
+        link.href = url;
+        link.download = file.name;
+      }
+      text("p", archiveFileSize(file.size), view).className = "archive-file-meta";
+      const preview = text("div", "", view);
+      if (file.size <= archivePreviewBytes) {
+        const status = text("p", "Loading preview…", preview);
+        status.setAttribute("role", "status");
+        fetch(url).then(async response => {
+          if (!response.ok) throw new Error("Could not open this file.");
+          const bytes = await response.arrayBuffer();
+          if (request !== fileRequest) return;
+          const content = new TextDecoder("utf-8", {fatal: true}).decode(bytes);
+          if (content.includes("\0")) throw new TypeError("Binary content");
+          if (!content) {
+            status.textContent = "This file is empty.";
+            return;
+          }
+          const lines = content.split(/\r?\n/);
+          if (lines.at(-1) === "") lines.pop();
+          const shown = lines.slice(0, archivePreviewLines);
+          status.hidden = lines.length <= shown.length;
+          status.textContent = `Showing the first ${shown.length} lines.`;
+          const code = text("div", "", preview);
+          code.className = "archive-code";
+          text("pre", shown.map((_line, index) => index + 1).join("\n"), code).setAttribute("aria-hidden", "true");
+          text("code", shown.join("\n"), text("pre", "", code));
+        }).catch(error => {
+          if (request === fileRequest) {
+            status.textContent = error instanceof TypeError
+              ? "Preview is unavailable. Download the file to view it."
+              : error.message;
+          }
+        });
+      } else {
+        text("p", file.size <= archiveDownloadBytes ? "Download this file to view it."
+          : "Download the archive to access this file.", preview);
+      }
+    } else {
+      const directory = folders.get(path);
+      const rows = text("ul", "", view);
+      rows.className = "archive-entries";
+      for (const [name, child] of [...directory.folders].sort(([a], [b]) => archiveOrder.compare(a, b))) {
+        archiveButton(text("li", "", rows), name, "archive-folder", () => show(child));
+      }
+      for (const entry of directory.files.sort((a, b) => archiveOrder.compare(a.name, b.name))) {
+        const row = text("li", "", rows);
+        archiveButton(row, entry.name, "archive-file", () => show(path, entry));
+        text("span", archiveFileSize(entry.size), row);
+      }
+      if (!rows.childElementCount) text("li", "No files to display.", rows);
+    }
+    if (focus) title.focus();
+  }
+  show("", null, false);
 }
 
 function browseArchive(version, parent) {
   const panel = text("details", "", parent);
+  panel.className = "archive-panel";
   text("summary", "Browse archive files", panel);
   const contents = text("div", "", panel);
   const base = `/research-versions/${version.id}`;
+  let loading = false;
+  let loaded = false;
   panel.addEventListener("toggle", async () => {
-    if (!panel.open || contents.childElementCount) return;
+    if (!panel.open || loading || loaded) return;
+    loading = true;
+    contents.replaceChildren();
     const status = text("p", "Loading files…", contents);
+    status.setAttribute("role", "status");
     try {
       const response = await fetch(`${base}/entries`);
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Could not list files in this archive.");
-      const {commit, files} = result;
-      status.textContent = commit ? `Git commit ${commit}` : files.length ? "" : "No files to display.";
-      status.hidden = !status.textContent;
-      archiveTree(files, base, contents);
+      const header = text("div", "", contents);
+      header.className = "archive-version";
+      text("strong", version.filename, header);
+      if (result.commit) {
+        text("code", result.commit.slice(0, 12), header).title = `Git commit ${result.commit}`;
+      }
+      showArchive(archiveIndex(result.files), base, contents);
+      status.hidden = true;
+      loaded = true;
     } catch (error) {
       status.textContent = error.message;
+    } finally {
+      loading = false;
     }
   });
 }
@@ -231,6 +360,7 @@ async function showExperiment(id, saved = false) {
   hideExperiment();
   const prefix = saved ? "Saved. " : "";
   if (id === null) {
+    $("experiment-browse-controls").open = true;
     setStatus(prefix.trim());
     return;
   }
@@ -242,9 +372,11 @@ async function showExperiment(id, saved = false) {
     renderExperiment(result);
     displayedExperimentId = id;
     detail.hidden = false;
+    $("experiment-browse-controls").open = false;
     setStatus(prefix.trim());
   } catch (error) {
     if (!isCurrent()) return;
+    $("experiment-browse-controls").open = true;
     setStatus(`${prefix}Could not load experiment. ${error.message}`, () => showExperiment(id, saved));
   } finally {
     if (isCurrent()) {
