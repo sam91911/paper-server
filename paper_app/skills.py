@@ -68,6 +68,11 @@ DEFAULT_SKILL = {
    or a result. Cite shared evidence as objects with `kind` and `id`. Keep the same request ID when retrying
    an identical update. After reconnecting, fetch the goal and resume from its recorded progress.
    Honor pauses and cancellations. A human accepts the result after submission.
+7. For paper intake, use `POST /api/search-papers` for metadata and check the existing catalog first.
+   Fetch authorized public PDFs in the agent's environment and upload bytes to `POST /api/papers`.
+   The enrolled client supports `paper_client.agent import-paper`. Share the paper with the requester.
+   Write the source URL, citation, and findings with `POST /api/documents`. Record verified evidence
+   using `POST /api/research-findings`, then propose a follow-up using `POST /api/research-goals`.
 
 ## 操作步驟
 
@@ -91,6 +96,10 @@ DEFAULT_SKILL = {
    請附上目標 `id`、目前版本 `revision` 及唯一 `request_id`。相同更新重試時請沿用原 ID。
    回報進度、阻礙或結果時請加上說明，可用具有 `kind` 及 `id` 的物件引用已分享的證據。
    重新連線時讀取現有進度再繼續。目標暫停或取消時停止工作，提交後由人員驗收。
+7. 匯入論文前先查詢論文庫，可透過 `POST /api/search-papers` 搜尋書目資料。
+   在代理端下載有權儲存的公開 PDF，再用 `POST /api/papers` 上傳並分享給請求人。
+   可使用已註冊用戶端的 `paper_client.agent import-paper`。用 `POST /api/documents` 記錄來源及觀察，
+   透過 `POST /api/research-findings` 儲存已查證的證據，再以 `POST /api/research-goals` 提出後續目標。
 """,
 }
 

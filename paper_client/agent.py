@@ -1,4 +1,4 @@
-"""Enroll an AI identity and authenticate library requests with its private key."""
+"""Enroll an AI identity, call the library API, and import public PDFs."""
 
 import argparse
 import base64
@@ -10,10 +10,11 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from .paper_source import fetch_pdf
 from .review import LibraryClient, PDF_LIMIT, library_origin
 
 USERNAME = r"[A-Za-z0-9][A-Za-z0-9_.-]{1,31}"
@@ -47,7 +48,7 @@ class AgentClient(LibraryClient):
     def sign(self, action, username, value):
         return encode(self.private_key.sign(f"paper-library:{action}:{username}:{value}".encode("ascii")))
 
-    def request(self, route, data=None, *, limit=1_000_000):
+    def authorize(self):
         if self.key is None or time.monotonic() >= self.renew_at:
             self.key = None
             challenge = json.loads(super().request("/api/ai/challenge", {"username": self.username}))
@@ -59,7 +60,29 @@ class AgentClient(LibraryClient):
             }))
             self.renew_at = start + session["expires_in"] - 10
             self.key = session["access_token"]
+
+    def request(self, route, data=None, *, limit=1_000_000):
+        self.authorize()
         return super().request(route, data, limit=limit)
+
+    def upload_pdf(self, filename, payload, recipients):
+        self.authorize()
+        return json.loads(self._send("/api/papers", payload, {
+            "Content-Type": "application/pdf",
+            "X-Paper-Filename": quote(filename, safe=""),
+            "X-Paper-Audience": "owner",
+            "X-Paper-Recipients": quote(json.dumps(recipients), safe=""),
+        }))
+
+
+def import_paper(client, url, filename, recipients):
+    if len(recipients) > 50 or any(not re.fullmatch(USERNAME, name) for name in recipients):
+        raise ValueError("Provide up to 50 valid recipient usernames.")
+    if filename and (not filename.lower().endswith(".pdf") or "/" in filename or "\\" in filename
+                     or any(ord(char) < 32 for char in filename) or len(filename.encode()) > 240):
+        raise ValueError("Use a .pdf filename without directory separators, up to 240 bytes.")
+    source_name, payload = fetch_pdf(url, PDF_LIMIT)
+    return client.upload_pdf(filename or source_name, payload, recipients)
 
 
 def register(identity, username, url):
@@ -107,12 +130,20 @@ def main():
     request.add_argument("--identity", type=Path, required=True)
     request.add_argument("route", help="Path and optional query, such as /api/account")
     request.add_argument("--json-stdin", action="store_true", help="Read a JSON request body from stdin and send POST")
+    paper = commands.add_parser("import-paper", help="Fetch a public HTTPS PDF and upload it to your library")
+    paper.add_argument("--identity", type=Path, required=True)
+    paper.add_argument("--url", required=True, help="Direct public HTTPS PDF URL")
+    paper.add_argument("--filename", help="Filename to use in the library")
+    paper.add_argument("--recipient", action="append", default=[], help="Share with this username (repeatable)")
     args = parser.parse_args()
     try:
         if args.command == "register":
             url = getpass.getpass("One-time registration URL: ") if sys.stdin.isatty() else sys.stdin.readline().strip()
             account = register(args.identity.expanduser(), args.username, url)
             print(f"Registered {account['username']} ({account['role']}).")
+        elif args.command == "import-paper":
+            client = AgentClient.from_identity(args.identity.expanduser())
+            print(json.dumps(import_paper(client, args.url, args.filename, args.recipient)))
         else:
             if not args.route.startswith("/") or args.route.startswith("//") or "#" in args.route:
                 raise ValueError("Enter a library path such as /api/account.")

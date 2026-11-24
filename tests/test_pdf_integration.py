@@ -1,12 +1,18 @@
 """Exercise Poppler and the real PDF import path with a generated PDF."""
+import io
 import shutil
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from urllib.parse import quote
+from urllib.parse import urlsplit
+from unittest.mock import patch
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from paper_app import accounts, library, pdf
+from paper_client import agent
 from test_skill_api import request
 
 
@@ -32,6 +38,49 @@ def fixture_pdf(text=b'Measured power was 12.5 mW.'):
 
 @unittest.skipUnless(shutil.which('pdftotext'), 'Poppler is not installed')
 class PdfIntegrationTests(unittest.TestCase):
+    def test_enrolled_agent_imports_a_paper_and_writes_a_document_and_goal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "library.sqlite3"
+            library.initialize(path)
+            with library.connect(path) as db:
+                owner = accounts.create_account(db, "alice", "owner password", "user")
+                session = accounts.start_session(db, owner, None)
+            status, invitation = request(path, "/api/ai/invitations", cookie=session,
+                                         data={"username": "reviewer", "role": "local"})
+            self.assertEqual(status, 200, invitation)
+            client = agent.AgentClient(8765, "reviewer", Ed25519PrivateKey.generate())
+            registration_path = invitation["registration_path"]
+            status, registered = request(path, registration_path, data={
+                "public_key": agent.encode(client.private_key.public_key().public_bytes_raw()),
+                "signature": client.sign("register", "reviewer", registration_path),
+            })
+            self.assertEqual(status, 200, registered)
+
+            def send(request_object, timeout):
+                route = urlsplit(request_object.full_url).path
+                status, result = request(path, route, binary=request_object.data, headers=dict(request_object.header_items()))
+                self.assertEqual(status, 200, result)
+                return io.BytesIO(json.dumps(result).encode())
+
+            with patch("paper_client.agent.fetch_pdf", return_value=("paper.pdf", fixture_pdf())), \
+                 patch.object(client.opener, "open", side_effect=send):
+                imported = agent.import_paper(client, "https://repository.example.org/paper.pdf", None, ["alice"])
+                paper_id = imported["paper_id"]
+                document = json.loads(client.request("/api/documents", {
+                    "title": "Paper notes", "markdown": f"Paper #{paper_id}, page 1.", "recipients": ["alice"],
+                }))["document_id"]
+                finding = json.loads(client.request("/api/research-findings", {
+                    "document_id": document, "statement": "Measured power was 12.5 mW.",
+                    "evidence": [{"kind": "pdf", "id": paper_id, "page": 1}],
+                }))["id"]
+                goal = json.loads(client.request("/api/research-goals", {
+                    "action": "propose", "document_id": document, "question": "Can we reproduce this measurement?",
+                    "rationale": "Establish a baseline.", "uncertainty": "Measurement conditions.", "evidence_ids": [finding],
+                }))["id"]
+            self.assertEqual(request(path, f"/papers/{paper_id}/source.pdf", cookie=session), (200, fixture_pdf()))
+            self.assertEqual(request(path, f"/api/document?id={document}", cookie=session)[1]["document"]["title"], "Paper notes")
+            self.assertEqual(request(path, f"/api/research-goals?document_id={document}", cookie=session)[1]["goals"][0]["id"], goal)
+
     def test_real_extract_and_import(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'library.sqlite3'

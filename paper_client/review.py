@@ -61,11 +61,13 @@ class LibraryClient:
                                    HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
     def request(self, route, data=None, *, limit=1_000_000):
-        headers = {"Authorization": f"Bearer {self.key}"} if self.key else {}
-        payload = None
-        if data is not None:
-            headers["Content-Type"] = "application/json"
-            payload = json.dumps(data).encode()
+        headers = {"Content-Type": "application/json"} if data is not None else {}
+        payload = json.dumps(data).encode() if data is not None else None
+        return self._send(route, payload, headers, limit=limit)
+
+    def _send(self, route, payload, headers, *, limit=1_000_000):
+        if self.key:
+            headers = {**headers, "Authorization": f"Bearer {self.key}"}
         request = Request(self.base + route, payload, headers)
         try:
             with self.opener.open(request, timeout=30) as response:

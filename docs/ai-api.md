@@ -144,6 +144,57 @@ Keep the same JSON body and `request_id` when repeating a request after a networ
 
 HTTP clients can use the same `GET` and `POST /api/agent-goals` operations with a bearer token. The list and history each return a `next_before` cursor for older results. Source access is checked for both participants on each request. A `research_goal` or `finding` reference includes its `document_id` so the agent can fetch it with `/api/research-goals?document_id=…` or `/api/research-findings?document_id=…`. [Research goals and experiments](research.md)
 
+## Import papers and write research notes · 匯入論文與撰寫研究筆記
+
+An enrolled agent can search the library or call `POST /api/search-papers` for Crossref metadata, then find the direct PDF link on the publisher's or repository's site. Use a publicly available PDF that you are authorized to store. A DOI or article page can help identify a paper. The import command takes the direct HTTPS PDF URL.
+
+代理註冊後可搜尋論文庫，或透過 `POST /api/search-papers` 查詢 Crossref 書目資料，再到出版社或典藏網站取得 PDF 的直接連結。請使用公開且允許儲存的 PDF。DOI 或文章頁面可用於辨識論文；匯入指令使用 PDF 的 HTTPS 直接連結。
+
+```sh
+IDENTITY="$HOME/.paper-library/reviewer.json"
+PDF_URL='https://repository.example.org/path/to/paper.pdf'
+python3 -m paper_client.agent import-paper --identity "$IDENTITY" \
+  --url "$PDF_URL" --recipient alice
+```
+
+Run the command in the agent's environment. It fetches the PDF there, sends the bytes to the enrolled library, and returns JSON with `paper_id`, `metrics`, and `has_text`. The PDF limit is 50 MiB. The paper starts private and is shared with each named `--recipient`. Replace `alice` with the requesting human's username. If the file is already in the library, use its existing ID when you have access. A direct HTTP client can upload the downloaded bytes to `POST /api/papers` with `Content-Type: application/pdf`, a percent-encoded `X-Paper-Filename`, and a percent-encoded JSON list in `X-Paper-Recipients`.
+
+指令在代理端下載 PDF，再將檔案送到已註冊的論文庫，回傳 `paper_id`、`metrics` 及 `has_text`。PDF 上限為 50 MiB。論文預設為私有，可使用 `--recipient` 指定多個分享帳號。請以請求人的帳號取代 `alice`。若論文已在庫內且可存取，請引用原有 ID。HTTP 用戶端也可依 API 規格將 PDF 送到 `POST /api/papers`。
+
+Use the returned paper IDs in a Markdown research note. Include the original citation or DOI, the source URL, what you observed, and any limitations. Send the note to `POST /api/documents` with the intended recipients:
+
+```sh
+python3 -m paper_client.agent request --identity "$IDENTITY" /api/documents --json-stdin <<'JSON'
+{
+  "title": "Paper intake and research notes",
+  "markdown": "## Sources\n- Paper #42, page 2. Replace this with the actual citation, URL, and observation.\n\n## Limitations\n- Record gaps or inaccessible PDFs here.",
+  "audience": "owner",
+  "recipients": ["alice"]
+}
+JSON
+```
+
+Use the returned `document_id` to record findings with `POST /api/research-findings`. For each finding, cite a verified PDF page with an evidence entry such as `{"kind":"pdf","id":42,"page":2}`. To write a follow-up research goal, POST `action: "propose"`, the `document_id`, `question`, `rationale`, `uncertainty`, and the returned `evidence_ids` to `/api/research-goals`. If a human needs to rank or advance the research goal, record the findings and propose the goal in a human-owned workspace document that is shared with the agent. If the agent is working on an assigned goal, also submit the result to `/api/agent-goals` with references to the paper, document, and research goal.
+
+將實際的論文 ID、來源網址、DOI、觀察及限制寫入 Markdown 文件。取得 `document_id` 後，可透過 `/api/research-findings` 記錄有 PDF 頁碼支持的發現，再以 `/api/research-goals` 提出後續研究目標。若需由人員排序或推進目標，請在該人員擁有且已分享給代理的工作區文件記錄發現及提出目標。若正在執行人員指派的目標，也請透過 `/api/agent-goals` 提交結果及相關引用。
+
+### Copy-paste goal · 可複製的目標
+
+In **Agent goals → Set goal**, choose the enrolled agent, replace the bracketed values, and paste the objective and acceptance criteria below.
+
+在 **Agent goals → Set goal** 選擇已註冊的代理，替換方括號內的資料，再貼上下列目標及驗收條件。
+
+~~~text
+Objective
+Find up to [3] relevant papers on [research topic]. Search the library first, then use bibliographic search and publisher or repository sites. Import available public PDFs and share them with [human username]. Write a Markdown research note comparing the papers. Propose one follow-up research goal supported by the findings.
+
+Acceptance criteria
+- Each included paper has a library paper ID, citation or DOI, and source URL. Reuse existing visible papers.
+- The shared Markdown note compares the findings, cites verified PDF pages, and records missing or inaccessible sources.
+- The follow-up research goal contains a question, rationale, uncertainty, and evidence-backed finding IDs.
+- Submit the note ID, paper IDs, and research goal ID to this assignment. Report a blocker if a required source or permission is unavailable.
+~~~
+
 ## Review assignments · 審閱指派
 
 Share a paper, document, or comment thread with the AI account. Choose **Review with AI**, select an eligible AI account, and select **Request review**. The dialog shows the result once the AI responds. The optional comment is visible only to the assigned AI account.
