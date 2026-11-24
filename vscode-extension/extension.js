@@ -29,12 +29,16 @@ function locationFor(uri) {
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
+function canEditDocument(item, user) {
+  return item.can_manage || item.owner_id === user.id;
+}
+
 function fileInfo(item, user) {
   return {
     type: vscode.FileType.File, ctime: 0,
     mtime: Date.parse(item.updated.replace(" ", "T") + "Z") || 0,
     size: Buffer.byteLength(item.markdown, "utf8"),
-    permissions: item.owner_id === user.id ? undefined : vscode.FilePermission.Readonly,
+    permissions: canEditDocument(item, user) ? undefined : vscode.FilePermission.Readonly,
   };
 }
 
@@ -88,7 +92,7 @@ function activate(context) {
       const session = await connection();
       const id = validateUri(uri, session);
       const previous = cache.get(uri.toString());
-      if (!previous || previous.owner_id !== session.account.id) throw unavailable();
+      if (!previous || !canEditDocument(previous, session.account)) throw unavailable();
       const markdown = Buffer.from(content).toString("utf8");
       const result = await session.send("/api/documents", {
         document_id: id, revision: previous.revision, title: previous.title,
@@ -147,7 +151,7 @@ function activate(context) {
     const session = await connection();
     const { documents } = await session.send("/api/documents?comments=none&content=summary");
     const choices = documents.map(item => ({
-      label: item.title, description: item.owner_id === session.account.id ? "Editable" : "Read only", item,
+      label: item.title, description: canEditDocument(item, session.account) ? "Editable" : "Read only", item,
     }));
     const selected = await vscode.window.showQuickPick(choices, { placeHolder: "Choose a library document" });
     if (selected) await open(session, selected.item);

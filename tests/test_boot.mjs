@@ -26,7 +26,8 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     publishers: [], count: 0, total: 0, page: 1};
   const origin = 'http://127.0.0.1:8765';
   const invitation = {registration_path: '/api/ai/register/example',
-    registration_url: 'https://papers.example.org/api/ai/register/example', username: 'reviewer', role: 'cloud'};
+    registration_url: 'https://papers.example.org/api/ai/register/example',
+    client_download_url: 'https://papers.example.org/api/client/download', username: 'reviewer', role: 'cloud'};
   const humanInvite = 'x'.repeat(43);
   const friendUrl = 'https://papers.example.org/account#invite=' + humanInvite;
   const hash = path === '/account' ? '#invite=' + humanInvite : '';
@@ -86,7 +87,22 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     assert.equal(document.getElementById('ai-invitation-result').hidden, false);
     await document.getElementById('copy-ai-invitation').fire('click');
     assert.ok(clipboard.includes(invitation.registration_url));
+    assert.ok(clipboard.includes(invitation.client_download_url));
+    assert.ok(clipboard.includes('-m pip install "$archive"'));
     assert.ok(clipboard.includes('paper_client.agent register --username reviewer'));
+    await vm.runInContext('copyHeartbeatPrompt("reviewer", false)', context);
+    assert.ok(clipboard.includes('heartbeat --identity ~/.paper-library/reviewer.json --once'));
+    assert.ok(clipboard.includes('/api/agent-goals'));
+    assert.ok(clipboard.includes('/api/reviews'));
+    assert.ok(clipboard.includes('wait for the next check'));
+    assert.ok(clipboard.includes('/api/paper-catalog?q='));
+    assert.ok(clipboard.includes('POST /api/search-papers'));
+    assert.ok(clipboard.includes('import-paper --identity ~/.paper-library/reviewer.json --url "$PDF_URL" --recipient "$REQUESTER"'));
+    assert.ok(clipboard.includes('{"kind":"paper","id":PAPER_ID}'));
+    await vm.runInContext('copyHeartbeatPrompt("reviewer", true)', context);
+    assert.ok(clipboard.includes('one useful follow-up'));
+    assert.ok(clipboard.includes('within our agreed research scope'));
+    assert.ok(clipboard.includes('import-paper --identity ~/.paper-library/reviewer.json'));
   }
 }
 console.log('All page startup scripts passed');

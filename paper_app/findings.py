@@ -123,6 +123,7 @@ def visible(db, account, document_id=None, *, discussions_only=False):
         documents = {document_id} if sharing.document_for(db, account, document_id) else set()
     if not documents:
         return
+    owners = sharing.owner_ids(db, account)
     for row in _rows(db, document_id, discussions_only):
         if row["document_id"] not in documents:
             continue
@@ -130,7 +131,7 @@ def visible(db, account, document_id=None, *, discussions_only=False):
             evidence = [_reference(db, account, ref) for ref in json.loads(row["evidence"])]
         except sharing.AccessDenied:
             continue
-        yield dict(row, evidence=evidence)
+        yield dict(row, evidence=evidence, can_edit=row["author_id"] in owners)
 
 
 def require_finding(db, account, document_id, finding_id):
@@ -156,7 +157,7 @@ def save(db, account, data):
     old = None
     if finding_id is not None:
         old = require_finding(db, account, document_id, finding_id)
-        if old["author_id"] != account["id"]:
+        if not sharing.is_owner(db, account, old["author_id"]):
             raise sharing.AccessDenied
         if data.get("revision") != old["revision"]:
             raise sharing.EditConflict("This finding changed. Reload it before saving.")

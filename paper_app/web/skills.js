@@ -74,7 +74,7 @@ async function loadSkills(append = false) {
 
 function showSkill(skill) {
   selected = skill;
-  const owned = skill.owner_id === account.id;
+  const owned = skill.can_manage || skill.owner_id === account.id;
   byId("skill-title").textContent = skill.title;
   byId("skill-description").textContent = skill.description;
   byId("skill-meta").textContent = [skill.id === "default" ? "Built in" : `ID ${skill.id}`,

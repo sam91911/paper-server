@@ -9,6 +9,7 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlencode
+from zipfile import ZipFile
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -64,6 +65,17 @@ class HttpTests(unittest.TestCase):
     def get(self, route, auth=True):
         return self.request(route, auth)
 
+    def test_agent_client_can_be_downloaded_before_registration(self):
+        status, payload = self.get("/api/client/download", False)
+        self.assertEqual(status, 200)
+        self.assertEqual(self.response_headers["Content-Type"], "application/zip")
+        self.assertEqual(self.response_headers["Content-Disposition"], 'attachment; filename="paper-client.zip"')
+        with ZipFile(io.BytesIO(payload)) as bundle:
+            self.assertEqual(set(bundle.namelist()), {
+                "paper-client/pyproject.toml", "paper-client/__init__.py", "paper-client/__main__.py",
+                "paper-client/agent.py", "paper-client/paper_source.py", "paper-client/review.py",
+            })
+
     def test_health_checks_existing_database_without_creating_a_replacement(self):
         self.assertEqual(self.get("/api/health", False), (200, b'{"status": "ok"}'))
         self.db = self.db.with_name("unavailable.sqlite3")
@@ -89,6 +101,7 @@ class HttpTests(unittest.TestCase):
         api("/api/account", headers={"Host": "unconfigured.example.org"}, status=403)
         invitation = api("/api/ai/invitations", {"username": "reviewer", "role": "cloud"}, auth=True)
         self.assertEqual(invitation["registration_url"], origin + invitation["registration_path"])
+        self.assertEqual(invitation["client_download_url"], origin + "/api/client/download")
         human_invite = api("/api/human-invitations", {"email": "reader@example.org", "role": "user"}, auth=True)
         self.assertEqual(human_invite["role"], "user")
         self.assertEqual(human_invite["expires_in"], 86400)

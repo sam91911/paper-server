@@ -66,6 +66,20 @@ class PostgreSQLTests(unittest.TestCase):
         token = self.api("/api/ai/login", data={"username": username, "challenge": challenge,
                                               "signature": client.sign("login", username, challenge)})["access_token"]
         self.assertEqual(self.api("/api/account", key=token)["account"]["username"], username)
+        heartbeat = self.api("/api/ai/heartbeat", key=token, data={})
+        record = self.api("/api/ai/invitations", cookie=cookie)["agents"][0]
+        self.assertTrue(record["online"])
+        self.assertEqual(record["last_heartbeat"], heartbeat["last_heartbeat"])
+        document = self.api("/api/documents", key=token, data={"title": "Private draft", "markdown": "First draft"})
+        doc_id = document["document_id"]
+        thread = {"document_id": doc_id}
+        comment = self.api("/api/comments", key=token, data={**thread, "body": "Private note"})
+        self.api("/api/ai/deactivate", cookie=cookie, data={"username": username})
+        self.api("/api/ai/heartbeat", key=token, data={}, expected=401)
+        self.assertTrue(self.api(f"/api/document?id={doc_id}", cookie=cookie)["document"]["can_manage"])
+        self.api("/api/documents", cookie=cookie, data={**document, "title": "Edited", "markdown": "Revised draft"})
+        self.api("/api/comments", cookie=cookie, data={**thread, **comment, "body": "Edited note"})
+        self.api("/api/delete-comment", cookie=cookie, data={**thread, **comment})
 
     def test_human_private_key_registration(self):
         library.initialize(self.target)
@@ -105,11 +119,14 @@ class PostgreSQLTests(unittest.TestCase):
             owner = accounts.create_key(db, human, "test")
             client = accounts.create_key(db, worker, "test")
         route = "/api/agent-goals"
-        created = self.api(route, key=owner, data={"action": "create", "agent": "worker",
+        created = self.api(route, key=owner, data={"action": "create", "agents": ["worker"],
                            "objective": "Inspect a result", "acceptance_criteria": "Explain the issue",
                            "request_id": uuid4().hex})["goal"]
+        self.assertIsNone(created["agent"])
+        self.assertEqual(created["agents"], ["worker"])
         payload = {"action": "start", "id": created["id"], "revision": created["revision"], "request_id": uuid4().hex}
         started = self.api(route, key=client, data=payload)
+        self.assertEqual(started["goal"]["agent"], "worker")
         self.assertEqual(self.api(route, key=client, data=payload), started)
         self.assertEqual(self.api(route, key=client)["goals"][0]["status"], "in_progress")
 

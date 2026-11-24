@@ -38,7 +38,7 @@ def eligible_agents(db, account, kind, target_id):
     agents = []
     for agent in db.execute(
         f"SELECT {ACCOUNT_FIELDS},a.display_name FROM accounts a WHERE a.role='ai' "
-        "AND a.ai_location IN ('local','cloud') ORDER BY a.ai_location DESC,a.username",
+        "AND a.disabled_at IS NULL AND a.ai_location IN ('local','cloud') ORDER BY a.ai_location DESC,a.username",
     ):
         try:
             target(db, agent, kind, target_id, None)
@@ -163,7 +163,8 @@ def create(db, account, data):
     if kind == "paper" and position is None:
         position = 1
     username = accounts.identity(data.get("agent"))
-    agent = db.execute(f"SELECT {ACCOUNT_FIELDS} FROM accounts a WHERE username=?", (username,)).fetchone()
+    agent = db.execute(f"SELECT {ACCOUNT_FIELDS} FROM accounts a WHERE username=? AND a.disabled_at IS NULL",
+                       (username,)).fetchone()
     if not agent or agent["role"] not in AI_ROLES:
         raise ValueError("Choose a Local AI or Cloud AI account.")
     if agent["role"] != data.get("agent_role"):

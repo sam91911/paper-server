@@ -71,7 +71,7 @@ function renderFinding(finding) {
     setDocumentReply(null, finding.id);
     documentCommentForm.elements.body.focus();
   });
-  if (finding.author_id === libraryData.account?.id) {
+  if (finding.can_edit || finding.author_id === libraryData.account?.id) {
     const edit = add(card, "button", "Edit finding", "secondary");
     edit.type = "button";
     edit.addEventListener("click", () => {

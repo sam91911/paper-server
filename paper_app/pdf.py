@@ -137,7 +137,7 @@ def detect_existing(database, paper_id, keywords, *, get_account, size_limit):
     def authorized_paper(db):
         account = get_account(db)
         paper = metrics.paper_for(db, account, paper_id)
-        if not metrics.can_edit_all(paper, account):
+        if not metrics.can_edit_all(db, paper, account):
             raise sharing.AccessDenied
         return paper
 

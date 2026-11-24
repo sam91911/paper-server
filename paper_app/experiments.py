@@ -69,7 +69,7 @@ def _grant(db, kind, item_id, account, edit=False):
 def allowed(db, kind, row, account, *, edit=False):
     if not account:
         return False
-    if row['owner_id'] == account['id']:
+    if sharing.is_owner(db, account, row['owner_id']):
         return True
     if _grant(db, kind, row['id'], account, edit=edit):
         return True
@@ -123,7 +123,7 @@ def require_item(db, item_id, account, *, edit=False):
 
 
 def set_grants(db, kind, item_id, actor, row, readers, editors):
-    if row['owner_id'] != actor['id']:
+    if not sharing.is_owner(db, actor, row['owner_id']):
         raise sharing.AccessDenied
     if not isinstance(readers, list) or not isinstance(editors, list) or len(readers) + len(editors) > 100:
         raise ValueError('Choose up to 100 readers and editors.')
@@ -139,12 +139,12 @@ def _read_grants(db, kind, account, experiment_id=None):
     table, scope_column = GRANT_SCOPES[kind]
     scope = '' if experiment_id is None else f' AND r.{scope_column}=:experiment_id'
     rows = db.execute(
-        'SELECT g.item_id,g.account_id,g.can_edit,r.owner_id,a.username '
+        f"SELECT g.item_id,g.account_id,g.can_edit,{sharing.owner_sql('r.owner_id')} AS owned,a.username "
         f'FROM research_grants g JOIN {table} r ON r.id=g.item_id '
         'JOIN accounts a ON a.id=g.account_id '
-        'WHERE g.kind=:kind AND (r.owner_id=:viewer OR g.account_id=:viewer)'
+        f"WHERE g.kind=:kind AND ({sharing.owner_sql('r.owner_id')} OR g.account_id=:viewer)"
         + scope + ' ORDER BY a.username',
-        {'kind': kind, 'viewer': account['id'], 'experiment_id': experiment_id},
+        sharing.viewer_params(account, kind=kind, experiment_id=experiment_id),
     )
     direct = {}
     names = {}
@@ -152,7 +152,7 @@ def _read_grants(db, kind, account, experiment_id=None):
         item_id = row['item_id']
         if row['account_id'] == account['id']:
             direct[item_id] = bool(row['can_edit'])
-        if row['owner_id'] == account['id']:
+        if row['owned']:
             groups = names.setdefault(item_id, {'readers': [], 'editors': []})
             groups['editors' if row['can_edit'] else 'readers'].append(row['username'])
     return direct, names
@@ -161,11 +161,14 @@ def _read_grants(db, kind, account, experiment_id=None):
 def _visible_rows(rows, account, grants, *, inherited=False):
     direct, names = grants
     for row in rows:
-        if row['owner_id'] == account['id']:
-            yield dict(row, **names.get(row['id'], {'readers': [], 'editors': []}))
-        elif (row['id'] in direct or _audience_allows(row['audience'], account['role'])
-              or (inherited and row['goal_brief_id'] is not None)):
-            yield dict(row)
+        owned = bool(row['owned'])
+        if (owned or row['id'] in direct or _audience_allows(row['audience'], account['role'])
+                or (inherited and row['goal_brief_id'] is not None)):
+            item = dict(row)
+            del item['owned']
+            if owned:
+                item.update(names.get(row['id'], {'readers': [], 'editors': []}))
+            yield item, owned
 
 
 def _audience(value):
@@ -199,7 +202,7 @@ def save_experiment(db, account, data):
     else:
         if data.get('revision') != row['revision']:
             raise sharing.EditConflict('This experiment changed. Reload it before saving.')
-        if audience != row['audience'] and account['id'] != row['owner_id']:
+        if audience != row['audience'] and not sharing.is_owner(db, account, row['owner_id']):
             raise sharing.AccessDenied
         db.execute('UPDATE experiments SET title=?,description=?,paper_id=?,audience=?,research_document_id=?,'
                    'revision=revision+1,updated=CURRENT_TIMESTAMP WHERE id=?',
@@ -240,7 +243,7 @@ def save_run(db, account, data):
         raise sharing.AccessDenied
     if data.get('revision') != row['revision']:
         raise sharing.EditConflict('This run changed. Reload it before saving.')
-    if audience != row['audience'] and account['id'] != row['owner_id']:
+    if audience != row['audience'] and not sharing.is_owner(db, account, row['owner_id']):
         raise sharing.AccessDenied
     db.execute('UPDATE experiment_runs SET title=?,description=?,status=?,audience=?,methods=?,settings=?,'
                'revision=revision+1,updated=CURRENT_TIMESTAMP WHERE id=?',
@@ -277,7 +280,7 @@ def save_item(db, account, data, content=None):
             raise ValueError('An artifact cannot be moved or change type.')
         if data.get('revision') != old['revision']:
             raise sharing.EditConflict('This item changed. Reload it before saving.')
-        if audience != old['audience'] and account['id'] != old['owner_id']:
+        if audience != old['audience'] and not sharing.is_owner(db, account, old['owner_id']):
             raise sharing.AccessDenied
         db.execute('UPDATE research_items SET title=?,audience=?,revision=revision+1 WHERE id=?', (title, audience, item_id))
     number = db.execute('SELECT COALESCE(MAX(number),0)+1 FROM research_versions WHERE item_id=?', (item_id,)).fetchone()[0]
@@ -291,14 +294,15 @@ def visible_experiments(db, account, document_id=None):
     if not account:
         return []
     grants = _read_grants(db, 'experiment', account)
-    rows = db.execute(sharing.PAPER_SCOPE + '''
-        SELECT e.*, d.id AS visible_document, b.id AS goal_brief_id FROM experiments e
+    rows = db.execute(sharing.PAPER_SCOPE + f'''
+        SELECT e.*, {sharing.owner_sql('e.owner_id')} AS owned,
+               d.id AS visible_document, b.id AS goal_brief_id FROM experiments e
         LEFT JOIN visible_documents d ON d.id=e.research_document_id
         LEFT JOIN research_goal_briefs b ON b.experiment_id=e.id
         WHERE (:document IS NULL OR d.id=:document) ORDER BY e.id DESC
     ''', sharing.viewer_params(account, document=document_id))
     results = []
-    for experiment in _visible_rows(rows, account, grants, inherited=True):
+    for experiment, _ in _visible_rows(rows, account, grants, inherited=True):
         if experiment.pop('goal_brief_id') is not None:
             from . import goals
             try:
@@ -322,20 +326,28 @@ def detail(db, account, experiment_id):
     document_id = experiment['research_document_id']
     if document_id is not None and not sharing.document_for(db, account, document_id):
         experiment_data['research_document_id'] = None
-    if experiment['owner_id'] == account['id']:
+    if sharing.is_owner(db, account, experiment['owner_id']):
         _, names = _read_grants(db, 'experiment', account, experiment_id)
         experiment_data.update(names.get(experiment_id, {'readers': [], 'editors': []}))
     run_grants = _read_grants(db, 'run', account, experiment_id)
-    run_rows = db.execute('SELECT * FROM experiment_runs WHERE experiment_id=? ORDER BY id DESC', (experiment_id,))
-    runs = list(_visible_rows(run_rows, account, run_grants))
-    for run in runs:
-        run['can_edit'] = can_edit and (run['owner_id'] == account['id'] or run_grants[0].get(run['id'], False))
+    viewer = sharing.viewer_params(account, experiment_id=experiment_id)
+    run_rows = db.execute(
+        f"SELECT *,{sharing.owner_sql('owner_id')} AS owned FROM experiment_runs WHERE experiment_id=:experiment_id ORDER BY id DESC",
+        viewer,
+    )
+    runs = []
+    for run, owned in _visible_rows(run_rows, account, run_grants):
+        run['can_edit'] = can_edit and (owned or run_grants[0].get(run['id'], False))
         if brief_id is not None:
             run['brief_id'] = brief_id
+        runs.append(run)
     visible_run_ids = {run['id'] for run in runs}
     item_grants = _read_grants(db, 'item', account, experiment_id)
-    item_rows = db.execute('SELECT * FROM research_items WHERE experiment_id=? ORDER BY id DESC', (experiment_id,))
-    items = {item['id']: dict(item, versions=[]) for item in _visible_rows(
+    item_rows = db.execute(
+        f"SELECT *,{sharing.owner_sql('owner_id')} AS owned FROM research_items WHERE experiment_id=:experiment_id ORDER BY id DESC",
+        viewer,
+    )
+    items = {item['id']: dict(item, versions=[]) for item, _ in _visible_rows(
         (row for row in item_rows if row['run_id'] is None or row['run_id'] in visible_run_ids),
         account, item_grants,
     )}

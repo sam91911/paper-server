@@ -15,12 +15,13 @@
       <details id="set-goal-panel" hidden>
         <summary>Set goal</summary>
         <form id="set-agent-goal" class="experiment-form">
-          <label>AI account username <input name="agent" required maxlength="32" autocomplete="off"></label>
+          <label>AI allowlist <textarea name="agents" required rows="3" maxlength="1700" autocomplete="off" aria-describedby="goal-allowlist-help"></textarea></label>
+          <p id="goal-allowlist-help">Enter AI usernames separated by commas or new lines. Share any linked sources with everyone on the list. The first agent to start claims the work.</p>
           <label>Objective <textarea name="objective" rows="4" required maxlength="8000"></textarea></label>
           <label>Acceptance criteria <textarea name="acceptance_criteria" rows="3" required maxlength="8000"></textarea></label>
           <label>Shared workspace references <textarea name="sources" rows="3" maxlength="600" aria-describedby="goal-reference-help"></textarea></label>
           <p id="goal-reference-help">Enter one reference per line, for example <code>document:42</code>. Types include paper, document, thread, finding, research_goal, and experiment.</p>
-          <button>Assign goal</button>
+          <button>Save goal</button>
         </form>
       </details>
       <div class="file-actions">

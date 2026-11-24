@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import uuid4
 
-from paper_app import accounts, backup, library
+from paper_app import accounts, agent_goals, backup, library
 from test_skill_api import request
 
 
@@ -19,7 +19,8 @@ class AgentGoalTests(unittest.TestCase):
         library.initialize(self.database)
         self.keys = {}
         with library.connect(self.database) as db:
-            for username, role in (("owner", "user"), ("writer", "member"), ("worker", "local"), ("other", "cloud")):
+            for username, role in (("owner", "user"), ("writer", "member"), ("worker", "local"), ("other", "cloud"),
+                                   ("outsider", "local")):
                 account = accounts.create_account(db, username, "sample password", role)
                 self.keys[username] = accounts.create_key(db, account, "test")
 
@@ -103,6 +104,70 @@ class AgentGoalTests(unittest.TestCase):
         self.assertTrue(masked["goal"]["source_unavailable"])
         self.assertNotIn("objective", masked["goal"])
         self.assertEqual(self.action(masked["goal"], "cancel", user="owner")["goal"]["status"], "canceled")
+
+    def test_allowlisted_agents_can_read_and_take_turns_claiming_a_goal(self):
+        payload = self.assignment(agents=["worker", "other"])
+        del payload["agent"]
+        restricted = self.document("Only the local agent can read this", recipients=["worker"])
+        self.api(data={**payload, "sources": [{"kind": "document", "id": restricted["document_id"]}]}, expected=400)
+        source = self.document("Shared source", recipients=["worker", "other"])
+        goal = self.api(data={**payload, "sources": [{"kind": "document", "id": source["document_id"]}]})["goal"]
+        self.assertIsNone(goal["agent"])
+        self.assertEqual(goal["agents"], ["other", "worker"])
+        path = f"{ROUTE}?id={goal['id']}"
+        for reader in ("worker", "other"):
+            self.assertEqual(self.api(user=reader)["goals"][0]["actions"], ["start"])
+            self.assertEqual(self.api(path, user=reader)["goal"]["objective"], payload["objective"])
+        self.assertEqual(self.api(user="outsider")["goals"], [])
+        self.api(path, user="outsider", expected=404)
+
+        def claim(reader):
+            status, result = request(self.database, ROUTE, key=self.keys[reader], data={
+                "action": "start", "id": goal["id"], "revision": goal["revision"], "request_id": uuid4().hex,
+            })
+            return status, reader, result
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            claims = sorted(pool.map(claim, ("worker", "other")))
+        self.assertEqual([status for status, _, _ in claims], [200, 409])
+        (_, claimant, result), (_, reader, _) = claims
+        goal = result["goal"]
+        self.assertEqual(goal["agent"], claimant)
+        self.assertEqual(self.api(path, user=reader)["goal"]["actions"], [])
+        self.action(goal, "progress", user=reader, note="Cannot update this claim", expected=409)
+        private_evidence = self.document("Evidence for the claimant", recipients=[claimant])
+        evidence_ref = {"kind": "document", "id": private_evidence["document_id"]}
+        goal = self.action(goal, "progress", user=claimant, note="Private citation", evidence=[evidence_ref])["goal"]
+        self.assertTrue(self.api(path, user=reader)["events"][0]["redacted"])
+
+        goal = self.action(goal, "release", user="owner")["goal"]
+        self.assertIsNone(goal["agent"])
+        self.assertEqual(self.action(goal, "start", user=reader)["goal"]["agent"], reader)
+
+        self.api("/api/documents", data={"document_id": source["document_id"], "revision": source["revision"],
+                                        "title": "Shared source", "markdown": "Evidence", "recipients": [reader]})
+        self.api(path, user=claimant, expected=404)
+        self.assertEqual(self.api(path, user=reader)["goal"]["objective"], payload["objective"])
+
+    def test_legacy_sqlite_goals_keep_claims_and_history_after_migration(self):
+        goal = self.api(data=self.assignment())["goal"]
+        self.action(goal, "start")
+        with library.connect(self.database) as db:
+            db.execute("PRAGMA foreign_keys=OFF")
+            old_table = agent_goals.GOAL_TABLE.format(table="old_agent_goals")
+            db.execute(old_table.replace("agent_id INTEGER REFERENCES", "agent_id INTEGER NOT NULL REFERENCES")
+                       .replace("agent_role TEXT CHECK", "agent_role TEXT NOT NULL CHECK"))
+            db.execute("INSERT INTO old_agent_goals SELECT * FROM agent_goals")
+            db.execute("DROP TABLE agent_goal_readers")
+            db.execute("DROP TABLE agent_goals")
+            db.execute("ALTER TABLE old_agent_goals RENAME TO agent_goals")
+        library.initialize(self.database)
+        path = f"{ROUTE}?id={goal['id']}"
+        record = self.api(path, user="worker")
+        self.assertEqual(record["goal"]["agents"], ["worker"])
+        self.assertEqual(record["goal"]["agent"], "worker")
+        self.assertEqual(record["events"][0]["action"], "start")
+        self.api(path, user="other", expected=404)
 
     def test_linked_research_goal_and_progress_survive_restore(self):
         source = self.document("Research notebook", recipients=["worker"])

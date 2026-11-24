@@ -1,6 +1,6 @@
 """Public HTTP operations for workstation-based research clients."""
 
-from . import agent_goals
+from . import agent_goals, client_distribution
 from .sharing import AUDIENCES
 
 
@@ -124,11 +124,12 @@ SKILL_FIELDS = {name: SKILL_SUMMARY[name] for name in ("audience", "title", "des
 SKILL_FIELDS.update(markdown=SKILL_MARKDOWN, recipients=RECIPIENTS)
 SCHEMAS = {
     "Error": obj({"error": STRING}, ("error",)),
-    "AgentGoal": obj({"id": ID, "agent": STRING, "agent_role": AI_ROLE, "requester": STRING,
+    "AgentGoal": obj({"id": ID, "agent": nullable(STRING), "agent_role": nullable(AI_ROLE),
+                      "agents": array(STRING), "requester": STRING,
                       "objective": STRING, "acceptance_criteria": STRING, "sources": AGENT_GOAL_REFERENCES,
                       "status": AGENT_GOAL_STATUS, "revision": ID, "created": COUNT, "updated": COUNT,
                       "source_unavailable": BOOLEAN, "actions": array(AGENT_GOAL_ACTION)},
-                     ("id", "status", "revision", "agent", "requester", "source_unavailable", "actions")),
+                     ("id", "status", "revision", "agent", "agent_role", "agents", "requester", "source_unavailable", "actions")),
     "AgentGoalEvent": obj({"revision": ID, "action": enum("create", *AGENT_GOAL_ACTION["enum"]),
                            "actor": STRING, "status": AGENT_GOAL_STATUS, "note": STRING, "evidence": AGENT_GOAL_REFERENCES,
                            "created": COUNT, "redacted": BOOLEAN}, ("revision", "action", "actor", "status", "note", "evidence")),
@@ -136,14 +137,14 @@ SCHEMAS = {
                     "display_name": STRING, "has_private_key": BOOLEAN, "key_only": BOOLEAN}, ("id", "role", "username")),
     "Paper": obj({"id": ID, "path": STRING, **METADATA, "owner_id": nullable(ID),
                   "audience": nullable(AUDIENCE), "has_pdf": schema("integer", enum=[0, 1]),
-                  "recipients": RECIPIENTS}, ("id", "path", "title")),
+                  "recipients": RECIPIENTS, "can_manage": BOOLEAN}, ("id", "path", "title")),
     "Document": obj({"id": ID, "owner_id": ID, "title": STRING, "markdown": STRING, "audience": AUDIENCE,
-                     "revision": ID, "recipients": RECIPIENTS}, ("id", "title", "revision")),
+                     "revision": ID, "recipients": RECIPIENTS, "can_manage": BOOLEAN}, ("id", "title", "revision")),
     "Comment": obj({
         "id": ID, "paper_id": nullable(ID), "document_id": nullable(ID), "parent_id": nullable(ID),
         "body": STRING, "audience": nullable(AUDIENCE), "author_id": nullable(ID), "author_name": nullable(STRING),
         "author_kind": nullable(enum("user", "ai")), "deleted": COUNT, "finding_id": nullable(ID),
-        "goal_id": nullable(ID), "doi_refs": array(STRING),
+        "goal_id": nullable(ID), "doi_refs": array(STRING), "can_manage": BOOLEAN,
     }, ("id", "body")),
     "Evidence": {"oneOf": [
         obj({"kind": enum("pdf"), "id": ID, "page": ID}, ("kind", "id", "page")),
@@ -151,7 +152,7 @@ SCHEMAS = {
             ("kind", "id", "start", "end", "revision")),
         obj({"kind": enum("run_artifact"), "id": ID}, ("kind", "id")),
     ]},
-    "Finding": obj(FINDING_FIELDS, ("id", "document_id", "statement", "kind", "evidence")),
+    "Finding": obj({**FINDING_FIELDS, "can_edit": BOOLEAN}, ("id", "document_id", "statement", "kind", "evidence")),
     "Goal": obj({
         "id": ID, "document_id": ID, "question": STRING, "rationale": STRING, "uncertainty": STRING,
         "evidence_ids": ID_LIST, "revision": ID, "briefs": array(obj({"id": ID, "markdown": STRING})),
@@ -164,7 +165,8 @@ SCHEMAS = {
                                              "sha256": nullable(STRING), "size": nullable(COUNT)})),
     }, ("id", "title", "kind", "versions")),
     "SkillSummary": obj(SKILL_SUMMARY, SKILL_SUMMARY),
-    "Skill": obj({**SKILL_SUMMARY, "markdown": SKILL_MARKDOWN, "recipients": RECIPIENTS}, (*SKILL_SUMMARY, "markdown")),
+    "Skill": obj({**SKILL_SUMMARY, "markdown": SKILL_MARKDOWN, "recipients": RECIPIENTS, "can_manage": BOOLEAN},
+                 (*SKILL_SUMMARY, "markdown")),
 }
 
 COMMENTS_PAGE = obj({"comments": array(ref("Comment")), "next_before": nullable(ID)}, ("comments", "next_before"))
@@ -191,6 +193,9 @@ METRIC_HISTORY = obj({
 }, ("original", "corrections", "next_before"))
 CROSSREF = array(obj({**METADATA, "short_venue": STRING, "venue_group": STRING}))
 PATHS = {
+    client_distribution.DOWNLOAD_ROUTE: {"get": operation("Download the installable Python agent client",
+        BINARY, response_type="application/zip", security=[],
+        description="Save the response as paper-client.zip and install it with Python pip.")},
     "/api/health": {"get": {
         "summary": "Check whether the server can read its database",
         "security": [],
@@ -205,20 +210,25 @@ PATHS = {
             obj({"goal": ref("AgentGoal"), "events": array(ref("AgentGoalEvent")), "next_before": nullable(ID)},
                 ("goal", "events", "next_before")),
         ]}, params=(param("id", ID, description="Goal ID for a detail view."), BEFORE),
-            description="Only the assigning human and assigned AI account can read the goal. "
+            description="The requester and allowlisted AI accounts with access to the sources can read a goal. "
+                        "The agent and agent_role fields identify the claimant and are null before a claim. "
                         "With id, before pages through older events by revision. Otherwise it pages through goals by ID.",
             security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
-        "post": operation("Assign an agent goal or update its progress",
+        "post": operation("Create an agent goal or update its progress",
             acknowledgement("goal", "events", "next_before", goal=ref("AgentGoal"), events=array(ref("AgentGoalEvent")),
                             next_before=nullable(ID)),
             body={"oneOf": [
-                obj({"action": enum("create"), "request_id": AGENT_GOAL_REQUEST_ID, "agent": STRING,
+                {**obj({"action": enum("create"), "request_id": AGENT_GOAL_REQUEST_ID, "agent": STRING,
+                     "agents": schema("array", items=STRING, minItems=1, maxItems=50),
                      "objective": STRING, "acceptance_criteria": STRING, "sources": AGENT_GOAL_REFERENCES},
-                    ("action", "request_id", "agent", "objective", "acceptance_criteria")),
+                    ("action", "request_id", "objective", "acceptance_criteria")),
+                 "oneOf": [{"required": ["agents"]}, {"required": ["agent"]}]},
                 obj({"action": AGENT_GOAL_ACTION, "request_id": AGENT_GOAL_REQUEST_ID, "id": ID, "revision": ID,
                      "note": STRING, "evidence": AGENT_GOAL_REFERENCES}, ("action", "request_id", "id", "revision")),
             ]},
-            description="Use an action from the goal's actions list. Retry an identical update with the same request_id. "
+            description="Use agents to create an unclaimed goal for an allowlist. The legacy agent field assigns it immediately. "
+                        "The first allowlisted agent to start claims the goal. Use an action from the goal's actions list. "
+                        "Retry an identical update with the same request_id. "
                         "A stale revision returns 409. Progress, block, submit, and request_changes require a note.",
             security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
     },
@@ -250,13 +260,15 @@ PATHS = {
             obj({"invitations": array(obj({"invite_id": STRING, "username": STRING, "role": AI_ROLE,
                 "mode": enum("enroll", "rotate"), "created": COUNT, "expires": COUNT,
                 "status": enum("pending", "used", "canceled", "expired")})),
-                "agents": array(obj({"id": ID, "username": STRING, "role": AI_ROLE, "last_authenticated": nullable(COUNT)})),
+                "agents": array(obj({"id": ID, "username": STRING, "role": AI_ROLE, "last_authenticated": nullable(COUNT),
+                                     "last_heartbeat": nullable(COUNT), "online": BOOLEAN, "disabled_at": nullable(COUNT)})),
                 "next_before": nullable(STRING)}, ("invitations", "agents", "next_before")),
             params=(param("before", STRING, description="The previous page's next_before invitation cursor."),),
             security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
         "post": operation("Create, rotate, replace, or cancel an AI invitation",
             acknowledgement("invite_id", invite_id=STRING, registration_path=STRING,
-                            registration_url=schema("string", format="uri"), username=STRING, role=AI_ROLE,
+                            registration_url=schema("string", format="uri"), client_download_url=schema("string", format="uri"),
+                            username=STRING, role=AI_ROLE,
                             expires_in=COUNT, mode=enum("enroll", "rotate"), status=enum("canceled")),
             body={"oneOf": [
                 obj({"action": enum("create"), "username": STRING, "role": AI_ROLE}, ("username", "role")),
@@ -285,6 +297,15 @@ PATHS = {
                  ("username", "challenge", "signature")), security=[],
         description="Sign the ASCII string paper-library:login:<username>:<challenge>."
                     " The access token expires in 15 minutes.")},
+    "/api/ai/heartbeat": {"post": operation("Report presence for the authenticated AI account",
+        acknowledgement("last_heartbeat", "interval_seconds", last_heartbeat=COUNT, interval_seconds=ID),
+        body=obj(), description="Send an empty JSON object. The heartbeat timestamp is in Unix seconds.",
+        security=[{"ApplicationKey": []}, {"BrowserSession": []}])},
+    "/api/ai/deactivate": {"post": operation("Deactivate a managed AI account and keep its data",
+        acknowledgement("username", "disabled_at", username=STRING, disabled_at=COUNT),
+        body=obj({"username": STRING}, ("username",)),
+        description="Requires the agent's trusted human operator. Revokes credentials and cancels pending key rotations.",
+        security=[{"ApplicationKey": []}, {"BrowserSession": []}])},
     "/api/human-invitations": {
         "get": operation("List human signup invitations you issued that are still pending",
             obj({"invitations": array(obj({"invite_id": STRING, "email": schema("string", format="email"), "expires": COUNT,

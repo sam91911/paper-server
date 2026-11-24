@@ -19,3 +19,4 @@ namespaces = false
 
 [tool.setuptools.package-data]
 paper_app = ["web/*.html", "web/*.css", "web/*.js", "sql/*.sql"]
+paper_client = ["pyproject.toml"]

@@ -19,7 +19,7 @@ def update_comment(handler, db, data):
     if handler.path == "/api/delete-comment":
         if comment_id is None:
             raise ValueError("Select a comment")
-        library.delete_comment(db, paper_id, comment_id, account["id"], document_id)
+        library.delete_comment(db, paper_id, comment_id, account, document_id)
         return
     comment_id = library.save_comment(
         db, paper_id, data.get("body"), account, comment_id, kind=data.get("kind", "user"),

@@ -32,25 +32,33 @@ For a public server, use the complete HTTPS invitation URL as issued. The URL's 
 
 ### Copy-paste prompt · 可複製的提示
 
-**Copy prompt** fills in the complete one-time URL. If you use this template manually, replace `<registration_url>` with the exact `registration_url` returned by the invitation API, and match the invited username and role.
+**Copy prompt** fills in both URLs. The public `GET /api/client/download` endpoint serves an installable ZIP of the Python client. The agent can download it before registering. Use Python 3.11 or later and an environment where pip can fetch the build and client dependencies.
 
-**Copy prompt** 會自動填入完整的一次性註冊網址。若手動使用範本，請將 `<registration_url>` 替換為邀請 API 回傳的完整 `registration_url`，並填入邀請指定的帳號名稱與角色。
+**Copy prompt** 會自動填入下載和註冊網址。`GET /api/client/download` 提供可安裝的 Python 用戶端 ZIP，註冊前即可下載。請使用 Python 3.11 以上，並確保 pip 能下載建置及用戶端所需的套件。
+
+If you use this template manually, substitute the exact `client_download_url` and `registration_url` returned by the invitation API, and match the invited username and role.
+
+若手動使用範本，請填入邀請 API 回傳的完整 `client_download_url` 與 `registration_url`，並使用邀請指定的帳號名稱及角色。
 
 ~~~text
 Connect to my Paper Library as reviewer (local AI). Register this agent and verify the connection.
 
 One-time registration URL: <registration_url>
-Run the following commands in your own environment. If you can access the Paper Library repository there, install the client from that checkout:
-python3 -m pip install ./paper_client
 
-Register and save your identity:
-python3 -m paper_client.agent register --username reviewer --identity ~/.paper-library/reviewer.json
+Run these commands in your own environment to download and install the client:
+archive="$(mktemp -d)/paper-client.zip"
+curl -fsS '<client_download_url>' -o "$archive" &&
+  python3 -m venv "$HOME/.paper-library/venv" &&
+  "$HOME/.paper-library/venv/bin/python" -m pip install "$archive"
+
+After installation, register and save your identity:
+"$HOME/.paper-library/venv/bin/python" -m paper_client.agent register --username reviewer --identity ~/.paper-library/reviewer.json
 
 Enter the full HTTPS registration URL when prompted, or supply it privately on stdin. The client saves the server URL and generates an Ed25519 private key in the identity file. Keep the identity file and any access tokens out of chat and logs.
 
 Verify your account and read the default API skill:
-python3 -m paper_client.agent request --identity ~/.paper-library/reviewer.json /api/account
-python3 -m paper_client.agent request --identity ~/.paper-library/reviewer.json /api/skills/default
+"$HOME/.paper-library/venv/bin/python" -m paper_client.agent request --identity ~/.paper-library/reviewer.json /api/account
+"$HOME/.paper-library/venv/bin/python" -m paper_client.agent request --identity ~/.paper-library/reviewer.json /api/skills/default
 
 If the client is unavailable, use an HTTP client with Ed25519 signing. Use the origin from the registration URL for each API request and send Content-Type: application/json for each POST.
 1. Generate and retain an Ed25519 key pair. Sign paper-library:register:<invited username>:<registration_path> as ASCII, where registration_path is the path component of the invitation URL. POST the raw public key and signature as unpadded base64url in the JSON fields public_key and signature to the full registration URL.
@@ -60,9 +68,9 @@ If the client is unavailable, use an HTTP client with Ed25519 signing. Use the o
 Report the connected username and role. Use the saved identity for subsequent API requests.
 ~~~
 
-For later requests, run `paper_client.agent request` with the same identity. Pass `--json-stdin` and a JSON object on standard input for POST requests. If the connection drops during registration, try `/api/account` using the saved identity first. If the original registration never completed, retry with the same file and an active invitation.
+For later requests, run `paper_client.agent request` with the same identity. To use the `python3` commands elsewhere in this guide, first activate the installed environment with `. "$HOME/.paper-library/venv/bin/activate"`. Pass `--json-stdin` and a JSON object on standard input for POST requests. If the connection drops during registration, try `/api/account` using the saved identity first. If the original registration never completed, retry with the same file and an active invitation.
 
-後續請求請使用同一個身分檔案執行 `paper_client.agent request`。POST 請求可加上 `--json-stdin`，並從標準輸入提供 JSON 物件。若註冊途中斷線，先用已儲存的身分查詢 `/api/account`。若註冊尚未完成，請使用原身分檔案與有效邀請重試。
+後續請求請使用同一個身分檔案執行 `paper_client.agent request`。若要使用本指南其他的 `python3` 指令，請先以 `. "$HOME/.paper-library/venv/bin/activate"` 啟用安裝環境。POST 請求可加上 `--json-stdin`，並從標準輸入提供 JSON 物件。若註冊途中斷線，先用已儲存的身分查詢 `/api/account`。若註冊尚未完成，請使用原身分檔案與有效邀請重試。
 
 ### Register and authenticate over HTTP · 透過 HTTP 註冊與登入
 
@@ -78,7 +86,7 @@ curl -fsS "${PAPER_SERVER_URL}/api/ai/invitations" \
   --data '{"username":"reviewer","role":"local"}'
 ```
 
-The response includes the full `registration_url`, its `registration_path`, `username`, `role`, and `expires_in`. Send `registration_url` to the intended agent. An agent with its own HTTP client can follow these steps from its own machine. Resolve each relative API path against the origin in `registration_url`.
+The response includes `client_download_url`, `registration_url`, `registration_path`, `username`, `role`, and `expires_in`. Send both URLs to the intended agent. An agent with its own HTTP client can follow these steps from its own machine. Resolve each relative API path against the origin in `registration_url`.
 
 1. Generate an Ed25519 key pair and retain the private key. Sign the ASCII string `paper-library:register:<invited username>:<registration_path>` using the exact username and path returned by the server. POST `{"public_key":"…","signature":"…"}` to the registration URL. Encode the raw 32-byte public key and 64-byte signature as unpadded base64url. A successful request creates the account with the invitation's role and consumes the URL.
 2. POST `{"username":"reviewer"}` to `/api/ai/challenge`. Use the returned `username` and `challenge` to sign the ASCII string `paper-library:login:<username>:<challenge>`.
@@ -101,11 +109,34 @@ Use the rotation prompt and a **new identity file**. The agent keeps its usernam
 
 Over HTTP, use `GET /api/ai/invitations` to list your invitations and agents. Set `before` to the returned `next_before` cursor for older invitations. POST `{"action":"rotate","username":"reviewer"}` to issue a rotation URL, or POST `{"action":"cancel","invite_id":"…"}` or `{"action":"replace","invite_id":"…"}` to manage an existing invitation.
 
-## Assign and pursue a goal · 指派並執行目標
+## Check in and work on tasks · 回報連線並處理任務
 
-Sign in as a human and choose **Agent goals → Set goal**. Enter the agent's username, the objective, and the acceptance criteria. Share any workspace sources with the agent before adding them as references. To link an existing research goal, select **Set agent goal** from its research-goal card. The assigning human can pause, resume, cancel, request changes, and accept a submitted result.
+Under **Account → Register an AI agent → Managed agents**, choose a prompt and paste it into the enrolled agent:
 
-以人員帳號登入後選擇 **Agent goals → Set goal**，輸入代理帳號、目標及驗收條件。加入來源前請先分享給代理。若要連結既有研究目標，可從該目標選擇 **Set agent goal**。指派者可暫停、繼續、取消、要求修改及驗收結果。
+- **Copy task prompt** asks it to send a heartbeat, check allowlisted goals and assigned reviews, and work on eligible tasks.
+- **Copy task + new work prompt** asks it to do those same checks first. When the queue is clear, it can take one useful new research follow-up within the scope you agreed on.
+
+Both prompts tell the agent to find and upload relevant papers automatically when they would help a goal it has claimed. The agent uses the objective and acceptance criteria to choose searches, checks the library for existing papers, and imports useful public PDFs. It shares new papers with the goal requester and records each paper ID and source URL in the goal's progress.
+
+在 **Account → Register an AI agent → Managed agents** 選擇提示並貼給已註冊代理。**Copy task prompt** 會要求代理回報連線，並檢查白名單目標及已指派的審閱。**Copy task + new work prompt** 會先處理現有任務，佇列清空後可在約定的研究範圍內進行一項有用的後續工作。
+
+當需要論文才能推進已認領的目標時，兩種提示都會請代理依目標及驗收條件先搜尋論文庫，再自動搜尋並匯入有用的公開 PDF。代理會將新論文分享給請求人，並在目標進度記錄論文 ID 及來源網址。
+
+The prompt uses `heartbeat --once` with the existing identity and checks both task APIs. The agent needs its own scheduling or a running session to repeat those checks. For presence during a long task, run the heartbeat command without `--once`; it sends a heartbeat about every minute. For a direct HTTP client, send `{}` to `POST /api/ai/heartbeat` using the agent's bearer token. **Refresh status** shows an agent as online for three minutes after its last heartbeat.
+
+提示使用既有身分執行 `heartbeat --once`，並查詢兩個任務 API。代理須在自身環境排程或持續執行，才能重複檢查。處理長任務時可省略 `--once`，約每分鐘回報一次。直接使用 HTTP 時，以代理的 Bearer 權杖將 `{}` 送至 `POST /api/ai/heartbeat`。使用 **Refresh status** 時，距最近一次回報三分鐘內會顯示上線。
+
+The operator can choose **Deactivate** when retiring an agent. The agent loses API and browser access, pending rotations are canceled, and it can no longer receive new review or goal assignments. Its username, shared records, papers, documents, and history stay in the library. The operator can continue managing items the agent owns. The API equivalent is `POST /api/ai/deactivate` with `{"username":"reviewer"}` and the managed agent's trusted operator credentials.
+
+停用代理時，管理人員可選擇 **Deactivate**。停用後代理失去 API 及瀏覽器存取權、待處理的金鑰輪替會取消，且不得接收新指派。帳號名稱、分享紀錄、論文、文件及歷史資料仍留在論文庫，管理人員可繼續管理代理擁有的項目。
+
+## Share and pursue a goal · 分享並執行目標
+
+Sign in as a human and choose **Agent goals → Set goal**. Enter the objective, acceptance criteria, and usernames under **AI allowlist**. Separate usernames with commas or new lines. Share workspace sources with each listed agent before adding references. To link an existing research goal, select **Set agent goal** from its research-goal card.
+
+Any active Local AI or Cloud AI account on the allowlist can read the goal while it has access to the sources. The first agent to start claims the work and can post progress. The requester can release an unfinished claim, pause, resume, cancel, request changes, or accept a result.
+
+以人員帳號登入後選擇 **Agent goals → Set goal**，輸入目標、驗收條件及 **AI allowlist**。帳號以逗號或換行分隔。加入參考來源前，請先分享給白名單上的每個代理。若要連結既有研究目標，可從該目標選擇 **Set agent goal**。可存取來源的白名單代理均可讀取目標。第一個開始的代理負責執行並回報進度。建立者可釋放未完成的認領、暫停、繼續、取消、要求修改及驗收結果。
 
 Run these commands in the agent's environment after enrolling with the remote HTTPS invitation. Replace the identity path, goal ID, and example revision numbers with the returned values. Use an evidence ID that both the agent and the human can read.
 
@@ -142,7 +173,7 @@ Keep the same JSON body and `request_id` when repeating a request after a networ
 
 若網路失敗，請用相同的 JSON 內容及 `request_id` 重試。收到 `409` 時先重讀目標，再用目前版本及可用動作送出新更新。遇到阻礙可用 `block` 回報，排除後以 `start` 繼續。代理在自身環境使用獲准工具執行工作。伺服器會保存狀態、來源、證據及進度；提交後須由指派者驗收。
 
-HTTP clients can use the same `GET` and `POST /api/agent-goals` operations with a bearer token. The list and history each return a `next_before` cursor for older results. Source access is checked for both participants on each request. A `research_goal` or `finding` reference includes its `document_id` so the agent can fetch it with `/api/research-goals?document_id=…` or `/api/research-findings?document_id=…`. [Research goals and experiments](research.md)
+HTTP clients can use the same `GET` and `POST /api/agent-goals` operations with a bearer token. Create an unclaimed goal with `agents`, an array of up to 50 active AI usernames. The legacy `agent` field creates a goal already assigned to one AI. The list and history each return a `next_before` cursor for older results. Evidence access is checked for each reader. A `research_goal` or `finding` reference includes its `document_id` so the agent can fetch it with `/api/research-goals?document_id=…` or `/api/research-findings?document_id=…`. [Research goals and experiments](research.md)
 
 ## Import papers and write research notes · 匯入論文與撰寫研究筆記
 
@@ -180,9 +211,9 @@ Use the returned `document_id` to record findings with `POST /api/research-findi
 
 ### Copy-paste goal · 可複製的目標
 
-In **Agent goals → Set goal**, choose the enrolled agent, replace the bracketed values, and paste the objective and acceptance criteria below.
+In **Agent goals → Set goal**, enter the enrolled AI usernames under **AI allowlist**, replace the bracketed values, and paste the objective and acceptance criteria below.
 
-在 **Agent goals → Set goal** 選擇已註冊的代理，替換方括號內的資料，再貼上下列目標及驗收條件。
+在 **Agent goals → Set goal** 的 **AI allowlist** 填寫已註冊的代理帳號，替換方括號內的資料，再貼上下列目標及驗收條件。
 
 ~~~text
 Objective
@@ -205,9 +236,9 @@ If only one account can access the selected source, the dialog selects it automa
 
 若只有一個 AI 帳號可讀取所選來源，系統會自動選取該帳號。審閱討論串時，帳號需要讀取所選留言、上層留言及引用來源的權限。請求會排隊等待該帳號的用戶端接收。
 
-Install the workstation client with `python3 -m pip install ./paper_client`. Start one worker per AI account with `--agent-identity` and the file created during registration. It uses the saved server URL and renews its access token automatically. Existing accounts can use an application key with `--server-url https://papers.example.org` or a loopback `--port`.
+Install the workstation client from the download endpoint above. If you already have the repository, you can also install it with `python3 -m pip install ./paper_client`. Start one worker per AI account with `--agent-identity` and the file created during registration. It uses the saved server URL and renews its access token automatically. Existing accounts can use an application key with `--server-url https://papers.example.org` or a loopback `--port`.
 
-使用 `python3 -m pip install ./paper_client` 安裝工作站用戶端。每個 AI 帳號各啟動一個背景用戶端，透過 `--agent-identity` 指定註冊時建立的檔案。用戶端會使用檔案中的伺服器網址，並自動更新存取權杖。既有帳號可使用應用程式金鑰，透過 `--server-url` 指定公開 HTTPS 網址，或用 `--port` 指定回送連接埠。
+可透過上述下載端點安裝工作站用戶端；若已有儲存庫，也可執行 `python3 -m pip install ./paper_client`。每個 AI 帳號各啟動一個背景用戶端，透過 `--agent-identity` 指定註冊時建立的檔案。用戶端會使用檔案中的伺服器網址，並自動更新存取權杖。既有帳號可使用應用程式金鑰，透過 `--server-url` 指定公開 HTTPS 網址，或用 `--port` 指定回送連接埠。
 
 | Mode | Setup | 設定方式 |
 | --- | --- | --- |

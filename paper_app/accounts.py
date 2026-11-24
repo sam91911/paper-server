@@ -87,6 +87,8 @@ def initialize(db):
         ("display_name", "TEXT NOT NULL DEFAULT ''"),
         ("email", "TEXT COLLATE NOCASE"),
         ("trusted", "INTEGER NOT NULL DEFAULT 1 CHECK (trusted IN (0,1))"),
+        ("disabled_at", "INTEGER"),
+        ("last_heartbeat", "INTEGER"),
     ):
         if name not in columns:
             db.execute(f"ALTER TABLE accounts ADD COLUMN {name} {declaration}")
@@ -115,7 +117,7 @@ def current_account(db, token, *, application_key=False, ai_session=False):
         f"EXISTS(SELECT 1 FROM google_identities i WHERE i.account_id=a.id) AS google_only, "
         f"EXISTS(SELECT 1 FROM human_public_keys k WHERE k.account_id=a.id) AS has_private_key, "
         f"length(a.password_hash)=0 AS key_only "
-        f"FROM accounts a {join}", params,
+        f"FROM accounts a {join} AND a.disabled_at IS NULL", params,
     ).fetchone()
     if row is None:
         return None
@@ -243,7 +245,7 @@ def suggest_usernames(db, query):
     pattern = query.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
     return [dict(row) for row in db.execute(
         "SELECT username,display_name FROM accounts "
-        "WHERE LOWER(username) LIKE LOWER(?) ESCAPE '!' OR LOWER(display_name) LIKE LOWER(?) ESCAPE '!' "
+        "WHERE disabled_at IS NULL AND (LOWER(username) LIKE LOWER(?) ESCAPE '!' OR LOWER(display_name) LIKE LOWER(?) ESCAPE '!') "
         "ORDER BY (LOWER(username) LIKE LOWER(?) ESCAPE '!') DESC,username LIMIT 8",
         (pattern, pattern, pattern),
     )]
@@ -270,7 +272,8 @@ def create_account(db, username, password, role, *, display_name="", email=None,
 
 
 def set_role(db, username, role):
-    row = db.execute("UPDATE accounts SET role=?,ai_location=?,trusted=? WHERE username=? RETURNING id",
+    row = db.execute("UPDATE accounts SET role=?,ai_location=?,trusted=?,last_heartbeat=NULL "
+                     "WHERE username=? AND disabled_at IS NULL RETURNING id",
                      (*role_fields(role), int(role != "member"), identity(username))).fetchone()
     if row is None:
         raise ValueError("Account not found.")
@@ -284,7 +287,7 @@ def set_role(db, username, role):
 def authenticate(db, username, password):
     validate_password(password)
     row = db.execute(
-        f"SELECT a.*, {ROLE_SQL.format(alias='a')} AS effective_role FROM accounts a WHERE username=?",
+        f"SELECT a.*, {ROLE_SQL.format(alias='a')} AS effective_role FROM accounts a WHERE username=? AND disabled_at IS NULL",
         (identity(username),),
     ).fetchone()
     digest = password_hash(password, row["salt"] if row else bytes(16))

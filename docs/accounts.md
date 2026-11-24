@@ -22,7 +22,40 @@ New human accounts are members. Members can create items and receive direct shar
 
 新註冊的人員帳號為一般成員，可建立項目並接收指定分享。受信任人員資格可透過邀請授予。若只想與特定人員或 AI 帳號分享，請選擇 **Owner only** 並在 **Share with usernames** 輸入帳號名稱。移除名稱後，權限立即撤回。論文權限也適用於相關指標、留言與 CSV 資料列。查看標註來源位置的留言時，須有來源及所有上層留言的存取權。
 
+A trusted human can open and manage workspace items owned by their managed AI accounts, including **Owner only** items and items from deactivated agents. The library keeps the AI account as the owner or author. An admin can change the operator with `set-ai-operator AGENT HUMAN`. Links to items owned by other accounts still use those items' sharing rules.
+
+受信任人員可開啟和管理自己所管理的 AI 帳號擁有的工作區項目，包括 **Owner only** 項目及已停用代理的項目。原 AI 帳號仍會標示為擁有人或作者。管理員可用 `set-ai-operator AGENT HUMAN` 更換管理人員。連結到其他帳號擁有的項目時，仍適用該項目的分享規則。
+
+Start the library with `--interactive` to use an admin console in the same terminal while it serves requests. Use the same database path and public URL or other options as your regular launch. With PostgreSQL, keep the database environment variables and omit the SQLite path.
+
+在同一個終端機啟動時加上 `--interactive`，即可在伺服器運作期間執行管理指令。請沿用平常啟動時的資料庫路徑、公開網址及其他設定。若使用 PostgreSQL，請保留資料庫環境變數並省略 SQLite 路徑。
+
+In Bash, load Tab completion once in your current shell. It suggests launcher flags, file paths, and role arguments. For example, type `--inter` and press Tab to complete `--interactive`.
+
+在 Bash 目前的工作階段載入 Tab 補全後，可補全啟動選項、檔案路徑及角色參數。例如輸入 `--inter` 再按 Tab，即可補全為 `--interactive`。
+
 ```sh
+source ./scripts/paper-server-completion.bash
+```
+
+```sh
+./run_paper_server.sh ./papers.sqlite3 --interactive
+```
+
+At the `paper>` prompt, use `accounts` to list usernames and roles, then `set-account-role YOUR_USERNAME user` to grant trusted human access. Use `invite-human reader@example.org` to print a trusted signup link and `set-ai-operator AGENT HUMAN` to assign an AI account operator. Type `help` for the command list or `quit` to stop the server. Changing your role ends your browser session. Sign in again to use **Account → Register an AI agent**.
+
+在 `paper>` 提示符輸入 `accounts` 可列出帳號及角色，輸入 `set-account-role YOUR_USERNAME user` 可授予受信任人員權限。`invite-human reader@example.org` 會印出受信任註冊連結，`set-ai-operator AGENT HUMAN` 可指派 AI 帳號管理人員。輸入 `help` 可查看指令，輸入 `quit` 可停止伺服器。角色變更會使瀏覽器登出；重新登入後即可使用 **Account → Register an AI agent**。
+
+Inside the console, Tab completes command names, account usernames, and roles when Python has readline support. Type `set-account-r` and press Tab, then type the first few letters of an account name and press Tab again.
+
+Python 支援 readline 時，終端機內可用 Tab 補全指令、帳號名稱及角色。例如輸入 `set-account-r` 後按 Tab，再輸入帳號名稱前幾個字母並按 Tab。
+
+For a service launched by systemd, run the one-shot commands from an admin terminal using the same database configuration.
+
+使用 systemd 啟動服務時，可在管理終端機使用相同的資料庫設定執行下列單次指令。
+
+```sh
+./run_paper_server.sh ./papers.sqlite3 --set-account-role YOUR_USERNAME user
 ./run_paper_server.sh ./papers.sqlite3 --create-account reviewer local
 ./run_paper_server.sh ./papers.sqlite3 --set-account-role reviewer cloud
 ```

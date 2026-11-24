@@ -280,7 +280,7 @@ def update(db, account, data):
     goal = require_goal(db, account, document["id"], data.get("goal_id"))
     if action == "draft":
         return _draft(db, account, goal, data)
-    if document["owner_id"] != account["id"] or account["role"] not in ("user", "member"):
+    if account["role"] not in ("user", "member") or not sharing.is_owner(db, account, document["owner_id"]):
         raise sharing.AccessDenied
     if data.get("revision") != goal["revision"]:
         raise sharing.EditConflict("This goal changed. Reload it before saving.")
@@ -320,7 +320,7 @@ def update(db, account, data):
 
 def read(db, account, document_id):
     document = findings.require_document(db, account, document_id)
-    manager = document["owner_id"] == account["id"] and account["role"] in ("user", "member")
+    manager = account["role"] in ("user", "member") and sharing.is_owner(db, account, document["owner_id"])
     available = []
     for goal in db.execute("""
         SELECT g.*, COALESCE(NULLIF(a.display_name,''),a.username) AS author_name

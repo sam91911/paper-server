@@ -11,9 +11,9 @@ const moreEvents = element("more-agent-goal-events");
 const labels = {
   assigned: "Assigned", in_progress: "In progress", blocked: "Blocked", paused: "Paused",
   submitted: "Submitted", completed: "Completed", canceled: "Canceled",
-  create: "Assigned goal", start: "Start or resume work", progress: "Record progress", block: "Report blocker",
+  create: "Created goal", start: "Start or resume work", progress: "Record progress", block: "Report blocker",
   submit: "Submit result", pause: "Pause", resume: "Resume", request_changes: "Request changes",
-  accept: "Accept result", cancel: "Cancel goal",
+  accept: "Accept result", release: "Release claim", cancel: "Cancel goal",
 };
 
 let activeGoal, goalCursor, eventCursor, pending, busy;
@@ -24,6 +24,11 @@ function add(parent, tag, value, className) {
   if (className) node.className = className;
   parent.append(node);
   return node;
+}
+
+function goalStatus(goal) {
+  const state = goal.status === "assigned" ? "Ready" : labels[goal.status];
+  return `${state} · ${goal.agent ? `Claimed by ${goal.agent} (${goal.agent_role})` : "Unclaimed"}`;
 }
 
 function references(value) {
@@ -87,7 +92,7 @@ async function loadList(before) {
       event.preventDefault();
       run(() => openGoal(goal.id, true));
     });
-    add(row, "p", `${labels[goal.status]} · ${goal.agent} (${goal.agent_role})`);
+    add(row, "p", goalStatus(goal));
   }
   goalCursor = next_before;
   moreGoals.hidden = goalCursor === null;
@@ -99,7 +104,7 @@ function showEvents(events, nextBefore, append = false) {
     const row = add(historyList, "li");
     add(row, "strong", labels[event.action]);
     add(row, "p", `${event.actor} · ${new Date(event.created * 1000).toLocaleString()}`);
-    if (event.redacted) add(row, "p", "Evidence access was withdrawn.");
+    if (event.redacted) add(row, "p", "Evidence is unavailable to this account.");
     if (event.note) add(row, "p", event.note, "goal-brief-text");
     addReferences(row, event.evidence);
   }
@@ -112,11 +117,13 @@ function showGoal({goal, events, next_before}) {
   element("agent-goal-detail").hidden = false;
   const title = element("agent-goal-title");
   title.textContent = `Goal #${goal.id}`;
-  element("agent-goal-summary").textContent = `${labels[goal.status]} · Assigned to ${goal.agent} (${goal.agent_role}) by ${goal.requester}`;
+  element("agent-goal-summary").textContent = `${goalStatus(goal)} · Set by ${goal.requester}`;
   const content = element("agent-goal-content");
   content.replaceChildren();
+  add(content, "h3", "AI allowlist");
+  add(content, "p", goal.agents.join(", "));
   if (goal.source_unavailable) {
-    add(content, "p", "The assignment’s sources or agent are unavailable.");
+    add(content, "p", "The goal’s sources or allowlisted accounts are unavailable.");
   } else {
     add(content, "h3", "Objective");
     add(content, "p", goal.objective, "goal-brief-text");
@@ -141,14 +148,15 @@ async function openGoal(id, focus = false) {
 createForm.addEventListener("submit", event => {
   event.preventDefault();
   run(async () => {
-    const {agent, objective, acceptance_criteria, sources} = createForm.elements;
-    const result = await post({action: "create", agent: agent.value, objective: objective.value,
+    const {agents, objective, acceptance_criteria, sources} = createForm.elements;
+    const usernames = agents.value.split(/[\n,]+/).map(name => name.trim()).filter(Boolean);
+    const result = await post({action: "create", agents: usernames, objective: objective.value,
       acceptance_criteria: acceptance_criteria.value, sources: references(sources.value)});
     createForm.reset();
     showGoal(result);
     history.replaceState(null, "", `/agent-goals?id=${result.goal.id}`);
     await loadList();
-    status.textContent = "Goal assigned.";
+    status.textContent = "Goal saved.";
   });
 });
 

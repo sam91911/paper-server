@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from paper_app import accounts, experiments, library, sharing
+from paper_app import accounts, ai_accounts, experiments, library, sharing
 
 
 class ExperimentTests(unittest.TestCase):
@@ -51,6 +51,31 @@ class ExperimentTests(unittest.TestCase):
                 experiments.save_item(db, owner, {'experiment_id': second, 'run_id': run, 'kind': 'data', 'title': 'Data'})
             with self.assertRaises(ValueError):
                 experiments.save_item(db, owner, {'experiment_id': first, 'kind': 'data', 'title': 'Data', 'filename': '../x'}, b'x')
+
+    def test_operator_manages_agent_owned_experiment_runs_and_artifacts(self):
+        with library.connect(self.path) as db:
+            operator, agent, outsider = (self.users[name] for name in ('owner', 'cloud', 'human'))
+            ai_accounts.assign_operator(db, agent['username'], operator['username'])
+            experiment = experiments.save_experiment(db, agent, {'title': 'Private experiment'})
+            run = experiments.save_run(db, agent, {'experiment_id': experiment, 'title': 'Private run'})
+            data = {'experiment_id': experiment, 'run_id': run, 'title': 'Private artifact', 'kind': 'data', 'filename': 'a.csv'}
+            item = experiments.save_item(db, agent, data, b'first')
+            self.assertEqual(experiments.visible_experiments(db, outsider), [])
+            self.assertEqual([row['id'] for row in experiments.visible_experiments(db, operator)], [experiment])
+            detail = experiments.detail(db, operator, experiment)
+            self.assertTrue(detail['can_edit'])
+            self.assertTrue(detail['runs'][0]['can_edit'])
+            self.assertEqual(detail['items'][0]['id'], item)
+            self.assertEqual(experiments.version_content(db, operator, detail['items'][0]['versions'][0]['id'])[1], b'first')
+            experiments.save_experiment(db, operator, {'id': experiment, 'title': 'Edited experiment', 'revision': 1})
+            experiments.save_run(db, operator, {'id': run, 'experiment_id': experiment, 'title': 'Edited run', 'revision': 1})
+            experiments.save_item(db, operator, dict(data, id=item, revision=1), b'second')
+            row = experiments.require_item(db, item, operator, edit=True)
+            self.assertEqual(row['owner_id'], agent['id'])
+            experiments.set_grants(db, 'item', item, operator, row, [outsider['username']], [])
+            self.assertEqual(experiments.detail(db, operator, experiment)['items'][0]['readers'], [outsider['username']])
+            with self.assertRaises(sharing.AccessDenied):
+                experiments.require_item(db, item, outsider)
 
     def test_read_visibility_and_owner_only_grant_names(self):
         with library.connect(self.path) as db:

@@ -15,7 +15,7 @@ from urllib.parse import quote, urlsplit
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .paper_source import fetch_pdf
-from .review import LibraryClient, PDF_LIMIT, library_origin
+from .review import LibraryClient, LibraryError, PDF_LIMIT, library_origin
 
 USERNAME = r"[A-Za-z0-9][A-Za-z0-9_.-]{1,31}"
 REGISTRATION_PATH = re.compile(r"/api/ai/register/[A-Za-z0-9_-]{43}")
@@ -85,6 +85,25 @@ def import_paper(client, url, filename, recipients):
     return client.upload_pdf(filename or source_name, payload, recipients)
 
 
+def send_heartbeats(client, *, once=False):
+    interval = 60
+    announced = False
+    while True:
+        try:
+            receipt = json.loads(client.request("/api/ai/heartbeat", {}))
+            interval = receipt["interval_seconds"]
+            if not announced:
+                print(json.dumps(receipt), flush=True)
+                announced = True
+            if once:
+                return
+        except (OSError, LibraryError) as error:
+            if once or (isinstance(error, LibraryError) and error.status < 500 and error.status != 429):
+                raise
+            print(f"Heartbeat failed. Retrying in {interval} seconds.", file=sys.stderr)
+        time.sleep(interval)
+
+
 def register(identity, username, url):
     parsed = urlsplit(url)
     route = parsed.path
@@ -135,6 +154,9 @@ def main():
     paper.add_argument("--url", required=True, help="Direct public HTTPS PDF URL")
     paper.add_argument("--filename", help="Filename to use in the library")
     paper.add_argument("--recipient", action="append", default=[], help="Share with this username (repeatable)")
+    heartbeat = commands.add_parser("heartbeat", help="Report presence to your enrolled library")
+    heartbeat.add_argument("--identity", type=Path, required=True)
+    heartbeat.add_argument("--once", action="store_true", help="Send one heartbeat and exit")
     args = parser.parse_args()
     try:
         if args.command == "register":
@@ -144,6 +166,12 @@ def main():
         elif args.command == "import-paper":
             client = AgentClient.from_identity(args.identity.expanduser())
             print(json.dumps(import_paper(client, args.url, args.filename, args.recipient)))
+        elif args.command == "heartbeat":
+            client = AgentClient.from_identity(args.identity.expanduser())
+            try:
+                send_heartbeats(client, once=args.once)
+            except KeyboardInterrupt:
+                return
         else:
             if not args.route.startswith("/") or args.route.startswith("//") or "#" in args.route:
                 raise ValueError("Enter a library path such as /api/account.")

@@ -4,11 +4,13 @@ import re
 import secrets
 import time
 
-from . import accounts, database as storage, key_auth
+from . import accounts, database as storage, key_auth, sharing
 
 REGISTRATION_PREFIX = "/api/ai/register/"
 INVITE_SECONDS = 900
 ACCESS_SECONDS = 900
+HEARTBEAT_SECONDS = 60
+ONLINE_SECONDS = 3 * HEARTBEAT_SECONDS
 PAGE_SIZE = 100
 
 SCHEMA = """
@@ -53,7 +55,7 @@ ACCOUNT_FIELDS = f"a.id,a.username,{accounts.ROLE_SQL.format(alias='a')} AS role
 
 
 def find_account(db, username):
-    return db.execute(f"SELECT {ACCOUNT_FIELDS} FROM accounts a WHERE a.username=?",
+    return db.execute(f"SELECT {ACCOUNT_FIELDS},a.disabled_at FROM accounts a WHERE a.username=?",
                       (accounts.identity(username),)).fetchone()
 
 
@@ -74,6 +76,34 @@ def invitation_id(value):
     return value
 
 
+def managed_agent(db, operator, username):
+    agent = find_account(db, username)
+    if not agent or agent["role"] not in ("local", "cloud") or not db.execute(
+        "SELECT 1 FROM ai_operators WHERE agent_id=? AND operator_id=?", (agent["id"], operator["id"]),
+    ).fetchone():
+        raise LookupError("AI account unavailable.")
+    return agent
+
+
+def deactivate(db, operator, username):
+    agent = managed_agent(db, operator, username)
+    now = int(time.time())
+    disabled = agent["disabled_at"] if agent["disabled_at"] is not None else now
+    db.execute("UPDATE accounts SET disabled_at=? WHERE id=?", (disabled, agent["id"]))
+    revoke_credentials(db, agent["id"])
+    db.execute("UPDATE ai_invites SET canceled_at=? WHERE rotate_id=? AND used_at IS NULL "
+               "AND canceled_at IS NULL AND expires>?", (now, agent["id"], now))
+    return {"username": agent["username"], "disabled_at": disabled}
+
+
+def heartbeat(db, account):
+    if account["role"] not in ("local", "cloud"):
+        raise sharing.AccessDenied
+    now = int(time.time())
+    db.execute("UPDATE accounts SET last_heartbeat=? WHERE id=?", (now, account["id"]))
+    return {"last_heartbeat": now, "interval_seconds": HEARTBEAT_SECONDS}
+
+
 def dashboard(db, operator, before=None):
     now = int(time.time())
     cursor_clause, values = "", (now, operator["id"])
@@ -91,10 +121,14 @@ def dashboard(db, operator, before=None):
         (*values, PAGE_SIZE + 1),
     )]
     agents = [dict(row) for row in db.execute(
-        f"SELECT {ACCOUNT_FIELDS}, k.last_authenticated FROM ai_operators o JOIN accounts a ON a.id=o.agent_id "
+        f"SELECT {ACCOUNT_FIELDS},a.disabled_at,a.last_heartbeat,k.last_authenticated "
+        "FROM ai_operators o JOIN accounts a ON a.id=o.agent_id "
         "LEFT JOIN ai_public_keys k ON k.account_id=a.id WHERE o.operator_id=? AND a.role='ai' ORDER BY a.username",
         (operator["id"],),
     )]
+    for agent in agents:
+        last = agent["last_heartbeat"]
+        agent["online"] = agent["disabled_at"] is None and last is not None and last > now - ONLINE_SECONDS
     return {"invitations": invitations[:PAGE_SIZE], "agents": agents,
             "next_before": invitations[PAGE_SIZE - 1]["invite_id"] if len(invitations) > PAGE_SIZE else None}
 
@@ -119,10 +153,8 @@ def manage_invite(db, operator, data):
         data = dict(row)
         action = "rotate" if row["rotate_id"] is not None else "create"
     if action == "rotate":
-        agent = find_account(db, data.get("username"))
-        if not agent or agent["role"] not in ("local", "cloud") or not db.execute(
-            "SELECT 1 FROM ai_operators WHERE agent_id=? AND operator_id=?", (agent["id"], operator["id"]),
-        ).fetchone() or (data.get("rotate_id") is not None and data["rotate_id"] != agent["id"]):
+        agent = managed_agent(db, operator, data.get("username"))
+        if agent["disabled_at"] is not None or (data.get("rotate_id") is not None and data["rotate_id"] != agent["id"]):
             raise LookupError("AI account unavailable.")
         return issue_invite(db, operator, agent["username"], agent["role"], now, agent["id"])
     if action != "create":
@@ -167,7 +199,7 @@ def register(db, token, data):
         raise ValueError(message)
     if rotate_id is not None:
         agent = find_account(db, username)
-        if not agent or (agent["id"], agent["role"]) != (rotate_id, role) or not db.execute(
+        if not agent or agent["disabled_at"] is not None or (agent["id"], agent["role"]) != (rotate_id, role) or not db.execute(
             "SELECT 1 FROM ai_operators WHERE agent_id=? AND operator_id=?", (rotate_id, issuer_id),
         ).fetchone():
             raise ValueError(message)
@@ -191,6 +223,11 @@ def rotate_key(db, account_id, public_key):
         raise ValueError("Generate a new private key for this rotation.")
     db.execute("INSERT INTO ai_public_keys(account_id,public_key) VALUES (?,?) "
                "ON CONFLICT (account_id) DO UPDATE SET public_key=excluded.public_key", (account_id, public_key))
+    db.execute("UPDATE accounts SET last_heartbeat=NULL WHERE id=?", (account_id,))
+    revoke_credentials(db, account_id)
+
+
+def revoke_credentials(db, account_id):
     for table in ("sessions", "ai_challenges", "application_keys"):
         db.execute(f"DELETE FROM {table} WHERE account_id=?", (account_id,))
 
@@ -198,7 +235,7 @@ def rotate_key(db, account_id, public_key):
 def registered_key(db, username):
     return db.execute(
         "SELECT a.id,a.username,k.public_key FROM ai_public_keys k JOIN accounts a ON a.id=k.account_id "
-        "WHERE a.username=? AND a.role='ai'", (username,),
+        "WHERE a.username=? AND a.role='ai' AND a.disabled_at IS NULL", (username,),
     ).fetchone()
 
 

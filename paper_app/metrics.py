@@ -51,8 +51,10 @@ def metric_for(db, account, metric_id):
     return row, paper_for(db, account, row["paper_id"])
 
 
-def can_edit_all(paper, account):
-    return paper["owner_id"] == account["id"] or (paper["owner_id"] is None and account["role"] == "user")
+def can_edit_all(db, paper, account):
+    if paper["owner_id"] is None:
+        return account["role"] == "user"
+    return sharing.is_owner(db, account, paper["owner_id"])
 
 
 def retain_detections(db, paper_id, rows):
@@ -69,8 +71,8 @@ def retain_detections(db, paper_id, rows):
 
 def list_metrics(db, account, paper_id, after, *, removed=False):
     paper = paper_for(db, account, paper_id)
-    owner = paper["owner_id"] == account["id"]
-    can_edit = can_edit_all(paper, account)
+    can_edit = can_edit_all(db, paper, account)
+    owner = paper["owner_id"] is not None and can_edit
     rows = db.execute(
         f"SELECT m.cursor_id AS id,{COLUMNS},COALESCE(c.revision,1) AS revision,COALESCE(c.removed,0) AS removed,"
         "EXISTS(SELECT 1 FROM metric_editors e WHERE e.metric_id=m.cursor_id AND e.account_id=?) AS granted "
@@ -99,7 +101,7 @@ def history(db, account, metric_id, before=None):
     result = {"original": {field: original[field] for field in FIELDS},
               "corrections": [dict(row, removed=bool(row["removed"])) for row in rows[:PAGE_SIZE]],
               "next_before": rows[PAGE_SIZE - 1]["revision"] if len(rows) > PAGE_SIZE else None}
-    if paper["owner_id"] == account["id"]:
+    if sharing.is_owner(db, account, paper["owner_id"]):
         result["editors"] = [row[0] for row in db.execute(
             "SELECT a.username FROM metric_editors e JOIN accounts a ON a.id=e.account_id "
             "WHERE e.metric_id=? ORDER BY a.username", (metric_id,),
@@ -118,7 +120,7 @@ def correct(db, account, data):
     metric_id = identifier(data.get("metric_id"))
     revision = identifier(data.get("revision"))
     original, paper = metric_for(db, account, metric_id)
-    if not (can_edit_all(paper, account) or db.execute(
+    if not (can_edit_all(db, paper, account) or db.execute(
         "SELECT 1 FROM metric_editors WHERE metric_id=? AND account_id=?", (metric_id, account["id"]),
     ).fetchone()):
         raise sharing.AccessDenied
@@ -170,14 +172,14 @@ def corrected_fields(base, data):
 def set_editor(db, account, data):
     metric_id = identifier(data.get("metric_id"))
     _, paper = metric_for(db, account, metric_id)
-    if paper["owner_id"] != account["id"]:
+    if not sharing.is_owner(db, account, paper["owner_id"]):
         raise sharing.AccessDenied
     action = data.get("action")
     if action not in ("grant", "revoke"):
         raise ValueError("Choose grant or revoke.")
     username = accounts.identity(data.get("username"))
     editor = db.execute("SELECT id FROM accounts WHERE username=?", (username,)).fetchone()
-    if editor is None or editor["id"] == account["id"]:
+    if editor is None or editor["id"] in (account["id"], paper["owner_id"]):
         raise ValueError("Choose another existing account.")
     if action == "grant":
         db.execute("INSERT INTO metric_editors VALUES (?,?) ON CONFLICT DO NOTHING", (metric_id, editor["id"]))

@@ -195,7 +195,7 @@ function showPaper() {
   const pdfURL = paperPDFURL(selected.id);
   element("open-paper-pdf").href = pdfURL;
   element("download-paper-pdf").href = `${pdfURL}?download=1`;
-  const ownsPaper = selected.owner_id === libraryData.account?.id;
+  const ownsPaper = selected.can_manage || selected.owner_id === libraryData.account?.id;
   const canManage = selected.owner_id === null || ownsPaper;
   element("detect-paper-metrics").hidden = !canManage || !selected.has_pdf;
   element("archive-paper").hidden = !canManage;
@@ -309,7 +309,7 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
       const review = add(article, "button", "Review thread with AI", "secondary");
       review.addEventListener("click", () => openAgent("thread", comment.id, `Comment thread · #${comment.id}`));
     }
-    if (!libraryData.account || comment.author_id !== libraryData.account.id) {
+    if (!libraryData.account || (!comment.can_manage && comment.author_id !== libraryData.account.id)) {
       add(article, "p", comment.body, "comment-body");
       continue;
     }
@@ -625,6 +625,8 @@ async function loadLibrary(paperId) {
       element("ai-invitation-prompt").value = "";
       element("ai-invitation-result").hidden = true;
       element("managed-ai-agents").replaceChildren();
+      element("ai-heartbeat-prompt").value = "";
+      element("ai-heartbeat-result").hidden = true;
       element("ai-invitation-history").replaceChildren();
       olderAIInvitations.hidden = true;
       aiInvitationCursor = undefined;
@@ -887,7 +889,8 @@ async function updateAIInvitation(data) {
   const accountId = libraryData.account?.id;
   aiInvitationPrompt.value = "";
   element("ai-invitation-result").hidden = true;
-  const {registration_path, registration_url, username, role, mode, invite_id} = await api("ai/invitations", data);
+  const {registration_path, registration_url, client_download_url, username, role, mode, invite_id} =
+    await api("ai/invitations", data);
   if (libraryData.account?.id !== accountId) return;
   if (!registration_url) {
     await showAIInvitations();
@@ -896,7 +899,7 @@ async function updateAIInvitation(data) {
   }
   const rotating = mode === "rotate";
   const identity = `~/.paper-library/${username}${rotating ? `-${invite_id}` : ""}.json`;
-  const client = "python3 -m paper_client.agent";
+  const client = '"$HOME/.paper-library/venv/bin/python" -m paper_client.agent';
   const task = rotating ? "Replace your current key using a new identity file. Use that file for future requests after verifying the connection." :
     "Register this agent and verify the connection.";
   aiInvitationPrompt.value = `Connect to my Paper Library as ${username} (${role} AI). ${task}
@@ -904,19 +907,63 @@ async function updateAIInvitation(data) {
 One-time registration URL (expires in 15 minutes):
 ${registration_url}
 
-From the Paper Library repository, install the client with python3 -m pip install ./paper_client, then run:
+Install the client from this server with Python 3.11 or later:
+archive="$(mktemp -d)/paper-client.zip"
+curl -fsS '${client_download_url}' -o "$archive" &&
+  python3 -m venv "$HOME/.paper-library/venv" &&
+  "$HOME/.paper-library/venv/bin/python" -m pip install "$archive"
+
+After installation, run:
 ${client} register --username ${username} --identity ${identity}
 
 Supply the registration URL when prompted, or pass it privately on stdin. This command generates and saves an Ed25519 private key in the identity file. Keep the key and any access tokens out of chat and logs. Verify the account and read the usage guide:
 ${client} request --identity ${identity} /api/account
 ${client} request --identity ${identity} /api/skills/default
+${client} heartbeat --identity ${identity} --once
 
 If you use your own HTTP client, send POST bodies as JSON with Content-Type: application/json. Generate and store an Ed25519 key and sign paper-library:register:${username}:${registration_path} as ASCII. POST public_key and signature as unpadded base64url to the registration URL. Then POST {"username":"${username}"} to /api/ai/challenge, sign paper-library:login:${username}:<challenge> as ASCII, and POST username, challenge, and base64url signature to /api/ai/login. Use the returned access_token as a Bearer token. Verify the role with /api/account. The API contract is at /api/openapi.json.
 
-Use the HTTPS URL as provided. If the library uses loopback on another machine, use its forwarded loopback port and keep the registration path. Report the connected username and role.`;
+Use the HTTPS URLs as provided. If the library uses loopback on another machine, use its forwarded loopback port for both URLs and keep their paths. Report the connected username and role.`;
   element("ai-invitation-result").hidden = false;
   accountStatus.textContent = "";
   await showAIInvitations();
+}
+
+async function copyHeartbeatPrompt(username, proactive) {
+  const command = '"$HOME/.paper-library/venv/bin/python" -m paper_client.agent';
+  const identity = `~/.paper-library/${username}.json`;
+  const idle = proactive
+    ? "When the assignment queue is clear, look for one useful follow-up within our agreed research scope that has not already been done. Use shared sources or public papers. Save a short note or propose an evidence-backed research goal in the appropriate workspace. If there is no useful follow-up, wait. Ask for direction if the scope is unclear."
+    : "When there is no eligible assigned work, wait for the next check.";
+  const prompt = `Check in to my Paper Library as ${username} using the enrolled identity you already use. Replace the example path if your identity was saved elsewhere or rotated.
+
+On each check, run:
+${command} heartbeat --identity ${identity} --once
+${command} request --identity ${identity} /api/agent-goals
+${command} request --identity ${identity} /api/reviews
+
+Work on active assignments first. Follow next_before to check older goals for unfinished work. Start or claim a goal only when start appears in its actions. Goals claimed by other agents are available for reading only. Follow the default API skill, record progress and evidence, report blockers, and submit completed work. Honor paused or canceled goals.
+
+For a goal you have claimed, use its objective, acceptance criteria, and latest progress to decide whether more papers would help. Search the library first using /api/paper-catalog?q= followed by URL-encoded keywords, titles, or DOIs. Reuse papers the requester can access. If there are gaps, automatically search the public web and use POST /api/search-papers with a JSON topic for Crossref metadata. Use public search terms that fit the goal. Select papers that directly address the gaps and find direct HTTPS links to PDFs you are allowed to store.
+
+Before importing, refresh the goal and check that it is still yours to work on. Run this for each selected PDF, substituting its URL and the goal's requester username:
+${command} import-paper --identity ${identity} --url "$PDF_URL" --recipient "$REQUESTER"
+
+Record each successful paper ID, title, DOI if available, source URL, and why it helps the goal. Post that to the goal as progress with evidence objects {"kind":"paper","id":PAPER_ID}. Revisit the recorded paper IDs on the next check. If a needed PDF is unavailable or a reusable paper needs sharing, report the gap and continue with accessible evidence where possible.
+
+${idle}
+
+Repeat the check about every 60 seconds if your environment supports recurring execution. Finish a check before starting another. For longer tasks, keep a separate heartbeat process running by omitting --once. If authentication is denied, stop and report it.`;
+  const field = element("ai-heartbeat-prompt");
+  field.value = prompt;
+  element("ai-heartbeat-result").hidden = false;
+  try {
+    await navigator.clipboard.writeText(prompt);
+    accountStatus.textContent = "Heartbeat prompt copied.";
+  } catch {
+    field.select();
+    accountStatus.textContent = "Copy the selected heartbeat prompt.";
+  }
 }
 
 async function showAIInvitations(before) {
@@ -935,18 +982,43 @@ async function showAIInvitations(before) {
     for (const agent of agents) {
       const last = agent.last_authenticated === null ? "No key sign-in yet" :
         `Last key sign-in ${new Date(agent.last_authenticated * 1000).toLocaleString()}`;
-      const row = add(managed, "form", undefined, "archive-row");
-      add(row, "span", `${agent.username} · ${roleLabels[agent.role]} · ${last}`);
-      add(row, "button", "Rotate key", "secondary");
-      submit(row, () => updateAIInvitation({action: "rotate", username: agent.username}), accountStatus);
+      const inactive = agent.disabled_at !== null;
+      const presence = inactive ? "Deactivated" : agent.online ? "Online" : "Offline";
+      const beat = agent.last_heartbeat === null ? "No heartbeat yet" :
+        `Last heartbeat ${new Date(agent.last_heartbeat * 1000).toLocaleString()}`;
+      const row = add(managed, "div", undefined, "archive-row");
+      add(row, "span", `${agent.username} · ${roleLabels[agent.role]} · ${presence} · ${beat} · ${last}`);
+      if (inactive) continue;
+      const actions = add(row, "div", undefined, "file-actions");
+      for (const [label, proactive] of [["Copy task prompt", false], ["Copy task + new work prompt", true]]) {
+        const button = add(actions, "button", label, "secondary");
+        button.type = "button";
+        button.addEventListener("click", () => copyHeartbeatPrompt(agent.username, proactive));
+      }
+      const rotate = add(actions, "form");
+      add(rotate, "button", "Rotate key", "secondary");
+      submit(rotate, () => updateAIInvitation({action: "rotate", username: agent.username}), accountStatus);
+      const deactivate = add(actions, "form");
+      add(deactivate, "button", "Deactivate", "secondary");
+      submit(deactivate, async () => {
+        if (!window.confirm(`Deactivate ${agent.username}? Its credentials will stop working and its data will remain.`)) return;
+        await api("ai/deactivate", {username: agent.username});
+        if (libraryData.account?.id !== accountId) return;
+        element("ai-heartbeat-prompt").value = "";
+        element("ai-heartbeat-result").hidden = true;
+        await showAIInvitations();
+        accountStatus.textContent = `${agent.username} deactivated.`;
+      }, accountStatus);
     }
   }
+  const deactivated = new Set(agents.filter(agent => agent.disabled_at !== null).map(agent => agent.username));
   for (const invitation of invitations) {
     const row = add(history, "div", undefined, "archive-row");
     add(row, "span", `${invitation.username} · ${invitation.mode === "rotate" ? "Rotation" : "Enrollment"} · ${invitation.status}`);
     const actions = add(row, "div");
     for (const [action, label] of [["replace", "Issue replacement"], ["cancel", "Cancel"]]) {
       if (invitation.status === "used" || (action === "cancel" && invitation.status !== "pending")) continue;
+      if (action === "replace" && deactivated.has(invitation.username)) continue;
       const form = add(actions, "form");
       add(form, "button", label, "secondary");
       submit(form, () => updateAIInvitation({action, invite_id: invitation.invite_id}), accountStatus);

@@ -28,8 +28,35 @@ CREATE TABLE IF NOT EXISTS documents (
 """
 
 
+MANAGED_AGENTS_SQL = """SELECT o.agent_id FROM ai_operators o JOIN accounts agent ON agent.id=o.agent_id
+                        WHERE o.operator_id=:viewer AND :role='user' AND agent.role='ai'"""
+
+
+def owner_sql(owner):
+    return f"({owner}=:viewer OR {owner} IN ({MANAGED_AGENTS_SQL}))"
+
+
+def owner_ids(db, account):
+    if not account:
+        return set()
+    owned = {account["id"]}
+    if account["role"] == "user":
+        owned.update(row[0] for row in db.execute(MANAGED_AGENTS_SQL, viewer_params(account)))
+    return owned
+
+
+def is_owner(db, account, owner_id):
+    if not account or owner_id is None:
+        return False
+    if owner_id == account["id"]:
+        return True
+    return account["role"] == "user" and db.execute(
+        f"SELECT 1 WHERE :owner IN ({MANAGED_AGENTS_SQL})", viewer_params(account, owner=owner_id),
+    ).fetchone() is not None
+
+
 def access_sql(owner, audience, kind, item_id):
-    return f"""({owner} = :viewer OR (:viewer IS NOT NULL AND (
+    return f"""({owner_sql(owner)} OR (:viewer IS NOT NULL AND (
        ({audience} = 'all' AND :role IN ('user', 'local', 'cloud'))
        OR ({audience} = 'users' AND :role = 'user')
        OR ({audience} = 'local' AND :role IN ('user', 'local'))
@@ -93,8 +120,7 @@ def paper_for(db, paper_id, account, *, owner_only=False):
         PAPER_SCOPE + "SELECT * FROM visible_papers WHERE id=:paper",
         viewer_params(account, paper=paper_id),
     ).fetchone()
-    if row is None or (owner_only and row["owner_id"] is not None
-                       and row["owner_id"] != account["id"]):
+    if row is None or (owner_only and row["owner_id"] is not None and not is_owner(db, account, row["owner_id"])):
         raise AccessDenied
     return row
 
@@ -126,8 +152,10 @@ def set_recipients(db, kind, item_id, recipients):
 def attach_recipients(db, kind, items, account, owner_field="owner_id"):
     if not account:
         return items
-    owned = {item["id"]: item for item in items if item.get(owner_field) == account["id"]}
+    owners = owner_ids(db, account)
+    owned = {item["id"]: item for item in items if item.get(owner_field) in owners}
     for item in owned.values():
+        item["can_manage"] = True
         item["recipients"] = []
     # Restrict the query to owned items in bounded batches; this avoids one
     # SQL query per item without exposing grants on other people's items.
@@ -147,8 +175,8 @@ def attach_recipients(db, kind, items, account, owner_field="owner_id"):
 def set_paper_audience(db, paper_id, account, audience, recipients=None):
     audience = validate_audience(audience)
     if db.execute(
-        "UPDATE paper_access SET audience=? WHERE paper_id=? AND owner_id=?",
-        (audience, paper_id, account["id"]),
+        f"UPDATE paper_access SET audience=:audience WHERE paper_id=:paper AND {owner_sql('owner_id')}",
+        viewer_params(account, audience=audience, paper=paper_id),
     ).rowcount == 0:
         raise AccessDenied
     set_recipients(db, "paper", paper_id, recipients)
@@ -197,7 +225,7 @@ def save_document(db, account, data):
         raise ValueError("Choose a document.")
     else:
         existing = db.execute("SELECT owner_id,revision FROM documents WHERE id=?", (document_id,)).fetchone()
-        if not existing or existing["owner_id"] != account["id"]:
+        if not existing or not is_owner(db, account, existing["owner_id"]):
             raise AccessDenied
         expected = data.get("revision")
         if expected is not None and (type(expected) is not int or existing["revision"] != expected):

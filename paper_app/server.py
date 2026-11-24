@@ -13,13 +13,14 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 from threading import Event, Thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
-from . import account_routes, accounts, agent_goals, ai_accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tools_catalog
+from . import account_routes, accounts, admin_console, agent_goals, ai_accounts, client_distribution, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
 WEB_ROOT = Path(__file__).resolve().with_name("web")
@@ -220,6 +221,8 @@ class Handler(BaseHTTPRequestHandler):
             self.read_health()
         elif route == "/api/openapi.json":
             self.send_json(200, openapi.document(self.server.server_port, getattr(self.server, "public_url", None)))
+        elif route == client_distribution.DOWNLOAD_ROUTE:
+            self.download_client()
         elif route == "/api/human-invitations":
             self.read_human_invitations()
         elif route == "/api/ai/invitations":
@@ -336,6 +339,8 @@ class Handler(BaseHTTPRequestHandler):
         elif route in ("/api/usernames", "/api/agent-options", "/api/document"):
             try:
                 with library.connect(self.server.database) as db:
+                    if route == "/api/document":
+                        storage.begin(db)
                     account = self.require_account(db)
                     if route == "/api/document":
                         value = parse_qs(url.query).get("id", [""])[0]
@@ -344,7 +349,7 @@ class Handler(BaseHTTPRequestHandler):
                         document = sharing.document_for(db, account, int(value))
                         if document is None:
                             raise LookupError
-                        data = {"document": dict(document)}
+                        data = {"document": sharing.attach_recipients(db, "document", [dict(document)], account)[0]}
                     elif route == "/api/usernames":
                         query = parse_qs(url.query).get("q", [""])[0]
                         data = accounts.suggest_usernames(db, query)
@@ -434,6 +439,15 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_data(200, payload, "application/pdf",
                            pdf_download=Path(paper["path"]).name if download else None)
+
+    def download_client(self):
+        try:
+            payload = client_distribution.archive()
+        except (OSError, ModuleNotFoundError) as error:
+            LOG.error("Client package unavailable (%s)", type(error).__name__)
+            self.send_json(503, {"error": "The Paper Library client package is missing from this server installation."})
+            return
+        self.send_data(200, payload, "application/zip", filename=client_distribution.FILENAME)
 
     def read_health(self):
         target = self.server.database
@@ -637,6 +651,7 @@ class Handler(BaseHTTPRequestHandler):
         except LookupError:
             errors = {"/api/skills": "Skill unavailable.", "/api/reviews": "Review unavailable.",
                       "/api/agent-goals": "Agent goal unavailable.", "/api/ai/invitations": "AI invitation or account unavailable.",
+                      "/api/ai/deactivate": "AI account unavailable.",
                       "/api/human-invitations": "Human invitation unavailable.",
                       "/api/human-key/revoke": "Sign-in key unavailable."}
             self.send_json(404, {"error": errors.get(self.path, "Unknown route")})
@@ -736,13 +751,18 @@ class Handler(BaseHTTPRequestHandler):
             if "registration_path" not in invite:
                 return invite
             origin = getattr(self.server, "public_url", None) or self.request_origin()
-            return {**invite, "registration_url": origin + invite["registration_path"]}
+            return {**invite, "registration_url": origin + invite["registration_path"],
+                    "client_download_url": origin + client_distribution.DOWNLOAD_ROUTE}
         if self.path.startswith(ai_accounts.REGISTRATION_PREFIX):
             return ai_accounts.register(db, self.path.removeprefix(ai_accounts.REGISTRATION_PREFIX), data)
         if self.path == "/api/ai/challenge":
             return ai_accounts.challenge(db, data)
         if self.path == "/api/ai/login":
             return ai_accounts.login(db, data)
+        if self.path == "/api/ai/deactivate":
+            return ai_accounts.deactivate(db, self.require_human(db), data.get("username"))
+        if self.path == "/api/ai/heartbeat":
+            return ai_accounts.heartbeat(db, self.require_account(db))
         if self.path == "/api/reviews":
             account = self.require_account(db)
             if data.get("action") == "create":
@@ -775,7 +795,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 
-def serve(database, port, external_url=None):
+def serve(database, port, external_url=None, *, interactive=False):
     if not shutil.which("pdftotext"):
         LOG.warning("pdftotext is unavailable; PDF import and text extraction will fail")
     with ThreadingHTTPServer(("127.0.0.1", port), Handler) as server:
@@ -789,7 +809,17 @@ def serve(database, port, external_url=None):
             print(f"Public Paper Library at {external_url}/ via reverse proxy.", flush=True)
         print(f"Paper library at http://127.0.0.1:{server.server_port}/", flush=True)
         try:
-            server.serve_forever()
+            if interactive:
+                http = Thread(target=server.serve_forever)
+                http.start()
+                try:
+                    admin_console.run(server, sys.stdin, sys.stdout)
+                    http.join()
+                finally:
+                    server.shutdown()
+                    http.join()
+            else:
+                server.serve_forever()
         except KeyboardInterrupt:
             pass
         finally:
@@ -803,6 +833,7 @@ def main():
     parser.add_argument("--public-url", default=os.getenv("PAPER_PUBLIC_URL"),
                         help="Public HTTPS origin served through a local reverse proxy")
     modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--interactive", action="store_true", help="Run the server with an admin console on stdin")
     modes.add_argument("--import-csv", type=Path, help="Import a metrics CSV and exit")
     modes.add_argument("--invite-human", metavar="EMAIL", help="Print a one-time browser signup URL")
     modes.add_argument("--create-account", nargs=2, metavar=("USERNAME", "ROLE"))
@@ -873,7 +904,7 @@ def main():
                     count = library.import_csv(db, stream, args.import_csv.absolute().parent)
             print(f"Imported metrics for {count} paper path(s).")
             return
-        serve(database, args.port, public_url(args.public_url) if args.public_url else None)
+        serve(database, args.port, public_url(args.public_url) if args.public_url else None, interactive=args.interactive)
     except storage.ERRORS + (csv.Error, ValueError, OSError, EOFError) as error:
         parser.exit(1, f"Paper library: {error}\n")
 

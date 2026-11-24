@@ -209,7 +209,7 @@ function openDocument(item, { create = false } = {}) {
   globalThis.selectGoalDocument?.(item);
   element("review-document").hidden = !item;
   renderDocumentComments(item);
-  const canEdit = create || (item && item.owner_id === libraryData.account?.id);
+  const canEdit = create || (item && (item.can_manage || item.owner_id === libraryData.account?.id));
   documentEditor.hidden = !canEdit;
   element("document-layout").classList.toggle("is-editing", Boolean(canEdit));
   element("document-preview-panel").hidden = !item && !create;

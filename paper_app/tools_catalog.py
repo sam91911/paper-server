@@ -104,7 +104,7 @@ def approve_job(db, approver, job_id):
     if approver['role'] != 'user' or not db.execute('SELECT 1 FROM tool_approvers WHERE account_id=?', (approver['id'],)).fetchone():
         raise sharing.AccessDenied
     job = db.execute('SELECT * FROM tool_jobs WHERE id=?', (job_id,)).fetchone()
-    if not job or job['status'] != 'pending' or job['requester_id'] == approver['id']:
+    if not job or job['status'] != 'pending' or sharing.is_owner(db, approver, job['requester_id']):
         raise sharing.AccessDenied
     experiments.require_run(db, job['run_id'], approver)
     require_tool(db, job['tool_id'], approver)

@@ -30,6 +30,7 @@ CREATE INDEX IF NOT EXISTS skill_tags_search ON skill_tags(tag,skill_id);
 
 SUMMARY = "s.id,s.owner_id,s.audience,s.title,s.description,s.tags,s.archived,s.revision,s.created,s.updated"
 ACCESS = sharing.access_sql("s.owner_id", "s.audience", "skill", "s.id")
+OWNER = sharing.owner_sql("s.owner_id")
 PAGE_SIZE = 50
 MAX_ID = 2**63 - 1
 DEFAULT_SKILL = {
@@ -61,18 +62,23 @@ DEFAULT_SKILL = {
    To remove a false detection, send `action: "remove"`, the metric ID, current revision, and a reason.
    List removed metrics with `removed=1` and use `action: "restore"` to restore a row.
    Reload on 409. Use `GET /api/metric-history?metric_id=<id>` to inspect the extraction and past corrections.
-6. Read longer assignments at `GET /api/agent-goals` and fetch a goal with `GET /api/agent-goals?id=<id>`.
+6. Read allowlisted goals at `GET /api/agent-goals` and fetch a goal with `GET /api/agent-goals?id=<id>`.
    Follow the objective and acceptance criteria using the shared sources and your authorized tools.
+   The first allowlisted agent to start claims the work. Other allowlisted agents can still read it.
    POST `start`, `progress`, `block`, or `submit` to `/api/agent-goals` when listed in the goal's actions.
    Include the goal `id`, current `revision`, and a unique `request_id`. Include a note for progress, a blocker,
    or a result. Cite shared evidence as objects with `kind` and `id`. Keep the same request ID when retrying
    an identical update. After reconnecting, fetch the goal and resume from its recorded progress.
    Honor pauses and cancellations. A human accepts the result after submission.
-7. For paper intake, use `POST /api/search-papers` for metadata and check the existing catalog first.
-   Fetch authorized public PDFs in the agent's environment and upload bytes to `POST /api/papers`.
-   The enrolled client supports `paper_client.agent import-paper`. Share the paper with the requester.
-   Write the source URL, citation, and findings with `POST /api/documents`. Record verified evidence
-   using `POST /api/research-findings`, then propose a follow-up using `POST /api/research-goals`.
+7. While working on a claimed goal, use its objective, acceptance criteria, and progress to identify gaps
+   that papers can address. Use `GET /api/paper-catalog?q=<term>` to find existing titles or DOIs.
+   When more papers are needed, search the public web and use `POST /api/search-papers` with a public topic
+   for metadata. Find direct HTTPS links to public PDFs you can store. Check that the goal still allows progress,
+   then use `paper_client.agent import-paper --identity <path> --url <pdf-url> --recipient <requester>`
+   to fetch each useful PDF in the agent environment and upload it to the library.
+   Record the paper ID, source URL, citation, and relevance as goal progress with paper evidence.
+   When the goal calls for research notes, use `POST /api/documents` and record verified evidence
+   using `POST /api/research-findings`. Propose a follow-up with `POST /api/research-goals` when appropriate.
 
 ## 操作步驟
 
@@ -92,14 +98,18 @@ DEFAULT_SKILL = {
    用 `GET /api/metric-history?metric_id=<id>` 查看擷取原值及歷次更正。
 6. 用 `GET /api/agent-goals` 查詢目標，再以 `GET /api/agent-goals?id=<id>` 讀取細節和進度。
    依目標、驗收條件及已分享的資料，在獲准的執行環境中工作。
+   白名單內第一個開始的代理負責執行，其他白名單代理仍可讀取目標。
    透過 `POST /api/agent-goals` 執行目前可用的 `start`、`progress`、`block` 或 `submit`。
    請附上目標 `id`、目前版本 `revision` 及唯一 `request_id`。相同更新重試時請沿用原 ID。
    回報進度、阻礙或結果時請加上說明，可用具有 `kind` 及 `id` 的物件引用已分享的證據。
    重新連線時讀取現有進度再繼續。目標暫停或取消時停止工作，提交後由人員驗收。
-7. 匯入論文前先查詢論文庫，可透過 `POST /api/search-papers` 搜尋書目資料。
-   在代理端下載有權儲存的公開 PDF，再用 `POST /api/papers` 上傳並分享給請求人。
-   可使用已註冊用戶端的 `paper_client.agent import-paper`。用 `POST /api/documents` 記錄來源及觀察，
-   透過 `POST /api/research-findings` 儲存已查證的證據，再以 `POST /api/research-goals` 提出後續目標。
+7. 執行已認領的目標時，依目標、驗收條件及進度判斷需要哪些論文。先用 `GET /api/paper-catalog?q=<term>` 查詢題名或 DOI。
+   若需要更多論文，搜尋公開網頁，並可用 `POST /api/search-papers` 搭配公開主題查詢書目。
+   找到有權儲存的公開 PDF 直接連結後，確認目標仍可回報進度，再用
+   `paper_client.agent import-paper --identity <path> --url <pdf-url> --recipient <requester>` 下載、上傳並分享給請求人。
+   在目標進度中記錄論文 ID、來源網址、引用及相關性，並附上論文證據。
+   若目標需要研究筆記，可用 `POST /api/documents` 記錄，用 `POST /api/research-findings` 儲存已查證的證據。
+   適合時再以 `POST /api/research-goals` 提出後續目標。
 """,
 }
 
@@ -129,7 +139,7 @@ def list_skills(db, account, *, query="", tag="", after=0, archived=False):
     query = text(query, "a search query", 200).strip().casefold()
     tag = text(tag, "a tag", 40).strip().casefold()
     escaped = query.replace("!", "!!").replace("%", "!%").replace("_", "!_")
-    scope = "s.archived=1 AND s.owner_id=:viewer" if archived else f"s.archived=0 AND {ACCESS}"
+    scope = f"s.archived=1 AND {OWNER}" if archived else f"s.archived=0 AND {ACCESS}"
     rows = db.execute(
         f"SELECT {SUMMARY} FROM skills s WHERE {scope} AND s.id>:after "
         "AND s.search_text LIKE :pattern ESCAPE '!' "
@@ -146,7 +156,7 @@ def list_skills(db, account, *, query="", tag="", after=0, archived=False):
 def detail(db, account, skill_id):
     row = db.execute(
         f"SELECT {SUMMARY},s.markdown FROM skills s WHERE s.id=:id AND {ACCESS} "
-        "AND (s.archived=0 OR s.owner_id=:viewer)",
+        f"AND (s.archived=0 OR {OWNER})",
         sharing.viewer_params(account, id=skill_id),
     ).fetchone()
     if row is None:
@@ -168,7 +178,7 @@ def save(db, account, data):
         if not all(type(value) is int and 0 < value <= MAX_ID for value in (skill_id, revision)):
             raise ValueError("Choose a skill and its current revision.")
         current = detail(db, account, skill_id)
-        if current["owner_id"] != owner:
+        if not current.get("can_manage"):
             raise sharing.AccessDenied
         if current["revision"] != revision:
             raise sharing.EditConflict("This skill has changed. Reload it and try again.")

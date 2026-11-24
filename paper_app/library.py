@@ -134,8 +134,9 @@ def initialize(path):
             )
             db.execute("DROP TABLE old_metrics")
         db.execute("CREATE INDEX IF NOT EXISTS metrics_paper_cursor ON metrics(paper_id,cursor_id)")
-        for statement in (*findings.SCHEMA, *goals.SCHEMA, *metrics.SCHEMA, *agent_goals.SCHEMA):
+        for statement in (*findings.SCHEMA, *goals.SCHEMA, *metrics.SCHEMA):
             db.execute(statement)
+        agent_goals.initialize(db)
         for table, name, definition in (
             ("metric_corrections", "removed", metrics.REMOVED_COLUMN),
             ("experiments", "research_document_id", "INTEGER REFERENCES documents(id)"),
@@ -154,7 +155,7 @@ def initialize(path):
         db.execute("CREATE INDEX IF NOT EXISTS comments_document_root ON comments(document_id, parent_id)")
         db.execute("CREATE INDEX IF NOT EXISTS documents_updated ON documents(updated DESC, id DESC)")
         db.execute("INSERT INTO comment_id_sequence SELECT 1, COALESCE(MAX(id), 0) FROM comments WHERE TRUE ON CONFLICT DO NOTHING")
-        for table in ("comments", "comment_authors", "item_grants"):
+        for table in ("comments", "comment_authors", "item_grants", "agent_goal_events", "agent_goal_readers"):
             if db.execute(f"PRAGMA foreign_key_check({table})").fetchone():
                 raise sqlite3.IntegrityError("Invalid library references during migration")
 
@@ -374,7 +375,7 @@ def paper_comment_targets(db, account):
 def _archived_rows(db, account):
     return db.execute(
         sharing.PAPER_SCOPE + " SELECT id,path,title,owner_id FROM visible_papers "
-        "JOIN archived_papers ON id=paper_id WHERE owner_id IS NULL OR owner_id=:viewer ORDER BY path",
+        f"JOIN archived_papers ON id=paper_id WHERE owner_id IS NULL OR {sharing.owner_sql('owner_id')} ORDER BY path",
         sharing.viewer_params(account),
     )
 
@@ -476,6 +477,7 @@ def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id
         comment["doi_refs"] = json.loads(comment["doi_refs"])
         if comment["deleted"]:
             comment.pop("recipients", None)
+            comment.pop("can_manage", None)
             comment.update(author_id=None, author_kind=None, author_name=None, author_role=None,
                            target_kind=None, target_id=None, target_position=None)
     return items
@@ -598,22 +600,27 @@ def save_comment(db, paper_id, body, account, comment_id=None, kind="user",
         comment_id = cursor.fetchone()[0]
         db.execute("INSERT INTO comment_authors VALUES (?,?,?)", (comment_id, account_id, kind))
     elif not can_reply(db, paper_id, comment_id, account, document_id) or db.execute(
-        "UPDATE comments SET body=?,doi_refs=COALESCE(?,doi_refs),audience=COALESCE(?,audience), "
-        "updated=CURRENT_TIMESTAMP WHERE paper_id IS NOT DISTINCT FROM ? AND document_id IS NOT DISTINCT FROM ? AND id=? AND deleted=0 "
-        "AND id IN (SELECT comment_id FROM comment_authors WHERE account_id=?)",
-        (body.strip(), references, audience, paper_id, document_id, comment_id, account_id),
+        "UPDATE comments SET body=:body,doi_refs=COALESCE(:doi_refs,doi_refs),audience=COALESCE(:audience,audience), "
+        "updated=CURRENT_TIMESTAMP WHERE paper_id IS NOT DISTINCT FROM :paper AND document_id IS NOT DISTINCT FROM :document "
+        f"AND id=:comment AND deleted=0 AND id IN (SELECT comment_id FROM comment_authors WHERE {sharing.owner_sql('account_id')})",
+        sharing.viewer_params(account, body=body.strip(), doi_refs=references, audience=audience,
+                              paper=paper_id, document=document_id, comment=comment_id),
     ).rowcount == 0:
         raise accounts.CommentAccessDenied
     sharing.set_recipients(db, "comment", comment_id, recipients)
     return comment_id
 
 
-def delete_comment(db, paper_id, comment_id, account_id, document_id=None):
+def delete_comment(db, paper_id, comment_id, account, document_id=None):
+    author = db.execute("SELECT account_id FROM comment_authors WHERE comment_id=?", (comment_id,)).fetchone()
+    if not author or not sharing.is_owner(db, account, author["account_id"]):
+        raise accounts.CommentAccessDenied
+    if author["account_id"] != account["id"] and not can_reply(db, paper_id, comment_id, account, document_id):
+        raise accounts.CommentAccessDenied
     if db.execute(
         "UPDATE comments SET deleted=1,body='',doi_refs='[]',updated=CURRENT_TIMESTAMP "
-        "WHERE paper_id IS NOT DISTINCT FROM ? AND document_id IS NOT DISTINCT FROM ? AND id=? AND deleted=0 "
-        "AND id IN (SELECT comment_id FROM comment_authors WHERE account_id=?)",
-        (paper_id, document_id, comment_id, account_id),
+        "WHERE paper_id IS NOT DISTINCT FROM ? AND document_id IS NOT DISTINCT FROM ? AND id=? AND deleted=0",
+        (paper_id, document_id, comment_id),
     ).rowcount == 0:
         raise accounts.CommentAccessDenied
 

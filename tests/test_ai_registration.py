@@ -1,10 +1,12 @@
 import json
+import io
 import os
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import patch
+from contextlib import redirect_stderr, redirect_stdout
+from unittest.mock import Mock, patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -27,6 +29,22 @@ class AIRegistrationTests(unittest.TestCase):
         status, result = request(self.database, path, **options)
         self.assertEqual(status, expected, result)
         return result
+
+    def test_recurring_heartbeat_stops_on_authentication_failure(self):
+        client = Mock()
+        client.request.side_effect = [
+            review.LibraryError("Unavailable", 503),
+            review.LibraryError("Rate limited", 429),
+            b'{"last_heartbeat": 123, "interval_seconds": 60}',
+            review.LibraryError("Sign in to continue.", 401),
+        ]
+        output = io.StringIO()
+        with patch.object(agent.time, "sleep") as sleep, redirect_stdout(output), redirect_stderr(io.StringIO()):
+            with self.assertRaisesRegex(review.LibraryError, "Sign in"):
+                agent.send_heartbeats(client)
+        self.assertEqual(sleep.call_count, 3)
+        self.assertEqual([call.args for call in client.request.call_args_list], [("/api/ai/heartbeat", {})] * 4)
+        self.assertEqual(json.loads(output.getvalue())["last_heartbeat"], 123)
 
     def test_enrollment_replay_and_signed_login(self):
         invitation = {"username": "Researcher", "role": "cloud"}
@@ -85,6 +103,69 @@ class AIRegistrationTests(unittest.TestCase):
             self.assertNotEqual(first_token, client.key)
         if os.name == "posix":
             self.assertEqual(identity.stat().st_mode & 0o777, 0o600)
+
+    def test_operator_can_manage_agent_owned_items_and_only_inherits_ownership(self):
+        with library.connect(self.database) as db:
+            worker_id = accounts.create_account(db, "worker", "sample password", "local")
+            worker = accounts.create_key(db, worker_id, "worker")
+            other_id = accounts.create_account(db, "other", "sample password", "user")
+            other = accounts.create_key(db, other_id, "other")
+            ai_accounts.assign_operator(db, "worker", "owner")
+            paper_id = library.store(db, self.database.with_name("private.pdf"), ((1, "power", "1", "W", "", ""),))
+            db.execute("INSERT INTO paper_access VALUES (?,?,'owner')", (paper_id, worker_id))
+
+        shared = self.api("/api/documents", key=other, data={
+            "title": "Another user's document", "markdown": "Shared only with worker", "recipients": ["worker"],
+        })
+        shared_path = f"/api/document?id={shared['document_id']}"
+        self.api(shared_path, key=worker)
+        self.api(shared_path, key=self.owner, expected=404)
+
+        doc = self.api("/api/documents", key=worker, data={"title": "Private draft", "markdown": "Draft"})
+        doc_id = doc["document_id"]
+        doc_path = f"/api/document?id={doc_id}"
+        self.api(doc_path, key=other, expected=404)
+        self.assertTrue(self.api(doc_path, key=self.owner)["document"]["can_manage"])
+        change = {"document_id": doc_id, "revision": doc["revision"], "title": "Revised draft", "markdown": "Draft"}
+        self.api("/api/documents", key=other, data=change, expected=403)
+        revision = self.api("/api/documents", key=self.owner, data=change)["revision"]
+        self.assertEqual(self.api(doc_path, key=self.owner)["document"]["owner_id"], worker_id)
+
+        thread = {"document_id": doc_id}
+        comment = self.api("/api/comments", key=worker, data={**thread, "body": "A private note"})
+        comments = self.api(f"/api/document-comments?document_id={doc_id}", key=self.owner)["comments"]
+        self.assertTrue(comments[0]["can_manage"])
+        self.assertEqual(comments[0]["author_id"], worker_id)
+        self.api("/api/comments", key=self.owner, data={**thread, **comment, "body": "Updated note"})
+        self.api("/api/delete-comment", key=self.owner, data={**thread, **comment})
+
+        finding = {**thread, "statement": "A finding", "evidence": [
+            {"kind": "document", "id": doc_id, "start": 1, "end": 1, "revision": revision},
+        ]}
+        recorded = self.api("/api/research-findings", key=worker, data=finding)
+        response = self.api(f"/api/research-findings?document_id={doc_id}", key=self.owner)
+        self.assertTrue(response["findings"][0]["can_edit"])
+        self.api("/api/research-findings", key=self.owner, data={**finding, **recorded, "statement": "Verified"})
+
+        skill = self.api("/api/skills", key=worker, data={"title": "Private skill", "markdown": "Notes"})["skill"]
+        self.api("/api/skills", key=self.owner, data={"action": "archive", "id": skill["id"], "revision": skill["revision"]})
+        self.assertEqual([row["id"] for row in self.api("/api/skills?archived=1", key=self.owner)["skills"]], [skill["id"]])
+
+        self.assertTrue(self.api(f"/api/paper-detail?paper_id={paper_id}", key=self.owner)["paper"]["can_manage"])
+        self.api("/api/metadata", key=self.owner, data={"paper_id": paper_id, "title": "Updated title"})
+        self.api("/api/paper-access", key=self.owner, data={"paper_id": paper_id, "audience": "owner"})
+        self.assertTrue(self.api(f"/api/paper-metrics?paper_id={paper_id}", key=self.owner)["metrics"][0]["can_edit"])
+        self.api("/api/archive-paper", key=self.owner, data={"paper_id": paper_id, "archived": True})
+        self.assertEqual([row["id"] for row in self.api("/api/paper-archive", key=self.owner)["papers"]], [paper_id])
+        self.api("/api/archive-paper", key=self.owner, data={"paper_id": paper_id, "archived": False})
+
+        self.api("/api/ai/deactivate", key=self.owner, data={"username": "worker"})
+        self.api(doc_path, key=worker, expected=401)
+        self.api(doc_path, key=self.owner)
+        with library.connect(self.database) as db:
+            ai_accounts.assign_operator(db, "worker", "other")
+        self.api(doc_path, key=self.owner, expected=404)
+        self.assertTrue(self.api(doc_path, key=other)["document"]["can_manage"])
 
     def test_operator_can_cancel_replace_and_rotate_without_changing_account(self):
         route = "/api/ai/invitations"
@@ -148,3 +229,42 @@ class AIRegistrationTests(unittest.TestCase):
         self.assertIsNone(older["next_before"])
         self.assertEqual({row["invite_id"] for row in page["invitations"] + older["invitations"]},
                          {row["invite_id"] for row in dashboard["invitations"]})
+        endpoint = "/api/ai/heartbeat"
+        self.api(endpoint, key=self.owner, data={}, expected=403)
+        self.api(endpoint, data={}, expected=401)
+        heartbeat = self.api(endpoint, key=new_token, data={"username": "another"})
+        self.assertEqual(heartbeat["interval_seconds"], 60)
+        self.assertTrue(self.api(route, key=self.owner)["agents"][0]["online"])
+        with patch.object(ai_accounts.time, "time", return_value=heartbeat["last_heartbeat"] + ai_accounts.ONLINE_SECONDS):
+            self.assertFalse(self.api(route, key=self.owner)["agents"][0]["online"])
+
+        agent_document = self.api("/api/documents", key=new_token, data={
+            "title": "Agent notes", "markdown": "Keep these notes.", "recipients": ["owner"],
+        })["document_id"]
+        pending_login = login_body(new)
+        pending_rotation = self.api(route, key=self.owner, data={"action": "rotate", "username": "Reviewer"})
+        with library.connect(self.database) as db:
+            application_key = accounts.create_key(db, original["id"], "legacy key")
+            browser_session = accounts.start_session(db, original["id"], None)
+        deactivate = "/api/ai/deactivate"
+        self.api(deactivate, key=other, data={"username": "Reviewer"}, expected=404)
+        retired = self.api(deactivate, key=self.owner, data={"username": "Reviewer"})
+        self.assertEqual(self.api(deactivate, key=self.owner, data={"username": "Reviewer"}), retired)
+        self.api(endpoint, key=new_token, data={}, expected=401)
+        self.api(endpoint, key=application_key, data={}, expected=401)
+        self.assertIsNone(self.api("/api/account", cookie=browser_session)["account"])
+        self.api("/api/ai/login", data=pending_login, expected=401)
+        self.api("/api/ai/challenge", data={"username": "Reviewer"}, expected=401)
+        register(agent.AgentClient(8765, "Reviewer", Ed25519PrivateKey.generate()), pending_rotation, expected=400)
+        self.api(route, key=self.owner, data={"action": "rotate", "username": "Reviewer"}, expected=404)
+        stored = self.api(route, key=self.owner)["agents"][0]
+        self.assertEqual(stored["disabled_at"], retired["disabled_at"])
+        self.assertFalse(stored["online"])
+        self.assertEqual(self.api(f"/api/document?id={agent_document}", key=self.owner)["document"]["title"], "Agent notes")
+        self.assertEqual(self.api(f"/api/reviews?id={review_id}", key=self.owner)["review"]["response"], "Review")
+        self.assertEqual(self.api(f"/api/agent-goals?id={goal_id}", key=self.owner)["goal"]["id"], goal_id)
+        self.assertEqual(self.api(f"/api/review-agents?kind=document&target_id={document}", key=self.owner)["agents"], [])
+        self.api("/api/agent-goals", key=self.owner, data={
+            "action": "create", "request_id": "retired-goal-fixture", "agent": "Reviewer",
+            "objective": "Draft a summary", "acceptance_criteria": "Cite the document.",
+        }, expected=400)
