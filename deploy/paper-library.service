@@ -1,0 +1,18 @@
+[Unit]
+Description=Paper Library
+After=network.target
+
+[Service]
+Type=simple
+User=paper-library
+Group=paper-library
+WorkingDirectory=/opt/paper-library
+StateDirectory=paper-library
+StateDirectoryMode=0750
+EnvironmentFile=/etc/paper-library.env
+ExecStart=/opt/paper-library/.venv/bin/python -m paper_app.server --database /var/lib/paper-library/library.sqlite3 --port 8765
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target

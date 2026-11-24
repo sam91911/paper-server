@@ -208,6 +208,8 @@ class Handler(BaseHTTPRequestHandler):
         route = url.path
         if route in ("/auth/google", "/auth/google/callback"):
             self.google_login(url)
+        elif route == "/api/health":
+            self.read_health()
         elif route == "/api/openapi.json":
             self.send_json(200, openapi.document(self.server.server_port, getattr(self.server, "public_url", None)))
         elif route == "/api/ai/invitations":
@@ -420,6 +422,17 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_data(200, payload, "application/pdf",
                            pdf_download=Path(paper["path"]).name if download else None)
+
+    def read_health(self):
+        target = self.server.database
+        connect = library.connect if isinstance(target, storage.PostgreSQL) else storage.read_sqlite
+        try:
+            with connect(target) as db:
+                db.execute("SELECT id FROM accounts LIMIT 1").fetchone()
+        except storage.ERRORS + (OSError,):
+            self.send_json(503, {"status": "unavailable"})
+            return
+        self.send_json(200, {"status": "ok"})
 
     def read_ai_invitations(self):
         try:

@@ -176,6 +176,14 @@ METRIC_HISTORY = obj({
 }, ("original", "corrections", "next_before"))
 CROSSREF = array(obj({**METADATA, "short_venue": STRING, "venue_group": STRING}))
 PATHS = {
+    "/api/health": {"get": {
+        "summary": "Check whether the server can read its database",
+        "security": [],
+        "responses": {
+            "200": {"description": "Database readable", **media(obj({"status": enum("ok")}, ("status",)))},
+            "503": {"description": "Database unavailable", **media(obj({"status": enum("unavailable")}, ("status",)))},
+        },
+    }},
     "/api/human-key/challenge": {"post": operation("Request a one-time human sign-in or enrollment challenge",
         obj({"challenge": AI_NONCE, "message": STRING, "expires_in": COUNT}, ("challenge", "message", "expires_in")),
         body=obj({"action": enum("register", "login", "attach"), "username": STRING}, ("action",)),

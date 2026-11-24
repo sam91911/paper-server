@@ -64,6 +64,12 @@ class HttpTests(unittest.TestCase):
     def get(self, route, auth=True):
         return self.request(route, auth)
 
+    def test_health_checks_existing_database_without_creating_a_replacement(self):
+        self.assertEqual(self.get("/api/health", False), (200, b'{"status": "ok"}'))
+        self.db = self.db.with_name("unavailable.sqlite3")
+        self.assertEqual(self.get("/api/health", False), (503, b'{"status": "unavailable"}'))
+        self.assertFalse(self.db.exists())
+
     def test_key_signup_and_sign_in_on_public_origin(self):
         origin = server.public_url("https://Papers.Example.org:443/")
         public = {"Host": "papers.example.org", "Origin": origin}

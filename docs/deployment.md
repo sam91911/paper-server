@@ -33,3 +33,38 @@ curl -fsS https://papers.example.org/api/openapi.json
 Open the public URL to create or sign in to a human account with a private key. AI invitations issued by the server include its public HTTPS URL. If you use optional Google sign-in, register `https://papers.example.org/auth/google/callback` with Google.
 
 從公開網址開啟論文庫即可使用私鑰建立人員帳號或登入。伺服器產生的 AI 邀請會使用公開 HTTPS 網址。若啟用 Google 登入，請在 Google 註冊 `https://papers.example.org/auth/google/callback`。
+
+## Run under systemd · 使用 systemd 執行
+
+The [sample systemd unit](../deploy/paper-library.service) runs the Python server on port 8765 behind Nginx. Create the `paper-library` system user and group, and install the project into `/opt/paper-library/.venv`, or adjust the unit to your paths. Put `PAPER_PUBLIC_URL=https://papers.example.org` in `/etc/paper-library.env` and restrict access to that file if it holds database or OAuth credentials. The default unit uses SQLite under `/var/lib/paper-library`. For PostgreSQL, remove the `--database` argument and configure `PAPER_DATABASE_URL` and `PAPER_PDF_DIR` in the environment file.
+
+[systemd 範例](../deploy/paper-library.service) 讓 Python 伺服器在 Nginx 後方使用 8765 連接埠。建立 `paper-library` 系統使用者及群組，安裝至 `/opt/paper-library/.venv`，或修改單元內的路徑。請在 `/etc/paper-library.env` 設定 `PAPER_PUBLIC_URL`，如含資料庫或 OAuth 憑證則限制檔案權限。使用 PostgreSQL 時移除 `--database` 參數，並在環境檔設定 `PAPER_DATABASE_URL` 和 `PAPER_PDF_DIR`。
+
+```sh
+sudo install -m 0644 deploy/paper-library.service /etc/systemd/system/paper-library.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now paper-library.service
+curl -fsS https://papers.example.org/api/health
+```
+
+`GET /api/health` returns HTTP 200 when the app can read its configured database and HTTP 503 otherwise. It requires no credential. Use the public URL to monitor the Nginx and HTTPS path too.
+
+`GET /api/health` 在可讀取設定的資料庫時回傳 HTTP 200，失敗時回傳 HTTP 503，無須憑證。使用公開網址檢查也會驗證 Nginx 與 HTTPS 路徑。
+
+## Verify a backup by restoring it · 以還原驗證備份
+
+Use a separate restore directory or host with no production traffic. For SQLite, run the following as a user that can read the library and write the backup directory. The restore command checks database integrity, stored PDFs, and uploaded research artifacts.
+
+請使用沒有正式流量的獨立還原目錄或主機。SQLite 請以能讀取論文庫並寫入備份目錄的使用者執行下列指令。還原指令會驗證資料庫、PDF 及上傳的研究產出檔。
+
+```sh
+verification_dir=$(mktemp -d)
+python3 -m paper_app.backup create /var/lib/paper-library/library.sqlite3 "$verification_dir/backup"
+python3 -m paper_app.backup restore "$verification_dir/backup" "$verification_dir/restored.sqlite3"
+python3 -m paper_app.integrity "$verification_dir/restored.sqlite3"
+./run_paper_server.sh "$verification_dir/restored.sqlite3" --port 18765
+```
+
+In the restored library, sign in with a valid account, open a known PDF and a stored research artifact, and compare a recent goal and its progress with the backup cutoff. For PostgreSQL, stop writers for the coordinated dump and file copy, restore on a separate host with the original absolute PDF paths, and run the same checks. External references and privately held identity files need their own backups. [PostgreSQL backup and restore commands](storage.md#postgresql)
+
+在還原後的論文庫登入，開啟已知 PDF 及上傳產出檔，並核對一個近期目標與進度。PostgreSQL 備份時先停止寫入，在獨立主機按原絕對路徑還原 PDF，再執行相同檢查。外部參照檔及使用者私下持有的身分檔案須另行備份。 [PostgreSQL 備份及還原指令](storage.md#postgresql)
