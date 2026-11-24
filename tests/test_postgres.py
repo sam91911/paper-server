@@ -9,7 +9,10 @@ from pathlib import Path
 from urllib.parse import quote
 from uuid import uuid4
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from paper_app import accounts, database, integrity, library, migrate
+from paper_client import agent
 from scripts import research_pilot
 from test_skill_api import request
 
@@ -44,6 +47,41 @@ class PostgreSQLTests(unittest.TestCase):
         status, result = request(target or self.target, path, **options)
         self.assertEqual(status, expected, str(result)[:500])
         return result
+
+    def test_ai_registration_and_login(self):
+        library.initialize(self.target)
+        with library.connect(self.target) as db:
+            accounts.create_account(db, "owner", "owner test password", "user")
+            cookie = accounts.start_session(db, 1, None)
+
+        username = "PgAgent"
+        route = self.api("/api/ai/invitations", cookie=cookie,
+                         data={"username": username, "role": "local"})["registration_path"]
+        client = agent.AgentClient(8765, username, Ed25519PrivateKey.generate())
+        registration = {"public_key": agent.encode(client.private_key.public_key().public_bytes_raw()),
+                        "signature": client.sign("register", username, route)}
+        self.assertEqual(self.api(route, data=registration)["account"]["role"], "local")
+        self.api(route, data=registration, expected=400)
+        challenge = self.api("/api/ai/challenge", data={"username": username})["challenge"]
+        token = self.api("/api/ai/login", data={"username": username, "challenge": challenge,
+                                              "signature": client.sign("login", username, challenge)})["access_token"]
+        self.assertEqual(self.api("/api/account", key=token)["account"]["username"], username)
+
+    def test_human_private_key_registration(self):
+        library.initialize(self.target)
+        private_key = Ed25519PrivateKey.generate()
+        challenge = self.api("/api/human-key/challenge", data={"action": "register", "username": "reader"})
+        profile = {
+            "email": "reader@example.org", "display_name": "Reader", "challenge": challenge["challenge"],
+            "public_key": agent.encode(private_key.public_key().public_bytes_raw()),
+            "signature": agent.encode(private_key.sign(challenge["message"].encode())),
+        }
+        account = self.api("/api/human-key/register", data=profile)["account"]
+        self.assertIs(account["key_only"], True)
+        self.assertEqual(account["role"], "member")
+        login = self.api("/api/human-key/challenge", data={"action": "login", "username": "reader"})
+        signed = {"challenge": login["challenge"], "signature": agent.encode(private_key.sign(login["message"].encode()))}
+        self.assertEqual(self.api("/api/human-key/login", data=signed)["account"], account)
 
     def test_fresh_library_api_and_concurrent_revision_control(self):
         library.initialize(self.target)

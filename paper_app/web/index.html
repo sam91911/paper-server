@@ -238,14 +238,34 @@
 </section>
 <section id="account-page" hidden>
   <h2 id="account-summary">Sign in</h2>
+  <div id="human-key-entry">
+    <form id="human-key-login">
+      <label>Paper Library private key file <input name="key_file" type="file" accept=".json,application/json" required></label>
+      <button>Sign in with private key</button>
+    </form>
+    <details>
+      <summary>Create an account with a private key</summary>
+      <form id="human-key-register">
+        <label>Name <input name="display_name" autocomplete="name" required maxlength="120"></label>
+        <label>Email <input name="email" type="email" autocomplete="email" required maxlength="254"></label>
+        <label>Username <input name="username" autocomplete="username" required minlength="2" maxlength="32"
+          pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{1,31}"></label>
+        <label>Invitation code (optional) <input name="invite" autocomplete="off" minlength="43" maxlength="43"></label>
+        <button type="button" data-generate-key>Generate private key</button>
+        <a data-download-key hidden>Download private key</a>
+        <button data-save-key disabled>Create account</button>
+      </form>
+    </details>
+  </div>
+  <details id="password-account-options">
+  <summary>Password sign-in and signup</summary>
   <form id="account-form">
     <label>Username <input name="username" autocomplete="username" required maxlength="32"></label>
     <label>Password <input type="password" name="password" autocomplete="current-password" required maxlength="256"></label>
     <button>Sign in</button>
   </form>
-  <p id="google-option" hidden><a href="/auth/google">Sign in with Google</a></p>
   <details id="signup-panel">
-    <summary>Create a human account</summary>
+    <summary>Create an account with a password</summary>
     <p>You can create an account without an invitation. Sign in to see your workspace and items shared with your username.</p>
     <form id="signup">
       <label>Name <input name="display_name" autocomplete="name" required maxlength="120"></label>
@@ -256,8 +276,32 @@
       <button>Create account</button>
     </form>
   </details>
+  </details>
+  <p id="google-option" hidden><a href="/auth/google">Sign in with Google</a></p>
   <p id="account-username" hidden></p>
   <p id="account-email" hidden></p>
+  <details id="attach-human-key-panel" hidden>
+    <summary>Add private-key sign-in</summary>
+    <form id="human-key-attach">
+      <button type="button" data-generate-key>Generate private key</button>
+      <a data-download-key hidden>Download private key</a>
+      <button data-save-key disabled>Save sign-in key</button>
+    </form>
+  </details>
+  <details id="ai-registration-panel" hidden>
+    <summary>Register an AI agent</summary>
+    <form id="create-ai-invitation" class="account-actions">
+      <label>Agent username <input name="username" required minlength="2" maxlength="32"
+        pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{1,31}" autocomplete="off" spellcheck="false"></label>
+      <label>Agent role <select name="role"><option value="local">Local AI</option><option value="cloud">Cloud AI</option></select></label>
+      <button>Generate one-time prompt</button>
+    </form>
+    <div id="ai-invitation-result" hidden>
+      <p>Paste this prompt into the intended agent. It can register once within 15 minutes.</p>
+      <label>Registration prompt <textarea id="ai-invitation-prompt" rows="10" readonly autocomplete="off" spellcheck="false"></textarea></label>
+      <button id="copy-ai-invitation" type="button" class="secondary">Copy prompt</button>
+    </div>
+  </details>
   <details id="key-panel" hidden>
     <summary>Application keys</summary>
     <p>Use an application key to sign API requests. Each key has your account's access.</p>
@@ -491,6 +535,7 @@
 <script src="/assets/api.js"></script>
 <script src="/assets/metrics.js"></script>
 <script src="/assets/library.js"></script>
+<script src="/assets/human-keys.js"></script>
 <script src="/assets/documents.js"></script>
 <script src="/assets/findings.js"></script>
 <script src="/assets/goals.js"></script>

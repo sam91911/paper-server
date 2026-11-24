@@ -12,6 +12,7 @@ jobs:
         with:
           node-version: '22'
       - run: sudo apt-get update && sudo apt-get install -y poppler-utils
+      - run: python -m pip install .
       - run: bash scripts/check.sh
   postgres:
     runs-on: ubuntu-24.04

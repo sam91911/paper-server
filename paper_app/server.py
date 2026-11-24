@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import platform
 import re
 import shutil
@@ -18,7 +19,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
-from . import account_routes, accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tools_catalog
+from . import account_routes, accounts, ai_accounts, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
 WEB_ROOT = Path(__file__).resolve().with_name("web")
@@ -35,6 +36,7 @@ ASSETS = {
     "/assets/findings.js": ("findings.js", "text/javascript; charset=utf-8"),
     "/assets/goals.js": ("goals.js", "text/javascript; charset=utf-8"),
     "/assets/api.js": ("api.js", "text/javascript; charset=utf-8"),
+    "/assets/human-keys.js": ("human-keys.js", "text/javascript; charset=utf-8"),
     "/assets/documents.js": ("documents.js", "text/javascript; charset=utf-8"),
     "/assets/boot.js": ("boot.js", "text/javascript; charset=utf-8"),
     "/assets/library.js": ("library.js", "text/javascript; charset=utf-8"),
@@ -55,6 +57,19 @@ def lookup_stored_paper(paper):
         if matches:
             return matches
     return crossref.lookup("title", title[:500])
+
+
+def public_url(value):
+    url = urlsplit(value)
+    if (url.scheme != "https" or not url.hostname or url.username is not None
+            or url.path not in ("", "/") or "?" in value or "#" in value
+            or not re.fullmatch(r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(?::[0-9]+)?", url.netloc)
+            or url.port == 0):
+        raise ValueError("Set the public URL to an HTTPS origin such as https://papers.example.org.")
+    host = url.netloc.lower()
+    if url.port == 443:
+        host = host.rsplit(":", 1)[0]
+    return f"https://{host}"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -89,8 +104,12 @@ class Handler(BaseHTTPRequestHandler):
         authorization = self.headers.get("Authorization")
         if authorization is None:
             return accounts.current_account(db, self.session_token())
-        match = re.fullmatch(r"Bearer (pl_[A-Za-z0-9_-]{43})", authorization, re.I)
-        return accounts.current_account(db, match[1], application_key=True) if match else None
+        match = re.fullmatch(r"(?i:Bearer) ((pl_ai_|pl_)[A-Za-z0-9_-]{43})", authorization)
+        if not match:
+            return None
+        if match[2] == accounts.AI_SESSION_PREFIX:
+            return accounts.current_account(db, match[1], ai_session=True)
+        return accounts.current_account(db, match[1], application_key=True)
 
     def require_browser_account(self, db):
         if self.headers.get("Authorization") is not None:
@@ -109,20 +128,39 @@ class Handler(BaseHTTPRequestHandler):
             raise sharing.AccessDenied
         return account
 
+    def request_origin(self):
+        host = (self.headers.get("Host") or "").lower()
+        public = getattr(self.server, "public_url", None)
+        if public:
+            configured = urlsplit(public)
+            if host == configured.netloc or (configured.port is None and host == configured.netloc + ":443"):
+                return public
+        if host in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}:
+            return f"http://{host.removesuffix(':80')}"
+        if self.server.server_port == 80 and host in {"127.0.0.1", "localhost"}:
+            return f"http://{host}"
+        return None
+
     def origin_allowed(self):
-        valid = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
-        host = self.headers.get("Host")
-        origin = self.headers.get("Origin")
-        return host in valid and origin in (None, f"http://{host}")
+        origin = self.request_origin()
+        return origin is not None and self.headers.get("Origin") in (None, origin)
+
+    def session_cookie(self, token):
+        max_age = accounts.SESSION_SECONDS if token else 0
+        secure = "; Secure" if self.request_origin().startswith("https://") else ""
+        return f"{accounts.COOKIE}={token}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
 
     def log_request(self, code="-", size="-"):
-        if urlsplit(self.path).path == "/auth/google/callback":
+        if self.path.startswith(ai_accounts.REGISTRATION_PREFIX):
+            self.log_message('"%s %s[redacted]" %s %s', self.command, ai_accounts.REGISTRATION_PREFIX, code, size)
+        elif urlsplit(self.path).path == "/auth/google/callback":
             self.log_message('"%s /auth/google/callback" %s %s', self.command, str(code), str(size))
         else:
             super().log_request(code, size)
 
     def google_available(self):
-        return self.server.google_config is not None and self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
+        config = self.server.google_config
+        return config is not None and config[2] == f"{self.request_origin()}/auth/google/callback"
 
     def redirect(self, target, cookie=None):
         self.send_response(303)
@@ -142,8 +180,9 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/auth/google":
             with library.connect(self.server.database) as db:
                 redirect, state = google_signin.begin(db, config)
+            secure = "; Secure" if self.request_origin().startswith("https://") else ""
             self.redirect(redirect, f"{google_signin.COOKIE}={state}; Path=/auth/google; "
-                          f"HttpOnly; SameSite=Lax; Max-Age={google_signin.TTL}")
+                          f"HttpOnly; SameSite=Lax; Max-Age={google_signin.TTL}{secure}")
             return
         try:
             params = parse_qs(url.query)
@@ -159,19 +198,18 @@ class Handler(BaseHTTPRequestHandler):
         except storage.ERRORS + (KeyError, ValueError, OSError):
             self.redirect("/account?google=failed")
         else:
-            self.redirect("/account", f"{accounts.COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; "
-                          f"Max-Age={accounts.SESSION_SECONDS}")
+            self.redirect("/account", self.session_cookie(token))
 
     def do_GET(self):
         if not self.origin_allowed():
-            self.send_json(403, {"error": "Local origin required"})
+            self.send_json(403, {"error": "Library origin required"})
             return
         url = urlsplit(self.path)
         route = url.path
         if route in ("/auth/google", "/auth/google/callback"):
             self.google_login(url)
         elif route == "/api/openapi.json":
-            self.send_json(200, openapi.document(self.server.server_port))
+            self.send_json(200, openapi.document(self.server.server_port, getattr(self.server, "public_url", None)))
         elif route in ("/api/reviews", "/api/review-agents"):
             self.read_reviews(url)
         elif route == "/api/skills" or route.startswith("/api/skills/"):
@@ -437,7 +475,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self.origin_allowed():
-            self.send_json(403, {"error": "Local origin required"})
+            self.send_json(403, {"error": "Library origin required"})
             return
         if self.path == "/api/papers":
             self.upload_pdf()
@@ -455,7 +493,7 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError("Expected a JSON object")
-            if self.path in ("/api/register", "/api/sign-in", "/api/sign-out", "/api/change-password"):
+            if self.path in account_routes.SESSION_ROUTES:
                 account_routes.update_session(self, data)
                 return
             if self.path == "/api/lookup":
@@ -594,6 +632,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(500, {"error": "Could not save the local PDF import"})
 
     def update(self, db, data):
+        if self.path == "/api/ai/invitations":
+            self.require_human(db)
+            invite = ai_accounts.create_invite(db, data)
+            origin = getattr(self.server, "public_url", None) or self.request_origin()
+            return {**invite, "registration_url": origin + invite["registration_path"]}
+        if self.path.startswith(ai_accounts.REGISTRATION_PREFIX):
+            return ai_accounts.register(db, self.path.removeprefix(ai_accounts.REGISTRATION_PREFIX), data)
+        if self.path == "/api/ai/challenge":
+            return ai_accounts.challenge(db, data)
+        if self.path == "/api/ai/login":
+            return ai_accounts.login(db, data)
         if self.path == "/api/reviews":
             account = self.require_account(db)
             if data.get("action") == "create":
@@ -626,15 +675,18 @@ class Handler(BaseHTTPRequestHandler):
 
 
 
-def serve(database, port):
+def serve(database, port, external_url=None):
     if not shutil.which("pdftotext"):
         LOG.warning("pdftotext is unavailable; PDF import and text extraction will fail")
     with ThreadingHTTPServer(("127.0.0.1", port), Handler) as server:
         server.database = database
-        server.google_config = google_signin.configuration(server.server_port)
+        server.public_url = external_url
+        server.google_config = google_signin.configuration(server.server_port, origin=external_url)
         stop = Event()
         worker = Thread(target=metadata_sync.run, args=(database, stop), daemon=True)
         worker.start()
+        if external_url:
+            print(f"Public Paper Library at {external_url}/ via reverse proxy.", flush=True)
         print(f"Paper library at http://127.0.0.1:{server.server_port}/", flush=True)
         try:
             server.serve_forever()
@@ -648,6 +700,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", type=Path)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--public-url", default=os.getenv("PAPER_PUBLIC_URL"),
+                        help="Public HTTPS origin served through a local reverse proxy")
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--import-csv", type=Path, help="Import a metrics CSV and exit")
     modes.add_argument("--invite-human", metavar="EMAIL", help="Issue a one-time browser signup code")
@@ -708,7 +762,7 @@ def main():
                     count = library.import_csv(db, stream, args.import_csv.absolute().parent)
             print(f"Imported metrics for {count} paper path(s).")
             return
-        serve(database, args.port)
+        serve(database, args.port, public_url(args.public_url) if args.public_url else None)
     except storage.ERRORS + (csv.Error, ValueError, OSError, EOFError) as error:
         parser.exit(1, f"Paper library: {error}\n")
 

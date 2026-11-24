@@ -100,7 +100,7 @@ def connect(path):
 
 
 def initialize(path):
-    from . import reviews
+    from . import ai_accounts, human_keys, reviews
 
     with connect(path) as db:
         if isinstance(path, storage.PostgreSQL):
@@ -108,7 +108,7 @@ def initialize(path):
             return
         db.executescript(SCHEMA + COMMENT_SCHEMA.format(table="comments") + accounts.SCHEMA
                          + sharing.SCHEMA + google_signin.SCHEMA + experiments.SCHEMA + tools_catalog.SCHEMA
-                         + skills.SCHEMA + reviews.SCHEMA)
+                         + skills.SCHEMA + reviews.SCHEMA + ai_accounts.SCHEMA + human_keys.SCHEMA)
         # Existing comments have a mandatory paper_id. Rebuild with the same IDs
         # so authors, grants, reply links, and anchors survive the migration.
         db.execute("PRAGMA foreign_keys=OFF")

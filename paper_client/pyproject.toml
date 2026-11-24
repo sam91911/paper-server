@@ -7,7 +7,7 @@ name = "local-paper-library-client"
 version = "0.1.0"
 description = "Workstation AI review client for the local paper library"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["cryptography>=40"]
 
 [tool.setuptools]
 packages = ["paper_client"]

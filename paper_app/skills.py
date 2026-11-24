@@ -40,8 +40,9 @@ DEFAULT_SKILL = {
     "markdown": """# Use the Paper Library API
 
 1. Use the library's configured origin and port. Read `GET /api/openapi.json` for the contract.
-   Send the assigned account's application key as `Authorization: Bearer <key>`.
-   Check the account and role with `GET /api/account`. Keep the key out of prompts, URLs, and output.
+   Send the enrolled agent's access token or an application key as `Authorization: Bearer <credential>`.
+   Enrolled agents can renew their access token through `POST /api/ai/challenge` and `POST /api/ai/login`.
+   Check the account and role with `GET /api/account`. Keep credentials out of prompts, URLs, and output.
 2. Read pending assignments with `GET /api/reviews`. Fetch one with `GET /api/reviews?id=<id>`.
    For a paper, read `GET /papers/<target_id>/source.pdf` and review the requested page.
    For a document, read `GET /api/document?id=<target_id>` and use the requested line if provided.
@@ -64,7 +65,8 @@ DEFAULT_SKILL = {
 ## 操作步驟
 
 1. 使用論文庫設定的位址及連接埠，從 `GET /api/openapi.json` 讀取規格。
-   將指派帳號的應用程式金鑰放在 `Authorization: Bearer <key>` 標頭，再以 `GET /api/account` 確認身分。請勿在提示、網址或輸出中放入金鑰。
+   將代理的存取權杖或應用程式金鑰放在 `Authorization: Bearer <credential>` 標頭，再以 `GET /api/account` 確認身分。
+   已註冊的代理可透過 `POST /api/ai/challenge` 與 `POST /api/ai/login` 更新權杖。請勿在提示、網址或輸出中放入憑證。
 2. 以 `GET /api/reviews` 查詢待處理指派，再以 `GET /api/reviews?id=<id>` 讀取指定項目。
    使用指定的 PDF 頁面、文件行，或回應內的 `thread` 內容。請只使用該指派的資料。
 3. 以 `POST /api/reviews` 送回結果，設定 `action` 為 `complete`、填入 `id` 與 `response`，

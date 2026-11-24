@@ -73,15 +73,17 @@ function selectAudience(select, value) {
 function showAccount() {
   const account = libraryData.account;
   element("account-summary").textContent = account ? `${account.display_name || account.username} · ${roleLabels[account.role]}` : "Sign in";
-  accountForm.hidden = Boolean(account);
+  element("human-key-entry").hidden = Boolean(account);
+  element("password-account-options").hidden = Boolean(account);
   element("sign-out").hidden = !account;
-  element("change-password").hidden = !account || Boolean(account.google_only);
-  element("signup-panel").hidden = Boolean(account);
+  element("change-password").hidden = !account || account.google_only || account.key_only;
+  element("attach-human-key-panel").hidden = !["user", "member"].includes(account?.role) || account.has_private_key;
   element("google-option").hidden = Boolean(account) || !libraryData.google_available;
   const username = element("account-username");
   username.hidden = !account;
   username.textContent = account ? `Username: ${account.username}` : "";
   element("key-panel").hidden = !account;
+  element("ai-registration-panel").hidden = account?.role !== "user";
   const email = element("account-email");
   email.hidden = !account?.email;
   email.textContent = account?.email || "";
@@ -614,6 +616,10 @@ async function loadLibrary(paperId) {
   const route = accountPage ? "account" : documentsPage ? "documents?comments=none&content=summary" : "compare";
   libraryData = await api(route);
   if (accountPage) {
+    if (previousAccount !== libraryData.account?.id) {
+      element("ai-invitation-prompt").value = "";
+      element("ai-invitation-result").hidden = true;
+    }
     showAccount();
     showKeys();
     return;
@@ -860,6 +866,45 @@ submit(signupForm, async () => {
 
 const createKeyForm = element("create-key");
 const issuedKey = element("issued-key");
+const aiInvitationForm = element("create-ai-invitation");
+const aiInvitationPrompt = element("ai-invitation-prompt");
+
+submit(aiInvitationForm, async () => {
+  const accountId = libraryData.account?.id;
+  aiInvitationPrompt.value = "";
+  element("ai-invitation-result").hidden = true;
+  const {registration_path, registration_url, username, role} = await api("ai/invitations", Object.fromEntries(new FormData(aiInvitationForm)));
+  if (libraryData.account?.id !== accountId) return;
+  const identity = `~/.paper-library/${username}.json`;
+  const client = "python3 -m paper_client.agent";
+  aiInvitationPrompt.value = `Connect to my Paper Library as ${username} (${role} AI). Register this agent and verify the connection.
+
+One-time registration URL (expires in 15 minutes):
+${registration_url}
+
+From the Paper Library repository, install the client with python3 -m pip install ./paper_client, then run:
+${client} register --username ${username} --identity ${identity}
+
+Supply the registration URL when prompted, or pass it privately on stdin. This command generates and saves an Ed25519 private key in the identity file. Keep the key and any access tokens out of chat and logs. Verify the account and read the usage guide:
+${client} request --identity ${identity} /api/account
+${client} request --identity ${identity} /api/skills/default
+
+If you use your own HTTP client, send POST bodies as JSON with Content-Type: application/json. Generate and store an Ed25519 key and sign paper-library:register:${username}:${registration_path} as ASCII. POST public_key and signature as unpadded base64url to the registration URL. Then POST {"username":"${username}"} to /api/ai/challenge, sign paper-library:login:${username}:<challenge> as ASCII, and POST username, challenge, and base64url signature to /api/ai/login. Use the returned access_token as a Bearer token. Verify the role with /api/account. The API contract is at /api/openapi.json.
+
+Use the HTTPS URL as provided. If the library uses loopback on another machine, use its forwarded loopback port and keep the registration path. Report the connected username and role.`;
+  element("ai-invitation-result").hidden = false;
+  accountStatus.textContent = "";
+}, accountStatus);
+
+element("copy-ai-invitation").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(aiInvitationPrompt.value);
+    accountStatus.textContent = "Registration prompt copied.";
+  } catch {
+    aiInvitationPrompt.select();
+    accountStatus.textContent = "Copy the selected registration prompt.";
+  }
+});
 
 function showKeys() {
   const list = element("application-key-list");

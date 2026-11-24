@@ -14,6 +14,8 @@ ROLES = ("user", "member", "local", "cloud")
 ROLE_SQL = """CASE WHEN {alias}.role = 'user' THEN
     CASE WHEN {alias}.trusted=1 THEN 'user' ELSE 'member' END ELSE {alias}.ai_location END"""
 SESSION_SECONDS = 7 * 24 * 60 * 60
+AI_SESSION_PREFIX = "pl_ai_"
+TOKEN_PATTERN = r"[A-Za-z0-9_-]{43}"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
@@ -60,6 +62,10 @@ def token_hash(token):
     return hashlib.sha256(token.encode("ascii")).digest()
 
 
+def valid_token(value):
+    return isinstance(value, str) and re.fullmatch(TOKEN_PATTERN, value) is not None
+
+
 def read_token(header):
     cookie = SimpleCookie()
     try:
@@ -67,7 +73,7 @@ def read_token(header):
     except CookieError:
         return None
     token = cookie.get(COOKIE)
-    if token and re.fullmatch(r"[A-Za-z0-9_-]{43}", token.value):
+    if token and valid_token(token.value):
         return token.value
     return None
 
@@ -87,18 +93,24 @@ def initialize(db):
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS trusted_account_email ON accounts(email) WHERE trusted=1")
 
 
-def current_account(db, token, *, application_key=False):
+def current_account(db, token, *, application_key=False, ai_session=False):
     if token is None:
         return None
     join = ("JOIN application_keys s ON a.id=s.account_id WHERE s.token_hash=?"
             if application_key else "JOIN sessions s ON a.id=s.account_id WHERE s.token_hash=? AND s.expires>?")
+    if ai_session:
+        join += " AND a.role='ai'"
     params = (token_hash(token),) if application_key else (token_hash(token), int(time.time()))
     row = db.execute(
         f"SELECT a.id, a.username, a.display_name, a.email, {ROLE_SQL.format(alias='a')} AS role, "
-        f"EXISTS(SELECT 1 FROM google_identities i WHERE i.account_id=a.id) AS google_only "
+        f"EXISTS(SELECT 1 FROM google_identities i WHERE i.account_id=a.id) AS google_only, "
+        f"EXISTS(SELECT 1 FROM human_public_keys k WHERE k.account_id=a.id) AS has_private_key, "
+        f"length(a.password_hash)=0 AS key_only "
         f"FROM accounts a {join}", params,
     ).fetchone()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    return {**dict(row), "has_private_key": bool(row["has_private_key"]), "key_only": bool(row["key_only"])}
 
 
 def email_address(email):
@@ -124,12 +136,12 @@ def create_invite(db, email):
     return token
 
 
-def register_human(db, data):
+def register_human(db, data, *, key_only=False):
     email = email_address(data.get("email"))
     token = data.get("invite") or ""
     if token:
         message = "Enter a valid invitation for this email address or leave it blank."
-        if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+        if not valid_token(token):
             raise ValueError(message)
         used = db.execute(
             "DELETE FROM human_invites WHERE token_hash=? AND email=? AND expires>?",
@@ -138,8 +150,9 @@ def register_human(db, data):
         if not used:
             raise ValueError(message)
     try:
-        create_account(db, data.get("username"), data.get("password"), "user",
-                       display_name=person_name(data.get("display_name")), email=email, trusted=bool(token))
+        return create_account(db, data.get("username"), data.get("password"), "user",
+                              display_name=person_name(data.get("display_name")), email=email, trusted=bool(token),
+                              key_only=key_only)
     except storage.INTEGRITY_ERRORS as error:
         raise ValueError("That username or email address is already in use.") from error
 
@@ -202,22 +215,28 @@ def role_fields(role):
     return ("user" if role in ("user", "member") else "ai", "local" if role == "local" else "cloud")
 
 
-def create_account(db, username, password, role, *, display_name="", email=None, trusted=True):
+def create_account(db, username, password, role, *, display_name="", email=None, trusted=True, key_only=False):
     username = identity(username)
-    validate_password(password)
     salt = secrets.token_bytes(16)
-    db.execute(
-        "INSERT INTO accounts(username,password_hash,salt,role,ai_location,display_name,email,trusted) VALUES (?,?,?,?,?,?,?,?)",
-        (username, password_hash(password, salt), salt, *role_fields(role), display_name, email, int(trusted and role != "member")),
-    )
+    digest = b""
+    if not key_only:
+        validate_password(password)
+        digest = password_hash(password, salt)
+    return db.execute(
+        "INSERT INTO accounts(username,password_hash,salt,role,ai_location,display_name,email,trusted) "
+        "VALUES (?,?,?,?,?,?,?,?) RETURNING id",
+        (username, digest, salt, *role_fields(role), display_name, email, int(trusted and role != "member")),
+    ).fetchone()[0]
 
 
 def set_role(db, username, role):
-    if not db.execute("UPDATE accounts SET role=?,ai_location=?,trusted=? WHERE username=?",
-                      (*role_fields(role), int(role != "member"), identity(username))).rowcount:
+    row = db.execute("UPDATE accounts SET role=?,ai_location=?,trusted=? WHERE username=? RETURNING id",
+                     (*role_fields(role), int(role != "member"), identity(username))).fetchone()
+    if row is None:
         raise ValueError("Account not found.")
-    for table in ("sessions", "application_keys"):
-        db.execute(f"DELETE FROM {table} WHERE account_id=(SELECT id FROM accounts WHERE username=?)", (username.strip(),))
+    other_keys = "ai_public_keys" if role in ("user", "member") else "human_public_keys"
+    for table in ("sessions", "application_keys", other_keys):
+        db.execute(f"DELETE FROM {table} WHERE account_id=?", (row["id"],))
 
 
 def authenticate(db, username, password):
@@ -248,11 +267,11 @@ def sign_in(db, username, password, *, old_token):
     return account, start_session(db, account["id"], old_token)
 
 
-def start_session(db, account_id, old_token):
-    token = secrets.token_urlsafe(32)
+def start_session(db, account_id, old_token, *, prefix="", expires_in=SESSION_SECONDS):
+    token = prefix + secrets.token_urlsafe(32)
     now = int(time.time())
     sign_out(db, old_token)
     db.execute("DELETE FROM sessions WHERE expires<=?", (now,))
     db.execute("INSERT INTO sessions VALUES (?,?,?)",
-               (token_hash(token), account_id, now + SESSION_SECONDS))
+               (token_hash(token), account_id, now + expires_in))
     return token

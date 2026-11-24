@@ -6,6 +6,7 @@ import http.cookiejar
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -38,9 +39,23 @@ class LibraryError(ValueError):
         self.status = status
 
 
+def library_origin(value):
+    url = urlsplit(value)
+    if (not re.fullmatch(r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(?::[0-9]+)?", url.netloc)
+            or url.port == 0 or url.path not in ("", "/") or "?" in value or "#" in value
+            or not (url.scheme == "https" or url.scheme == "http" and url.hostname in ("127.0.0.1", "localhost"))):
+        raise ValueError("Use the library's HTTPS origin or a loopback HTTP origin.")
+    host = url.netloc.lower()
+    if url.scheme == "http" and url.hostname == "localhost":
+        host = host.replace("localhost", "127.0.0.1", 1)
+    if url.port == (443 if url.scheme == "https" else 80):
+        host = host.rsplit(":", 1)[0]
+    return f"{url.scheme}://{host}"
+
+
 class LibraryClient:
-    def __init__(self, port, key):
-        self.base = f"http://127.0.0.1:{port}"
+    def __init__(self, port, key, *, server_url=None):
+        self.base = library_origin(server_url) if server_url else f"http://127.0.0.1:{port}"
         self.key = key
         self.opener = build_opener(ProxyHandler({}), NoRedirect(),
                                    HTTPCookieProcessor(http.cookiejar.CookieJar()))
@@ -268,10 +283,14 @@ def main():
     parser.add_argument("--thread", type=int, help="Review the visible thread around this comment ID")
     parser.add_argument("--page", type=int, default=1)
     parser.add_argument("--line", type=int)
-    parser.add_argument("--port", type=int, default=8765)
+    server_options = parser.add_mutually_exclusive_group()
+    server_options.add_argument("--port", type=int, help="Loopback API port (default: 8765)")
+    server_options.add_argument("--server-url", help="Library HTTPS origin")
     parser.add_argument("--model", type=Path, help="Path to a local .gguf model")
     parser.add_argument("--cloud", action="store_true", help="Prompt before sending context to your cloud provider")
-    parser.add_argument("--username", help="Use an AI account username and prompt for its password")
+    credentials = parser.add_mutually_exclusive_group()
+    credentials.add_argument("--username", help="Use an AI account username and prompt for its password")
+    credentials.add_argument("--agent-identity", type=Path, help="Sign in with an enrolled AI identity file")
     parser.add_argument("--skill", type=int, help="Apply a visible library skill by ID")
     parser.add_argument("--post", action="store_true", help="Save the result as a comment")
     parser.add_argument("--check", action="store_true", help="Check local tools; no sign-in required")
@@ -287,7 +306,9 @@ def main():
         print(f"Cloud endpoint and model: {'configured' if configured else 'not configured'}")
         return
     targets = [target for target in (args.paper_id, args.document, args.thread) if target is not None]
-    if not 0 < args.port <= 65535:
+    if args.agent_identity and (args.port is not None or args.server_url):
+        parser.error("The server URL is saved in the enrolled AI identity.")
+    if args.port is not None and not 0 < args.port <= 65535:
         parser.error("Choose a valid library API port.")
     if args.watch:
         if targets or args.post or args.line is not None or args.page != 1 or args.audience != "owner":
@@ -305,10 +326,15 @@ def main():
     password_session = None
     try:
         environment_key = os.environ.pop("PAPER_APP_KEY", None)
-        key = None if args.username else environment_key or getpass.getpass("Application key: ")
-        if not args.username and not key:
-            raise ValueError("An application key is required.")
-        client = LibraryClient(args.port, key)
+        if args.agent_identity:
+            from .agent import AgentClient
+
+            client = AgentClient.from_identity(args.agent_identity.expanduser())
+        else:
+            key = None if args.username else environment_key or getpass.getpass("Application key: ")
+            if not args.username and not key:
+                raise ValueError("An application key is required.")
+            client = LibraryClient(args.port or 8765, key, server_url=args.server_url)
         if args.username:
             client.request("/api/sign-in", {"username": args.username, "password": getpass.getpass("Password: ")})
             password_session = client
@@ -330,7 +356,7 @@ def main():
             print(f"Saved comment {saved['comment_id']} (audience: {args.audience}).")
         else:
             print(comment)
-    except (OSError, ValueError, subprocess.SubprocessError, EOFError) as error:
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, EOFError) as error:
         parser.exit(1, f"AI review failed: {error}\n")
     finally:
         if password_session:

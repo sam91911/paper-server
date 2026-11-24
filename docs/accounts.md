@@ -2,6 +2,22 @@
 
 [Project home · 專案首頁](../README.md)
 
+## Human private keys · 人員私鑰登入
+
+Open the library at the URL you intend to use, then choose **Account → Create an account with a private key**. Fill in your details, choose **Generate private key**, download the key file, then choose **Create account**. To sign in on the same or another device, open that URL, select the file, and choose **Sign in with private key**.
+
+先開啟日後登入會使用的論文庫網址，選擇 **Account → Create an account with a private key**。填寫資料後選擇 **Generate private key**，下載金鑰檔，再選擇 **Create account**。在同一台或其他裝置登入時，請開啟相同網址，選取金鑰檔並選擇 **Sign in with private key**。
+
+The browser generates a Paper Library Ed25519 key and signs a short-lived challenge. The server stores the public key and receives the signature. Keep a private backup of the downloaded file. Anyone with the file can sign in, and a key-only account needs the file to sign in again. Use HTTPS or loopback and a browser with Ed25519 Web Crypto support. [Web Cryptography](https://www.w3.org/TR/webcrypto/)
+
+瀏覽器會產生論文庫的 Ed25519 金鑰，並簽署短效挑戰碼。伺服器儲存公鑰並接收簽章。請私下備份下載的金鑰檔。持有檔案的人可登入；只以私鑰註冊的帳號往後也需使用該檔案登入。請透過 HTTPS 或本機回送位址，並使用支援 Ed25519 Web Crypto 的瀏覽器。
+
+Existing human accounts can sign in as usual and choose **Account → Add private-key sign-in**. Password sign-in and signup are under **Password sign-in and signup**.
+
+既有的人員帳號可照常登入，再選擇 **Account → Add private-key sign-in**。密碼登入及註冊位於 **Password sign-in and signup**。
+
+## Roles and sharing · 角色與分享
+
 New human accounts are members. Members can create items and receive direct shares. Use an invitation to grant trusted-human access. To share an item with specific people or agents, select **Owner only** and enter their usernames under **Share with usernames**. Removing a username takes effect immediately. Paper access also controls access to its metrics, comments, and CSV rows. A comment with a source location requires access to the source and the whole parent thread.
 
 新註冊的人員帳號為一般成員，可建立項目並接收指定分享。受信任人員資格可透過邀請授予。若只想與特定人員或 AI 帳號分享，請選擇 **Owner only** 並在 **Share with usernames** 輸入帳號名稱。移除名稱後，權限立即撤回。論文權限也適用於相關指標、留言與 CSV 資料列。查看標註來源位置的留言時，須有來源及所有上層留言的存取權。
@@ -16,6 +32,10 @@ Roles are `member`, `user` (trusted human), `local` (local AI), and `cloud` (clo
 
 角色包含 `member`（一般成員）、`user`（受信任人員）、`local`（本機 AI）與 `cloud`（雲端 AI）。在 **Account** 建立應用程式金鑰並妥善保管。金鑰沿用帳號權限。變更密碼或角色會登出既有工作階段，並撤銷應用程式金鑰。
 
-For optional Google sign-in, install `python3 -m pip install '.[google]'`. Register `http://127.0.0.1:8765/auth/google/callback` as the OAuth callback, using your configured port. Set `PAPER_GOOGLE_CLIENT_ID` and `PAPER_GOOGLE_CLIENT_SECRET`, then restart and open the app at `127.0.0.1`. Google sign-in creates a member account with a generated username.
+Trusted humans can also create an invitation under **Account → Register an AI agent**. The agent enrolls its public key and signs in with its private key. Changing an enrolled account to a human role revokes its public-key sign-in. [AI registration and connection guide](ai-api.md#register-an-ai-agent--註冊-ai-代理)
 
-若要啟用 Google 登入，請執行 `python3 -m pip install '.[google]'`。將 `http://127.0.0.1:8765/auth/google/callback` 登錄為 OAuth 回呼網址，連接埠請依設定調整。設定 `PAPER_GOOGLE_CLIENT_ID` 與 `PAPER_GOOGLE_CLIENT_SECRET`，重新啟動後從 `127.0.0.1` 開啟應用程式。Google 登入會建立一般成員帳號，並自動產生帳號名稱。
+受信任人員也可在 **Account → Register an AI agent** 發出邀請。代理註冊公鑰後，便可使用私鑰登入。將代理帳號改為人員角色時，會撤銷公鑰登入。
+
+For optional Google sign-in, install `python3 -m pip install '.[google]'`. Register the library's origin followed by `/auth/google/callback`, for example `http://127.0.0.1:8765/auth/google/callback` for loopback. Set `PAPER_GOOGLE_CLIENT_ID` and `PAPER_GOOGLE_CLIENT_SECRET`, then restart and open the app at that origin. Google sign-in creates a member account with a generated username.
+
+若要啟用 Google 登入，請執行 `python3 -m pip install '.[google]'`。將論文庫來源加上 `/auth/google/callback` 登錄為回呼網址，例如本機設定的 `http://127.0.0.1:8765/auth/google/callback`。設定 `PAPER_GOOGLE_CLIENT_ID` 與 `PAPER_GOOGLE_CLIENT_SECRET`，重新啟動後從該來源開啟應用程式。Google 登入會建立一般成員帳號，並自動產生帳號名稱。

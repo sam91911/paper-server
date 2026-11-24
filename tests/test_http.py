@@ -5,11 +5,15 @@ import re
 import tempfile
 import unittest
 from email.message import Message
+from http.cookies import SimpleCookie
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlencode
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from paper_app import accounts, library, server
+from paper_client.agent import encode
 
 
 class HttpTests(unittest.TestCase):
@@ -29,16 +33,17 @@ class HttpTests(unittest.TestCase):
                 library.save_comment(db, paper, name, account)
                 self.papers.append(paper)
 
-    def request(self, route, auth=True, data=None):
+    def request(self, route, auth=True, data=None, *, headers=None, public_url=None):
         handler = server.Handler.__new__(server.Handler)
-        handler.server = SimpleNamespace(database=self.db, server_port=8765, google_config=None)
+        handler.server = SimpleNamespace(database=self.db, server_port=8765, google_config=None, public_url=public_url)
         handler.path = route
         handler.command = 'GET' if data is None else 'POST'
         handler.request_version = 'HTTP/1.1'
         handler.requestline = handler.command + ' ' + route + ' HTTP/1.1'
         handler.client_address = ('127.0.0.1', 1)
         handler.headers = Message()
-        handler.headers['Host'] = '127.0.0.1:8765'
+        for name, value in {'Host': '127.0.0.1:8765', **(headers or {})}.items():
+            handler.headers[name] = value
         if data is not None:
             payload = json.dumps(data).encode()
             handler.rfile = io.BytesIO(payload)
@@ -50,10 +55,62 @@ class HttpTests(unittest.TestCase):
         handler.log_request = lambda *args: None
         (handler.do_GET if data is None else handler.do_POST)()
         header, body = handler.wfile.getvalue().split(b'\r\n\r\n', 1)
+        self.response_headers = Message()
+        for line in header.decode('ascii').split('\r\n')[1:]:
+            name, value = line.split(':', 1)
+            self.response_headers[name] = value.strip()
         return int(header.split(b' ', 2)[1]), body
 
     def get(self, route, auth=True):
         return self.request(route, auth)
+
+    def test_key_signup_and_sign_in_on_public_origin(self):
+        origin = server.public_url("https://Papers.Example.org:443/")
+        public = {"Host": "papers.example.org", "Origin": origin}
+        private_key = Ed25519PrivateKey.generate()
+
+        def api(path, data=None, *, status=200, headers=public, auth=False):
+            result_status, payload = self.request(path, auth, data, headers=headers, public_url=origin)
+            self.assertEqual(result_status, status, payload)
+            return json.loads(payload)
+
+        def prove(action, *, auth=False):
+            body = api("/api/human-key/challenge", {"action": action, "username": "Reader"}, auth=auth)
+            return {"challenge": body["challenge"], "signature": encode(private_key.sign(body["message"].encode()))}
+
+        self.assertEqual(api("/api/openapi.json")["servers"], [{"url": origin}])
+        api("/api/account", headers={**public, "Origin": "https://another.example.org"}, status=403)
+        api("/api/account", headers={"Host": "unconfigured.example.org"}, status=403)
+        invitation = api("/api/ai/invitations", {"username": "reviewer", "role": "cloud"}, auth=True)
+        self.assertEqual(invitation["registration_url"], origin + invitation["registration_path"])
+        with library.connect(self.db) as db:
+            invite = accounts.create_invite(db, "reader@example.org")
+        registration = {**prove("register"), "email": "reader@example.org", "display_name": "Reader",
+                        "public_key": encode(private_key.public_key().public_bytes_raw()), "invite": invite}
+        api("/api/human-key/register", registration, headers={"Host": "127.0.0.1:8765"}, status=401)
+        account = api("/api/human-key/register", registration)["account"]
+        self.assertEqual((account["role"], account["key_only"]), ("user", True))
+        self.assertTrue(SimpleCookie(self.response_headers["Set-Cookie"])[accounts.COOKIE]["secure"])
+        api("/api/human-key/register", registration, status=401)
+        login = prove("login")
+        self.assertEqual(api("/api/human-key/login", login)["account"]["username"], "Reader")
+        api("/api/human-key/login", login, status=401)
+        api("/api/sign-in", {"username": "Reader", "password": "a random password"}, status=400)
+
+    def test_existing_human_can_attach_a_key_after_sign_in(self):
+        private_key = Ed25519PrivateKey.generate()
+        route = "/api/human-key/challenge"
+        self.assertEqual(self.request(route, False, {"action": "attach"})[0], 401)
+        status, payload = self.request(route, True, {"action": "attach"})
+        self.assertEqual(status, 200)
+        challenge = json.loads(payload)
+        proof = {"challenge": challenge["challenge"], "signature": encode(private_key.sign(challenge["message"].encode())),
+                 "public_key": encode(private_key.public_key().public_bytes_raw())}
+        self.assertEqual(self.request("/api/human-key/attach", False, proof)[0], 401)
+        status, payload = self.request("/api/human-key/attach", True, proof)
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(payload)["account"]["has_private_key"])
+        self.assertFalse(json.loads(payload)["account"]["key_only"])
 
     def test_scoped_comments_and_legacy_snapshot(self):
         status, response = self.get('/api/paper-details')
@@ -254,7 +311,7 @@ class HttpTests(unittest.TestCase):
     def test_page_scripts_are_available_in_dependency_order(self):
         status, body = self.get('/')
         self.assertEqual(status, 200)
-        scripts = ['api.js', 'metrics.js', 'library.js', 'documents.js', 'findings.js', 'goals.js', 'boot.js']
+        scripts = ['api.js', 'metrics.js', 'library.js', 'human-keys.js', 'documents.js', 'findings.js', 'goals.js', 'boot.js']
         positions = [body.index(f'/assets/{name}'.encode()) for name in scripts]
         self.assertEqual(positions, sorted(positions))
         for name in scripts:

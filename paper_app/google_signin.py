@@ -35,7 +35,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def configuration(port):
+def configuration(port, *, origin=None):
     client_id = os.environ.get("PAPER_GOOGLE_CLIENT_ID")
     secret = os.environ.get("PAPER_GOOGLE_CLIENT_SECRET")
     if not client_id and not secret:
@@ -47,7 +47,7 @@ def configuration(port):
         from google.oauth2 import id_token as _id_token
     except ImportError as error:
         raise ValueError("Install google-auth[requests] to enable Google sign-in.") from error
-    return client_id, secret, f"http://127.0.0.1:{port}/auth/google/callback"
+    return client_id, secret, f"{origin or f'http://127.0.0.1:{port}'}/auth/google/callback"
 
 
 def begin(db, config):
@@ -127,8 +127,7 @@ def account(db, claims):
         name = accounts.person_name(claims.get("name"))
     except ValueError:
         name = username
-    accounts.create_account(db, username, secrets.token_urlsafe(48), "user",
-                            display_name=name, email=email, trusted=False)
-    account_id = db.execute("SELECT id FROM accounts WHERE username=?", (username,)).fetchone()["id"]
+    account_id = accounts.create_account(db, username, secrets.token_urlsafe(48), "user",
+                                         display_name=name, email=email, trusted=False)
     db.execute("INSERT INTO google_identities VALUES (?,?)", (subject, account_id))
     return account_id

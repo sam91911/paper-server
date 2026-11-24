@@ -44,7 +44,7 @@ def media(value, content_type="application/json"):
 
 
 def operation(summary, response, *, params=(), body=None, request_type="application/json",
-              response_type="application/json", description=None):
+              response_type="application/json", description=None, security=None):
     result = {
         "summary": summary,
         "responses": {"200": {"description": "Success", **media(response, response_type)}},
@@ -59,6 +59,8 @@ def operation(summary, response, *, params=(), body=None, request_type="applicat
         result["requestBody"] = {"required": True, **media(body, request_type)}
     if description:
         result["description"] = description
+    if security is not None:
+        result["security"] = security
     return result
 
 
@@ -70,6 +72,12 @@ STRING = schema("string")
 BOOLEAN = schema("boolean")
 COUNT = schema("integer", minimum=0)
 ID = schema("integer", format="int64", minimum=1)
+AI_ROLE = enum("local", "cloud")
+AI_NONCE = schema("string", pattern="^[A-Za-z0-9_-]{43}$")
+AI_SIGNATURE = schema("string", pattern="^[A-Za-z0-9_-]{86}$",
+                      description="64-byte Ed25519 signature in unpadded base64url.")
+SIGNED_CHALLENGE = {"challenge": AI_NONCE, "signature": AI_SIGNATURE}
+PUBLIC_KEY = {**AI_NONCE, "description": "32-byte Ed25519 public key in unpadded base64url."}
 BINARY = schema("string", format="binary")
 AUDIENCE = enum(*AUDIENCES)
 RECIPIENTS = array(STRING)
@@ -110,7 +118,7 @@ SKILL_FIELDS.update(markdown=SKILL_MARKDOWN, recipients=RECIPIENTS)
 SCHEMAS = {
     "Error": obj({"error": STRING}, ("error",)),
     "Account": obj({"id": ID, "role": enum("user", "member", "local", "cloud"), "username": STRING,
-                    "display_name": STRING}, ("id", "role", "username")),
+                    "display_name": STRING, "has_private_key": BOOLEAN, "key_only": BOOLEAN}, ("id", "role", "username")),
     "Paper": obj({"id": ID, "path": STRING, **METADATA, "owner_id": nullable(ID),
                   "audience": nullable(AUDIENCE), "has_pdf": schema("integer", enum=[0, 1]),
                   "recipients": RECIPIENTS}, ("id", "path", "title")),
@@ -168,6 +176,49 @@ METRIC_HISTORY = obj({
 }, ("original", "corrections", "next_before"))
 CROSSREF = array(obj({**METADATA, "short_venue": STRING, "venue_group": STRING}))
 PATHS = {
+    "/api/human-key/challenge": {"post": operation("Request a one-time human sign-in or enrollment challenge",
+        obj({"challenge": AI_NONCE, "message": STRING, "expires_in": COUNT}, ("challenge", "message", "expires_in")),
+        body=obj({"action": enum("register", "login", "attach"), "username": STRING}, ("action",)),
+        description="Sign the exact returned message as UTF-8. Supply username for register or login. "
+                    "Attaching a key requires a browser session. Challenges expire after two minutes.",
+        security=[{}, {"BrowserSession": []}])},
+    "/api/human-key/register": {"post": operation("Create a human account with a signed challenge",
+        obj({"account": ref("Account")}, ("account",)),
+        body=obj({**SIGNED_CHALLENGE, "public_key": PUBLIC_KEY, "email": STRING, "display_name": STRING, "invite": STRING},
+                 ("challenge", "signature", "public_key", "email", "display_name")),
+        description="Use a register challenge. A successful request begins a browser session.", security=[])},
+    "/api/human-key/login": {"post": operation("Start a human browser session with a signed challenge",
+        obj({"account": ref("Account")}, ("account",)),
+        body=obj(SIGNED_CHALLENGE, ("challenge", "signature")), security=[])},
+    "/api/human-key/attach": {"post": operation("Add a public key to the signed-in human account",
+        obj({"account": ref("Account")}, ("account",)),
+        body=obj({**SIGNED_CHALLENGE, "public_key": PUBLIC_KEY}, ("challenge", "signature", "public_key")),
+        description="Use an attach challenge from the same account.", security=[{"BrowserSession": []}])},
+    "/api/ai/invitations": {"post": operation("Create a one-time registration URL for an AI account",
+        acknowledgement("registration_path", "registration_url", "username", "role", "expires_in",
+                        registration_path=STRING, registration_url=schema("string", format="uri"),
+                        username=STRING, role=AI_ROLE, expires_in=COUNT),
+        body=obj({"username": STRING, "role": AI_ROLE}, ("username", "role")),
+        description="Requires a trusted human account. The URL expires in 15 minutes.",
+        security=[{"ApplicationKey": []}, {"BrowserSession": []}])},
+    "/api/ai/register/{token}": {"post": operation("Enroll an AI account with its public key",
+        acknowledgement("account", account=ref("Account")),
+        params=(param("token", AI_NONCE, location="path", required=True),),
+        body=obj({"public_key": PUBLIC_KEY,
+                  "signature": AI_SIGNATURE}, ("public_key", "signature")), security=[],
+        description="Sign the ASCII string paper-library:register:<invited username>:/api/ai/register/<token>."
+                    " A successful request consumes the invitation.")},
+    "/api/ai/challenge": {"post": operation("Request a one-time AI sign-in challenge",
+        acknowledgement("challenge", "username", "expires_in", challenge=AI_NONCE, username=STRING, expires_in=COUNT),
+        body=obj({"username": STRING}, ("username",)), security=[],
+        description="Use the returned username in the signature. The challenge expires in two minutes.")},
+    "/api/ai/login": {"post": operation("Exchange a signed AI challenge for an access token",
+        acknowledgement("access_token", "token_type", "expires_in",
+                        access_token=STRING, token_type=enum("Bearer"), expires_in=COUNT),
+        body=obj({"username": STRING, "challenge": AI_NONCE, "signature": AI_SIGNATURE},
+                 ("username", "challenge", "signature")), security=[],
+        description="Sign the ASCII string paper-library:login:<username>:<challenge>."
+                    " The access token expires in 15 minutes.")},
     "/api/account": {"get": operation("Check the current account",
         obj({"account": nullable(ref("Account")), "google_available": BOOLEAN}, ("account",)))},
     "/api/paper-catalog": {"get": operation("Search the library's visible papers",
@@ -344,15 +395,17 @@ PATHS = {
 }
 
 
-def document(port):
+def document(port, public_url=None):
     return {
         "openapi": "3.1.0",
         "info": {"title": "Paper Library API", "version": "1.0.0",
                  "description": "Shared HTTP interface for Local AI and Cloud AI workstation clients."},
-        "servers": [{"url": f"http://127.0.0.1:{port}"}],
+        "servers": [{"url": public_url or f"http://127.0.0.1:{port}"}],
         "security": [{"ApplicationKey": []}],
         "paths": PATHS,
         "components": {"schemas": SCHEMAS, "securitySchemes": {
-            "ApplicationKey": {"type": "http", "scheme": "bearer", "description": "Application key issued by the library."},
+            "ApplicationKey": {"type": "http", "scheme": "bearer",
+                               "description": "Library application key or short-lived AI access token."},
+            "BrowserSession": {"type": "apiKey", "in": "cookie", "name": "paper_session"},
         }},
     }
