@@ -197,6 +197,25 @@ class PostgreSQLTests(unittest.TestCase):
         self.assertEqual(self.api(f"/api/document?id={document_id}", key=cloud)["document"]["markdown"], "Notes")
         owner_doc = self.api("/api/documents", cookie=cookie,
                              data={"title": "Workspace", "markdown": "Baseline", "audience": "all"})["document_id"]
+        self.api("/api/documents", cookie=cookie, data={
+            "document_id": owner_doc, "revision": 1, "title": "Workspace", "markdown": "Updated baseline",
+        })
+        with library.connect(self.target) as db:
+            self.assertEqual([row[0] for row in db.execute(
+                "SELECT markdown FROM document_versions WHERE document_id=? ORDER BY revision", (owner_doc,),
+            )], ["Baseline", "Updated baseline"])
+        discussion = self.api("/api/discussions", cookie=cookie, data={
+            "title": "Discussion", "markdown": "Talk", "audience": "local", "scheduled_at": 1893456000,
+        })["document_id"]
+        self.assertEqual(self.api("/api/thread-votes", key=local, data={
+            "document_id": discussion, "vote": -1,
+        })["vote_score"], -1)
+        comment = self.api("/api/comments", key=local, data={
+            "document_id": discussion, "body": "Schedule", "audience": "local", "scheduled_at": 1893456001,
+        })["comment_id"]
+        self.api("/api/thread-votes", cookie=cookie, data={"document_id": discussion, "comment_id": comment, "vote": 1})
+        self.assertEqual(self.api("/api/discussions", key=local)["documents"][0]["my_vote"], -1)
+        self.assertEqual(self.api(f"/api/document-comments?document_id={discussion}", key=local)["comments"][0]["vote_score"], 1)
         queued = self.api("/api/reviews", cookie=cookie, data={
             "action": "create", "kind": "document", "target_id": owner_doc, "agent": "local-agent",
             "agent_role": "local", "post": True,
@@ -208,7 +227,7 @@ class PostgreSQLTests(unittest.TestCase):
         self.assertEqual(self.api(f"/api/reviews?id={queued['id']}", cookie=cookie)["review"], result)
         self.assertIsNotNone(result["comment_id"])
         finding = self.api("/api/research-findings", key=local, data={"document_id": owner_doc, "statement": "Control",
-                          "evidence": [{"kind": "document", "id": owner_doc, "start": 1, "end": 1, "revision": 1}]})["id"]
+                          "evidence": [{"kind": "document", "id": owner_doc, "start": 1, "end": 1, "revision": 2}]})["id"]
         goal = self.api("/api/research-goals", key=local, data={"action": "propose", "document_id": owner_doc,
                         "question": "Test it?", "rationale": "Useful", "uncertainty": "Precision", "evidence_ids": [finding]})
         rank = {"action": "rank", "document_id": owner_doc, "goal_id": goal["id"], "revision": 1,

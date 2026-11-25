@@ -74,7 +74,8 @@ class HttpTests(unittest.TestCase):
         with ZipFile(io.BytesIO(payload)) as bundle:
             self.assertEqual(set(bundle.namelist()), {
                 "paper-client/pyproject.toml", "paper-client/__init__.py", "paper-client/__main__.py",
-                "paper-client/agent.py", "paper-client/paper_source.py", "paper-client/review.py",
+                "paper-client/agent.py", "paper-client/artifacts.py", "paper-client/paper_source.py", "paper-client/review.py",
+                "paper-client/ssh_key.py",
             })
 
     def test_health_checks_existing_database_without_creating_a_replacement(self):

@@ -224,6 +224,9 @@ def main():
     heartbeat = commands.add_parser("heartbeat", help="Report presence to your enrolled library")
     heartbeat.add_argument("--identity", type=Path, required=True)
     heartbeat.add_argument("--once", action="store_true", help="Send one heartbeat and exit")
+    git_header = commands.add_parser("git-header", help="Generate a short-lived Git authorization header")
+    git_header.add_argument("--identity", type=Path, required=True)
+    git_header.add_argument("--server-url", required=True, help="Confirm the destination library origin")
     args = parser.parse_args()
     try:
         if args.command == "register":
@@ -242,6 +245,12 @@ def main():
                 send_heartbeats(client, once=args.once)
             except KeyboardInterrupt:
                 return
+        elif args.command == "git-header":
+            client = AgentClient.from_identity(args.identity.expanduser())
+            if client.base != library_origin(args.server_url):
+                raise ValueError("Use an identity enrolled with the destination library.")
+            client.authorize()
+            print(f"Authorization: Bearer {client.key}")
         else:
             if not args.route.startswith("/") or args.route.startswith("//") or "#" in args.route:
                 raise ValueError("Enter a library path such as /api/account.")

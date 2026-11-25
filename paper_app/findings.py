@@ -33,7 +33,7 @@ def positive_id(value):
 
 def require_document(db, account, document_id):
     document = sharing.document_for(db, account, positive_id(document_id))
-    if document is None:
+    if document is None or document["kind"] != "document":
         raise sharing.AccessDenied
     return document
 

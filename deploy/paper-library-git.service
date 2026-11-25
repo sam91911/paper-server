@@ -1,0 +1,16 @@
+[Unit]
+Description=Paper Library Git-only SSH
+After=network.target
+
+[Service]
+Type=simple
+RuntimeDirectory=sshd
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ExecStartPre=/usr/sbin/sshd -t -f /etc/ssh/sshd_config_paper_library
+ExecStart=/usr/sbin/sshd -D -e -f /etc/ssh/sshd_config_paper_library
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target

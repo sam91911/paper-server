@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS metrics (
 );
 """
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS git_repository_state (
+    kind TEXT NOT NULL CHECK(kind IN ('documents','experiments')),
+    resource_id INTEGER NOT NULL, base_revision INTEGER NOT NULL,
+    head TEXT NOT NULL, pack BLOB NOT NULL, PRIMARY KEY(kind,resource_id)
+);
 CREATE TABLE IF NOT EXISTS papers (
     id INTEGER PRIMARY KEY, path TEXT NOT NULL, sha256 TEXT UNIQUE,
     doi TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '',
@@ -147,6 +152,7 @@ def initialize(path):
             ("experiment_runs", "reproduction", "TEXT NOT NULL DEFAULT '{}'"),
             ("comments", "finding_id", "INTEGER REFERENCES research_findings(id)"),
             ("comments", "goal_id", "INTEGER REFERENCES research_goals(id)"),
+            ("comments", "scheduled_at", "INTEGER"),
             ("research_goals", "audience", goals.AUDIENCE_COLUMN),
         ):
             if name not in {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}:
@@ -175,7 +181,8 @@ def require_upload_space(db, limit, additional_bytes):
         return
     used = db.execute(
         "SELECT COALESCE((SELECT SUM(pdf_size) FROM papers),0) "
-        "+ COALESCE((SELECT SUM(length(content)) FROM research_versions),0)"
+        "+ COALESCE((SELECT SUM(length(content)) FROM research_versions),0) "
+        "+ COALESCE((SELECT SUM(length(pack)) FROM git_repository_state),0)"
     ).fetchone()[0]
     # Libraries created before size tracking already have PDF files on disk.
     for (path,) in db.execute("SELECT path FROM papers WHERE sha256 IS NOT NULL AND pdf_size IS NULL"):
@@ -409,6 +416,9 @@ def paper_archive(db, account):
 
 
 def snapshot(db, view="library", account=None, *, include_comments=True, document_summaries=False):
+    if view == "discussions":
+        return {"account": account, "documents": sharing.documents_for(db, account, summaries=True, discussion_only=True),
+                "papers": [], "comments": []}
     def rows(query):
         return [dict(row) for row in db.execute(sharing.PAPER_SCOPE + query, sharing.viewer_params(account))]
 
@@ -461,11 +471,12 @@ def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id
     if documents:
         finding_ids = [item["id"] for item in findings.visible(db, account, document_id, discussions_only=True)]
         goal_ids = goals.discussion_ids(db, account, document_id)
-    root_scope = (
-        "c.document_id IN (SELECT id FROM visible_documents)" if documents else
-        "c.paper_id IN (SELECT id FROM visible_papers) "
-        "AND c.paper_id NOT IN (SELECT paper_id FROM archived_papers)"
-    )
+    if documents:
+        document_scope = " WHERE kind='document'" if document_id is None else ""
+        root_scope = f"c.document_id IN (SELECT id FROM visible_documents{document_scope})"
+    else:
+        root_scope = ("c.paper_id IN (SELECT id FROM visible_papers) "
+                      "AND c.paper_id NOT IN (SELECT paper_id FROM archived_papers)")
     if paper_id is not None:
         root_scope += " AND c.paper_id=:paper_filter"
     if document_id is not None:
@@ -491,7 +502,7 @@ def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id
         )
         SELECT c.*, a.account_id AS author_id, a.kind AS author_kind,
                COALESCE(NULLIF(u.display_name,''),u.username) AS author_name,
-               {accounts.ROLE_SQL.format(alias="u")} AS author_role
+               {accounts.ROLE_SQL.format(alias="u")} AS author_role, {sharing.vote_columns("comment", "c.id")}
         FROM visible_comments c LEFT JOIN comment_authors a ON a.comment_id=c.id
         LEFT JOIN accounts u ON a.account_id=u.id ORDER BY c.id
         """,
@@ -505,7 +516,8 @@ def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id
             comment.pop("recipients", None)
             comment.pop("can_manage", None)
             comment.update(author_id=None, author_kind=None, author_name=None, author_role=None,
-                           target_kind=None, target_id=None, target_position=None)
+                           target_kind=None, target_id=None, target_position=None, scheduled_at=None,
+                           vote_score=0, my_vote=0)
     return items
 
 
@@ -559,7 +571,7 @@ def comment_target(db, account, location):
             raise sharing.AccessDenied
     else:
         doc = sharing.document_for(db, account, target_id)
-        if doc is None:
+        if doc is None or doc["kind"] != "document":
             raise sharing.AccessDenied
         if position > doc["markdown"].count("\n") + 1:
             raise ValueError("This document has no such line.")
@@ -590,7 +602,7 @@ def can_reply(db, paper_id, parent_id, account, document_id=None):
 
 def save_comment(db, paper_id, body, account, comment_id=None, kind="user",
                  parent_id=None, doi_refs=None, audience=None, location=None, recipients=None, document_id=None,
-                 finding_id=None, goal_id=None):
+                 finding_id=None, goal_id=None, scheduled_at=sharing.UNSET):
     account_id = account["id"]
     if account["role"] in ("local", "cloud"):
         kind = "ai"
@@ -601,6 +613,10 @@ def save_comment(db, paper_id, body, account, comment_id=None, kind="user",
         raise ValueError("Enter a comment of up to 20,000 characters")
     if comment_id is not None and location is not None:
         raise ValueError("The location of a posted comment is fixed.")
+    if scheduled_at is not sharing.UNSET:
+        scheduled_at = sharing.schedule_value(scheduled_at)
+        if parent_id is not None:
+            raise ValueError("Schedule the thread rather than a reply.")
     if finding_id is not None or goal_id is not None:
         if document_id is None or comment_id is not None or parent_id is not None:
             raise ValueError("Start a new document thread to discuss a finding or goal.")
@@ -634,6 +650,10 @@ def save_comment(db, paper_id, body, account, comment_id=None, kind="user",
     ).rowcount == 0:
         raise accounts.CommentAccessDenied
     sharing.set_recipients(db, "comment", comment_id, recipients)
+    if scheduled_at is not sharing.UNSET:
+        if not db.execute("UPDATE comments SET scheduled_at=? WHERE id=? AND parent_id IS NULL",
+                          (scheduled_at, comment_id)).rowcount:
+            raise ValueError("Schedule the thread rather than a reply.")
     return comment_id
 
 

@@ -355,6 +355,10 @@ function renderExperiment(result) {
     editRun();
   }
   $("experiment-title").textContent = `${experiment.title} (#${experiment.id}, revision ${experiment.revision})`;
+  const sourceCommit = $("experiment-source-commit");
+  sourceCommit.hidden = !experiment.source_commit;
+  sourceCommit.textContent = experiment.source_commit ? `Git source commit ${experiment.source_commit.slice(0, 12)}` : "";
+  sourceCommit.title = experiment.source_commit || "";
   $("experiment-description").textContent = experiment.description;
   experimentRevision = experiment.revision;
   const workspace = $("experiment-workspace");
@@ -519,6 +523,12 @@ picker.addEventListener("change", () => {
 });
 
 retryButton.addEventListener("click", () => retryLoad?.());
+$("clone-experiment").addEventListener("click", () => {
+  if (displayedExperimentId !== null) copyCloneCommand("experiments", displayedExperimentId, $("status"));
+});
+$("clone-experiment-source").addEventListener("click", () => {
+  if (displayedExperimentId !== null) copyCloneCommand("experiments", displayedExperimentId, $("status"), "source");
+});
 $("cancel-run-edit").addEventListener("click", () => editRun());
 
 submit(experimentForm, fields => api("experiments", {

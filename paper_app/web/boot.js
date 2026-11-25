@@ -5,6 +5,7 @@ element("account-page").hidden = !accountPage;
 element("markdown-documents").hidden = !documentsPage;
 const [page, title] = papersPage ? ["papers", "Papers"]
   : newsPage ? ["news", "News"]
+  : discussionPage ? ["discussions", "Discussions"]
   : documentsPage ? ["documents", "Markdown documents"]
   : accountPage ? ["account", "Account"]
   : ["compare", "Compare metrics"];
@@ -13,6 +14,7 @@ element("page-title").textContent = title;
 element("page-description").textContent = {
   papers: "Browse your library, read PDFs, and discuss the evidence.",
   news: "Share news sources, discuss what changed, and propose research directions.",
+  discussions: "Start a discussion or join an existing thread.",
   documents: "Write research notes and connect findings to their sources.",
   account: "Manage sign-in keys, invitations, and connected agents.",
   compare: "Compare measurements across papers, units, and experimental conditions.",

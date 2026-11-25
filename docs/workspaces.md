@@ -81,6 +81,6 @@ sudo -u paper-alpha /opt/paper-library/.venv/bin/python -m paper_app.server \
   --database /var/lib/paper-library-alpha/papers.sqlite3 --revoke-human colleague
 ```
 
-The upload quota counts PDF bytes and every uploaded artifact version. An upload that would exceed it returns HTTP 413. Set `PAPER_STORAGE_QUOTA_MIB=0` for unlimited uploads. Monitor the underlying database, temporary space, and logs separately. Keep a separate backup for each workspace and verify each restore on an isolated host or state directory.
+The storage quota counts PDF bytes, uploaded artifact versions, and stored Git packs. An upload that would exceed it returns HTTP 413. Git reports a rejected push with the quota reason. Set `PAPER_STORAGE_QUOTA_MIB=0` to disable the workspace quota. Monitor the underlying database, temporary space, and logs separately. Keep a separate backup for each workspace and verify each restore on an isolated host or state directory.
 
-上傳配額計算 PDF 及所有已上傳產出版本的位元組。超過配額的上傳會收到 HTTP 413。將 `PAPER_STORAGE_QUOTA_MIB` 設為 0 可解除上傳配額。請另行監控資料庫、暫存空間及日誌，並為各工作區分別備份與驗證還原。
+儲存配額計算 PDF、所有已上傳產出版本及已儲存的 Git 壓縮資料。超過配額的上傳會收到 HTTP 413，Git 推送則會顯示拒絕原因。將 `PAPER_STORAGE_QUOTA_MIB` 設為 0 可解除工作區配額。請另行監控資料庫、暫存空間及日誌，並為各工作區分別備份與驗證還原。

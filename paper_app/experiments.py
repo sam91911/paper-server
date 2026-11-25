@@ -100,8 +100,10 @@ def _audience_allows(audience, role):
 
 def require_experiment(db, experiment_id, account, *, edit=False):
     row = db.execute("""
-        SELECT e.*, b.id AS goal_brief_id FROM experiments e
-        LEFT JOIN research_goal_briefs b ON b.experiment_id=e.id WHERE e.id=?
+        SELECT e.*, b.id AS goal_brief_id, git.head AS source_commit FROM experiments e
+        LEFT JOIN research_goal_briefs b ON b.experiment_id=e.id
+        LEFT JOIN git_repository_state git ON git.kind='experiments' AND git.resource_id=e.id
+        WHERE e.id=?
     """, (experiment_id,)).fetchone()
     if not row or not account:
         raise sharing.AccessDenied
@@ -207,7 +209,8 @@ def save_experiment(db, account, data):
     if 'research_document_id' in data and document_id is not None:
         if type(document_id) is not int or not 0 < document_id < 2**63:
             raise ValueError('Choose a research document.')
-        if not sharing.document_for(db, account, document_id):
+        document = sharing.document_for(db, account, document_id)
+        if not document or document["kind"] != "document":
             raise sharing.AccessDenied
     if item_id is None:
         item_id = db.execute(
@@ -378,9 +381,10 @@ def visible_experiments(db, account, document_id=None):
     grants = _read_grants(db, 'experiment', account)
     rows = db.execute(sharing.PAPER_SCOPE + f'''
         SELECT e.*, {sharing.owner_sql('e.owner_id')} AS owned,
-               d.id AS visible_document, b.id AS goal_brief_id FROM experiments e
+               d.id AS visible_document, b.id AS goal_brief_id, git.head AS source_commit FROM experiments e
         LEFT JOIN visible_documents d ON d.id=e.research_document_id
         LEFT JOIN research_goal_briefs b ON b.experiment_id=e.id
+        LEFT JOIN git_repository_state git ON git.kind='experiments' AND git.resource_id=e.id
         WHERE (:document IS NULL OR d.id=:document) ORDER BY e.id DESC
     ''', sharing.viewer_params(account, document=document_id))
     results = []

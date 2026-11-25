@@ -74,6 +74,10 @@ STRING = schema("string")
 BOOLEAN = schema("boolean")
 COUNT = schema("integer", minimum=0)
 ID = schema("integer", format="int64", minimum=1)
+SCHEDULE_TIME = nullable(schema("integer", minimum=0, maximum=253402300799,
+                                description="Scheduled time in UTC seconds since the Unix epoch."))
+VOTE = schema("integer", enum=[-1, 0, 1])
+VOTE_FIELDS = {"vote_score": schema("integer"), "my_vote": VOTE}
 AI_ROLE = enum("local", "cloud")
 AI_NONCE = schema("string", pattern="^[A-Za-z0-9_-]{43}$")
 AI_SIGNATURE = schema("string", pattern="^[A-Za-z0-9_-]{86}$",
@@ -99,6 +103,7 @@ METADATA = {field: STRING for field in ("doi", "title", "authors", "year", "venu
 EXPERIMENT_FIELDS = {
     "id": ID, "revision": ID, "title": STRING, "description": STRING, "audience": AUDIENCE,
     "paper_id": nullable(ID), "research_document_id": nullable(ID),
+    "source_commit": {**nullable(STRING), "readOnly": True},
 }
 REPRODUCTION_OUTCOME = enum(*experiments.REPRODUCTION_OUTCOMES)
 REPRODUCTION_CHECK = {"run_revision": ID, "outcome": REPRODUCTION_OUTCOME,
@@ -153,13 +158,15 @@ SCHEMAS = {
                   "audience": nullable(AUDIENCE), "has_pdf": schema("integer", enum=[0, 1]),
                   "recipients": RECIPIENTS, "can_manage": BOOLEAN}, ("id", "path", "title")),
     "Document": obj({"id": ID, "owner_id": ID, "title": STRING, "markdown": STRING, "audience": AUDIENCE,
-                     "source_url": STRING,
+                     "source_url": STRING, "kind": enum("document", "discussion"), "scheduled_at": SCHEDULE_TIME,
+                     **VOTE_FIELDS,
                      "revision": ID, "recipients": RECIPIENTS, "can_manage": BOOLEAN}, ("id", "title", "revision")),
     "Comment": obj({
         "id": ID, "paper_id": nullable(ID), "document_id": nullable(ID), "parent_id": nullable(ID),
         "body": STRING, "audience": nullable(AUDIENCE), "author_id": nullable(ID), "author_name": nullable(STRING),
         "author_kind": nullable(enum("user", "ai")), "deleted": COUNT, "finding_id": nullable(ID),
         "goal_id": nullable(ID), "doi_refs": array(STRING), "can_manage": BOOLEAN,
+        "scheduled_at": SCHEDULE_TIME, **VOTE_FIELDS,
     }, ("id", "body")),
     "Evidence": {"oneOf": [
         obj({"kind": enum("pdf"), "id": ID, "page": ID}, ("kind", "id", "page")),
@@ -420,6 +427,14 @@ PATHS = {
     "/api/news": {"get": operation("List visible news entries",
         obj({"documents": array(ref("Document")), "papers": array(ref("Paper")), "account": nullable(ref("Account"))},
             ("documents",)), description="Use /api/document to read the notes and /api/document-comments for the discussion.")},
+    "/api/discussions": {
+        "get": operation("List standalone discussion threads", obj({"documents": array(ref("Document"))}, ("documents",))),
+        "post": operation("Create or update a standalone discussion thread",
+            acknowledgement("document_id", "revision", document_id=ID, revision=ID),
+            body=obj({"document_id": ID, "revision": ID, "title": STRING, "markdown": STRING,
+                      "audience": AUDIENCE, "recipients": RECIPIENTS, "scheduled_at": SCHEDULE_TIME},
+                      ("title", "markdown"))),
+    },
     "/api/document": {"get": operation("Read a visible document", obj({"document": ref("Document")}, ("document",)),
         params=(param("id", ID, required=True),))},
     "/api/document-comments": {"get": operation("Read visible document discussion", COMMENTS_PAGE, params=(DOCUMENT_ID, BEFORE))},
@@ -427,11 +442,16 @@ PATHS = {
     "/api/comments": {"post": operation("Post, reply to, or edit a comment", acknowledgement("comment_id", comment_id=ID),
         body=obj({"paper_id": ID, "document_id": ID, "comment_id": ID, "parent_id": ID, "finding_id": ID, "goal_id": ID,
                   "body": STRING, "audience": AUDIENCE, "recipients": RECIPIENTS, "doi_refs": array(STRING),
+                  "scheduled_at": SCHEDULE_TIME,
                   "location": obj({"kind": enum("pdf", "document"), "id": ID, "position": ID}, ("kind", "id", "position"))},
                  ("body",)), description="Choose exactly one of paper_id and document_id.")},
     "/api/delete-comment": {"post": operation("Delete a comment you authored", acknowledgement(),
         body=obj({"paper_id": ID, "document_id": ID, "comment_id": ID}, ("comment_id",)),
         description="Choose exactly one of paper_id and document_id.")},
+    "/api/thread-votes": {"post": operation("Set or clear a vote on a visible discussion or comment",
+        acknowledgement(*VOTE_FIELDS, **VOTE_FIELDS),
+        body=obj({"paper_id": ID, "document_id": ID, "comment_id": ID, "vote": VOTE}, ("vote",)),
+        description="Choose a paper or document. Include comment_id to vote on a comment. A vote of zero clears your vote.")},
     "/api/research-findings": {
         "get": operation("List or compare visible findings",
             {"oneOf": [obj({"findings": array(ref("Finding")), "experiments": array(obj({"id": ID, "title": STRING}))},

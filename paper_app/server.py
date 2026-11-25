@@ -24,7 +24,7 @@ from time import perf_counter
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
-from . import supervisor
+from . import git_repos, supervisor
 from . import account_routes, accounts, admin_console, agent_goals, ai_accounts, client_distribution, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
@@ -36,6 +36,7 @@ ASSETS = {
     "/account": PAGE,
     "/documents": PAGE,
     "/news": PAGE,
+    "/discussions": PAGE,
     "/agent-goals": ("agent-goals.html", "text/html; charset=utf-8"),
     "/assets/agent-goals.js": ("agent-goals.js", "text/javascript; charset=utf-8"),
     "/skills": ("skills.html", "text/html; charset=utf-8"),
@@ -256,7 +257,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         url = urlsplit(self.path)
         route = url.path
-        if route in ("/auth/google", "/auth/google/callback"):
+        if match := git_repos.ROUTE.fullmatch(route):
+            git_repos.serve(self, url, match)
+        elif route in ("/auth/google", "/auth/google/callback"):
             self.google_login(url)
         elif route == "/api/health":
             self.read_health()
@@ -420,7 +423,8 @@ class Handler(BaseHTTPRequestHandler):
             except storage.ERRORS as error:
                 LOG.error("Database read failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read the library database"})
-        elif route in ("/api/library", "/api/compare", "/api/paper-details", "/api/account", "/api/documents", "/api/news"):
+        elif route in ("/api/library", "/api/compare", "/api/paper-details", "/api/account",
+                       "/api/documents", "/api/news", "/api/discussions"):
             try:
                 with library.connect(self.server.database) as db:
                     storage.begin(db)
@@ -432,7 +436,7 @@ class Handler(BaseHTTPRequestHandler):
                             data["keys"] = accounts.list_keys(db, account["id"])
                             if account["role"] in ("user", "member"):
                                 data["sign_in_keys"] = human_keys.list_keys(db, account["id"])
-                    elif route in ("/api/documents", "/api/news"):
+                    elif route in ("/api/documents", "/api/news", "/api/discussions"):
                         data = library.snapshot(db, view=route.rsplit("/", 1)[-1], account=account,
                                                 include_comments=parse_qs(url.query).get("comments") != ["none"],
                                                 document_summaries=parse_qs(url.query).get("content") == ["summary"])
@@ -628,6 +632,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.origin_allowed():
             self.send_json(403, {"error": "Library origin required"})
+            return
+        if self.path.startswith("/git/"):
+            url = urlsplit(self.path)
+            if match := git_repos.ROUTE.fullmatch(url.path):
+                git_repos.serve(self, url, match)
+            else:
+                self.send_json(404, {"error": "Repository unavailable."})
             return
         if self.path == "/api/papers":
             self.upload_pdf()
@@ -852,9 +863,9 @@ class Handler(BaseHTTPRequestHandler):
             self.require_human(db)
             library.create_group(db, data.get("name"))
             return
-        if self.path == "/api/documents":
+        if self.path in ("/api/documents", "/api/discussions"):
             return document_routes.save(self, db, data)
-        if self.path in ("/api/comments", "/api/delete-comment"):
+        if self.path in ("/api/comments", "/api/delete-comment", "/api/thread-votes"):
             return comment_routes.update_comment(self, db, data)
         if self.path not in ("/api/paper-access", "/api/metadata", "/api/memberships", "/api/archive-paper",
                              "/api/paper-metrics", "/api/metric-editors", "/api/claim-paper"):
@@ -942,7 +953,7 @@ def main():
                         help="Public HTTPS origin served through a local reverse proxy")
     parser.add_argument("--invite-only", action="store_true", help="Require an invitation for new workspace accounts")
     parser.add_argument("--storage-quota-mib", type=int, default=os.getenv("PAPER_STORAGE_QUOTA_MIB", "0"),
-                        help="Combined workspace quota for uploaded PDFs and artifact versions (0 disables it)")
+                        help="Combined workspace quota for PDFs, artifact versions, and Git packs (0 disables it)")
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--interactive", action="store_true", help="Run the server with an admin console on stdin")
     modes.add_argument("--reloadable", action="store_true", help="Replace the HTTP worker on SIGHUP (POSIX)")

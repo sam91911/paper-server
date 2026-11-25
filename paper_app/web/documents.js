@@ -6,6 +6,8 @@ const documentFile = element("document-file");
 const documentStatus = element("document-status");
 const documentPreview = element("document-preview");
 const newsWorkspace = globalThis.location?.pathname === "/news";
+const discussionWorkspace = globalThis.location?.pathname === "/discussions";
+const feedWorkspace = newsWorkspace || discussionWorkspace;
 let editingDocument;
 let editingRevision;
 let documentParent = null;
@@ -26,11 +28,13 @@ function setDocumentReply(comment, findingId = null, goalId = null) {
     : goalId !== null ? `Discussing goal #${goalId}` : findingId === null ? "" : `Discussing finding #${findingId}`;
   element("cancel-document-reply").hidden = context.hidden;
   element("post-document-comment").textContent = comment ? "Post reply" : "Add comment";
+  element("document-thread-schedule").hidden = Boolean(comment);
 }
 
 function renderDocumentComments(item) {
   element("document-discussion").hidden = !item;
   if (!item) return;
+  if (discussionWorkspace) element("document-discussion").open = true;
   const comments = libraryData.comments.filter(comment => comment.document_id === item.id);
   if (documentParent !== null && !comments.some(comment => comment.id === documentParent && !comment.deleted)) setDocumentReply(null);
   renderComments(element("document-comments"), element("document-comment-summary"), comments,
@@ -91,6 +95,7 @@ submit(documentCommentForm, async () => {
     recipients: recipientNames(fields.recipients.value), parent_id: documentParent,
     finding_id: documentFinding ?? undefined,
     goal_id: documentGoal ?? undefined,
+    scheduled_at: documentParent === null ? scheduledTime(fields.scheduled_at) : undefined,
     location: Number.isSafeInteger(line) ? { kind: "document", id: item.id, position: line } : null,
   });
   if (selectedDocument()?.id === item.id) {
@@ -105,16 +110,31 @@ function selectedDocument() {
   return libraryData.documents.find(item => item.id === Number(documentPicker.value));
 }
 
-function renderNewsFeed(item) {
+function renderDocumentFeed(item) {
   const list = element("news-list");
   list.replaceChildren();
-  if (!libraryData.documents.length) add(list, "li", "No news has been shared with you yet.");
-  for (const entry of libraryData.documents) {
+  if (!libraryData.documents.length) add(list, "li", discussionWorkspace ? "No discussions yet." : "No news has been shared with you yet.");
+  const entries = [...libraryData.documents];
+  if (discussionWorkspace && element("discussion-sort").value === "top") {
+    entries.sort((a, b) => b.vote_score - a.vote_score || b.id - a.id);
+  }
+  for (const entry of entries) {
     const row = add(list, "li");
     const link = add(row, "a", entry.title);
-    link.href = `/news?document=${entry.id}`;
+    link.href = `${location.pathname}?document=${entry.id}`;
     if (entry.id === item?.id) link.setAttribute("aria-current", "true");
-    add(row, "p", `Shared by ${entry.owner_name} · ${entry.updated} UTC`);
+    add(row, "p", `Shared by ${entry.owner_name} · ${entry.updated} UTC${discussionWorkspace ? ` · Score ${entry.vote_score}` : ""}`);
+    if (discussionWorkspace) showSchedule(row, entry.scheduled_at);
+  }
+}
+
+function renderDiscussionMeta(item) {
+  const meta = element("discussion-meta");
+  meta.hidden = !item;
+  meta.replaceChildren();
+  if (item) {
+    showSchedule(meta, item.scheduled_at);
+    voteControls(meta, item, {document_id: item.id}, documentStatus, () => renderDocumentFeed(item));
   }
 }
 
@@ -208,28 +228,31 @@ async function openRequestedDocument() {
       marker.scrollIntoView({ block: "center" });
     }
   }
-  if (requested.has("research") || requested.has("finding")) {
+  if (!discussionWorkspace && (requested.has("research") || requested.has("finding"))) {
     await globalThis.showRequestedResearch?.(requested.get("finding"));
   }
-  if (requested.has("goal")) await globalThis.showRequestedGoal?.(requested.get("goal"));
+  if (!discussionWorkspace && requested.has("goal")) await globalThis.showRequestedGoal?.(requested.get("goal"));
 }
 
-function openDocument(item, { create = false } = {}) {
+function openDocument(item, { create = false, edit = false } = {}) {
   editingDocument = item?.id ?? (create ? "new" : undefined);
   editingRevision = item?.revision;
   documentCommentForm.reset();
   setDocumentReply(null);
-  globalThis.selectResearchDocument?.(item);
-  globalThis.selectGoalDocument?.(item);
-  element("review-document").hidden = !item;
+  globalThis.selectResearchDocument?.(discussionWorkspace ? null : item);
+  globalThis.selectGoalDocument?.(discussionWorkspace ? null : item);
+  element("review-document").hidden = !item || discussionWorkspace;
   renderDocumentComments(item);
-  const canEdit = create || (item && (item.can_manage || item.owner_id === libraryData.account?.id));
+  const owns = item && (item.can_manage || item.owner_id === libraryData.account?.id);
+  const canEdit = create || (owns && (!discussionWorkspace || edit));
+  element("edit-discussion").hidden = !(discussionWorkspace && owns && !edit);
   documentEditor.hidden = !canEdit;
   element("document-layout").classList.toggle("is-editing", Boolean(canEdit));
   element("document-preview-panel").hidden = !item && !create;
   element("document-browse-controls").open = !item && !create;
   closePdf("document");
-  element("download-document").hidden = !item;
+  element("download-document").hidden = !item || discussionWorkspace;
+  element("clone-document").hidden = !item || discussionWorkspace;
   element("document-owner").textContent = item
     ? `${item.owner_name}${item.owner_role === "user" ? "" : ` (${roleLabels[item.owner_role]})`} · ${audienceLabels[item.audience]} · Revision ${item.revision}`
     : "";
@@ -239,12 +262,18 @@ function openDocument(item, { create = false } = {}) {
   const sourceLink = element("news-source-link");
   element("news-source").hidden = !item?.source_url;
   sourceLink.href = item?.source_url || "";
-  element("preview-title").textContent = item?.source_url ? item.title : "Preview";
+  element("preview-title").textContent = (item?.source_url || discussionWorkspace) && item ? item.title : "Preview";
   element("news-source-field").hidden = !isNews;
   documentEditor.elements.source_url.required = isNews;
   documentEditor.elements.source_url.value = item?.source_url || "";
-  element("save-document").textContent = isNews ? "Save news entry" : "Save document";
-  if (newsWorkspace) renderNewsFeed(item);
+  element("save-document").textContent = isNews ? "Save news entry" : discussionWorkspace ? "Save discussion" : "Save document";
+  if (discussionWorkspace) {
+    element("document-editor-heading").textContent = create ? "New discussion" : "Edit discussion";
+    element("discussion-schedule-field").hidden = false;
+    documentEditor.elements.scheduled_at.value = localSchedule(item?.scheduled_at);
+    renderDiscussionMeta(item);
+  }
+  if (feedWorkspace) renderDocumentFeed(item);
   documentEditor.elements.title.value = item?.title || "";
   documentEditor.elements.markdown.value = item?.markdown || "";
   selectAudience(documentEditor.elements.audience, item?.audience || "owner");
@@ -256,12 +285,21 @@ async function showDocuments(accountChanged) {
   const account = libraryData.account;
   element("documents-workspace").hidden = !account;
   element("documents-sign-in").hidden = Boolean(account);
-  element("news-feed").hidden = !newsWorkspace;
+  element("news-feed").hidden = !feedWorkspace;
   if (newsWorkspace) {
     element("documents-sign-in").querySelector("a").textContent = "Sign in to share or discuss news";
     element("new-document").textContent = "Share news";
     element("document-picker-label").textContent = "News entry";
     element("document-browse-label").textContent = "Browse news";
+  }
+  if (discussionWorkspace) {
+    document.body?.classList.add("discussion-page");
+    element("news-feed-title").textContent = "Threads";
+    element("discussion-sort-label").hidden = false;
+    element("documents-sign-in").querySelector("a").textContent = "Sign in to join discussions";
+    element("new-document").textContent = "New discussion";
+    element("document-picker-label").textContent = "Discussion";
+    element("document-browse-label").textContent = "Browse discussions";
   }
   setOptions(documentPicker, libraryData.documents.map(item => [item.id, item.title]), "Choose a document");
   setOptions(documentFile, libraryData.papers.filter(paper => paper.has_pdf)
@@ -271,7 +309,8 @@ async function showDocuments(accountChanged) {
   if (requested && !current) return;
   if (accountChanged || (!current && editingDocument !== "new")) openDocument(current);
   else {
-    if (newsWorkspace) renderNewsFeed(current);
+    if (feedWorkspace) renderDocumentFeed(current);
+    if (discussionWorkspace) renderDiscussionMeta(current);
     renderDocumentComments(current);
   }
 }
@@ -296,9 +335,21 @@ documentPicker.addEventListener("change", () => {
   ensureSelectedDocument().then(item => {
     if (item === undefined) return;
     openDocument(item);
-    if (newsWorkspace) history.replaceState(null, "", item ? `/news?document=${item.id}` : "/news");
+    if (feedWorkspace) history.replaceState(null, "", item ? `${location.pathname}?document=${item.id}` : location.pathname);
     return loadDocumentComments();
   }).catch(error => { documentStatus.textContent = error.message; });
+});
+element("discussion-sort").addEventListener("change", () => renderDocumentFeed(selectedDocument()));
+element("clone-document").addEventListener("click", () => {
+  const item = selectedDocument();
+  if (item) copyCloneCommand("documents", item.id, documentStatus);
+});
+element("edit-discussion").addEventListener("click", () => {
+  const item = selectedDocument();
+  if (item) {
+    openDocument(item, {edit: true});
+    documentEditor.elements.title.focus();
+  }
 });
 element("new-document").addEventListener("click", () => {
   documentLoadSequence++;
@@ -350,20 +401,21 @@ element("download-document").addEventListener("click", () => {
 submit(documentEditor, async () => {
   try {
     const fields = documentEditor.elements;
-    const result = await api("documents", {
+    const result = await api(discussionWorkspace ? "discussions" : "documents", {
       document_id: selectedDocument()?.id, revision: editingRevision, title: fields.title.value,
       audience: fields.audience.value, markdown: fields.markdown.value,
       recipients: recipientNames(fields.recipients.value),
       ...(fields.source_url.required ? {source_url: fields.source_url.value.trim()} : {}),
+      ...(discussionWorkspace ? {scheduled_at: scheduledTime(fields.scheduled_at)} : {}),
     });
     await loadLibrary();
     documentPicker.value = String(result.document_id);
     const item = await ensureSelectedDocument();
     if (!item) return;
     openDocument(item);
-    if (newsWorkspace) history.replaceState(null, "", `/news?document=${item.id}`);
+    if (feedWorkspace) history.replaceState(null, "", `${location.pathname}?document=${item.id}`);
     await loadDocumentComments();
-    documentStatus.textContent = item.source_url ? "News entry saved." : "Document saved.";
+    documentStatus.textContent = item.source_url ? "News entry saved." : discussionWorkspace ? "Discussion saved." : "Document saved.";
   } catch (error) {
     documentStatus.textContent = error.message;
   }

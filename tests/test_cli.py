@@ -122,7 +122,12 @@ class LauncherTests(unittest.TestCase):
                         self.assertEqual(response.status, 200)
                         self.assertIn(b'"first"', response.read())
 
-                switch_release(self.directory / "missing")
+                # A broken release must fail even when another copy is installed on sys.path.
+                broken = self.directory / "broken" / "paper_app"
+                broken.mkdir(parents=True)
+                (broken / "__init__.py").touch()
+                (broken / "server.py").write_text('raise RuntimeError("broken test release")\n')
+                switch_release(broken.parent)
                 server.send_signal(signal.SIGHUP)
                 eventually(lambda: "Replacement HTTP worker failed to start" in log_path.read_text())
                 self.assertIn(b'"second"', health())

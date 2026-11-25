@@ -70,6 +70,10 @@ curl -fsS https://papers.example.org/api/health
 
 `GET /api/health` 在可讀取設定的資料庫時回傳 HTTP 200，失敗時回傳 HTTP 503，無須憑證。使用公開網址檢查也會驗證 Nginx 與 HTTPS 路徑。
 
+To offer Git over SSH, run the [Git-only OpenSSH listener](git-ssh.md#enable-the-git-only-ssh-listener--啟用-git-專用-ssh-服務) alongside the web service.
+
+若要透過 SSH 提供 Git 存取，請在網頁服務之外啟用 [Git 專用 OpenSSH 監聽服務](git-ssh.md#enable-the-git-only-ssh-listener--啟用-git-專用-ssh-服務)。
+
 ## Upgrade while serving traffic · 不中斷服務升級
 
 Use the supplied reloadable unit and make `/opt/paper-library` a symlink to a release directory containing its own `.venv`. If you already run an older unit or use a real directory at that path, switch to this layout and start the updated unit once during a maintenance window. Keep database and PDF paths outside the release directory.

@@ -15,6 +15,7 @@
   <a id="compare-link" href="/">Compare</a>
   <a id="papers-link" href="/papers">Papers</a>
   <a id="news-link" href="/news">News</a>
+  <a id="discussions-link" href="/discussions">Discussions</a>
   <a id="documents-link" href="/documents">Documents</a>
   <a href="/experiments">Experiments</a>
   <a href="/skills">Skills</a>
@@ -255,6 +256,7 @@
         <label>Related papers, one DOI or DOI link per line
           <textarea name="doi_refs" rows="2" maxlength="9000"></textarea>
         </label>
+        <label id="paper-thread-schedule">Scheduled time (optional) <input name="scheduled_at" type="datetime-local"></label>
         <label id="comment-author-choice">Author
           <select name="kind">
             <option value="user">My account</option>
@@ -422,6 +424,9 @@
         <summary id="document-browse-label">Browse documents</summary>
       <section id="news-feed" aria-labelledby="news-feed-title" hidden>
         <h2 id="news-feed-title">Shared news</h2>
+        <label id="discussion-sort-label" hidden>Sort threads
+          <select id="discussion-sort"><option value="new">Recently updated</option><option value="top">Top voted</option></select>
+        </label>
         <ul id="news-list" class="skill-results"></ul>
       </section>
       <div class="account-actions">
@@ -432,13 +437,16 @@
       <div class="document-record">
       <div class="account-actions document-actions">
         <button type="button" id="download-document" class="secondary" hidden>Download Markdown</button>
+        <button type="button" id="clone-document" class="secondary" hidden>Copy Git clone command</button>
+        <button type="button" id="edit-discussion" class="secondary" hidden>Edit discussion</button>
         <button type="button" id="review-document" class="secondary" hidden>Review with AI</button>
       </div>
       <p id="document-owner"></p>
+      <div id="discussion-meta" hidden></div>
       <p id="news-source" hidden><a id="news-source-link" target="_blank" rel="noopener noreferrer">Read the source</a></p>
       <div class="document-layout" id="document-layout">
         <form id="document-editor" hidden>
-          <h2>Edit Markdown</h2>
+          <h2 id="document-editor-heading">Edit Markdown</h2>
           <div class="document-fields">
             <label class="document-title-field">Title <input name="title" maxlength="160" required></label>
             <label id="news-source-field" class="document-title-field" hidden>Source URL
@@ -446,6 +454,9 @@
             </label>
             <label>Document access <select name="audience" class="audience-options"></select></label>
             <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
+            <label id="discussion-schedule-field" hidden>Scheduled time (optional)
+              <input name="scheduled_at" type="datetime-local">
+            </label>
           </div>
           <label>Markdown <textarea name="markdown" maxlength="100000" spellcheck="false"></textarea></label>
           <div class="document-tools">
@@ -543,9 +554,10 @@
           <p id="document-reply-context" hidden></p>
           <button id="cancel-document-reply" type="button" class="secondary" hidden>Cancel reply</button>
           <label>Comment <textarea name="body" required maxlength="20000"></textarea></label>
-          <label>Related papers, one DOI per line <textarea name="doi_refs" rows="2" maxlength="9000"></textarea></label>
+          <label id="document-comment-dois">Related papers, one DOI per line <textarea name="doi_refs" rows="2" maxlength="9000"></textarea></label>
           <div class="document-fields">
-            <label>Source line (optional) <input name="line" type="number" min="1" max="1000000"></label>
+            <label id="document-comment-line">Source line (optional) <input name="line" type="number" min="1" max="1000000"></label>
+            <label id="document-thread-schedule">Scheduled time (optional) <input name="scheduled_at" type="datetime-local"></label>
             <label>Comment access <select name="audience" class="audience-options"></select></label>
             <label>Share with usernames <input name="recipients" maxlength="1700"></label>
           </div>

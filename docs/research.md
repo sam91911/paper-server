@@ -2,6 +2,8 @@
 
 [Project home · 專案首頁](../README.md)
 
+See [Git checkouts and discussions](git-and-discussions.md) for cloning documents and experiments, fetching artifact pointers, and scheduling or voting on discussion threads.
+
 | Step | What to do | 操作方式 |
 | --- | --- | --- |
 | 1 | Write literature notes under **Documents**. Cite PDF pages, Markdown lines, or exact artifact versions in **Research findings**. | 在 **Documents** 撰寫文獻筆記，並在 **Research findings** 引用 PDF 頁碼、Markdown 行範圍或確切的產出版本。 |

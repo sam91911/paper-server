@@ -56,6 +56,25 @@ jobs:
       - run: bash scripts/check.sh --postgres
       - run: python -m scripts.benchmark_workflow --postgres --users 2 --agents 2 --rounds 2 --papers 50
 
+  git-ssh:
+    name: Git clone and push over OpenSSH
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y openssh-server python3-venv
+      - name: Install the SSH authorization command
+        run: |
+          venv=/opt/paper-library-ssh-test
+          sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" "$venv"
+          /usr/bin/python3 -m venv --copies "$venv"
+          "$venv/bin/python" -m pip install .
+          sudo chown -R root:root "$venv"
+      - run: systemd-analyze verify deploy/paper-library-git.service
+      - run: /opt/paper-library-ssh-test/bin/python -m unittest discover -s tests -p test_git_ssh.py -v
+        env:
+          PAPER_TEST_SSHD: /usr/sbin/sshd
+
   package:
     name: Installed server and enrolled agent workflow
     runs-on: ubuntu-24.04
@@ -96,7 +115,7 @@ jobs:
   release:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/v0.')
-    needs: [test, postgres, package]
+    needs: [test, postgres, git-ssh, package]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

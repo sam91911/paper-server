@@ -15,6 +15,7 @@
     <a href="/">Compare</a>
     <a href="/papers">Papers</a>
     <a href="/news">News</a>
+    <a href="/discussions">Discussions</a>
     <a href="/documents">Documents</a>
     <a href="/experiments" aria-current="page">Experiments</a>
     <a href="/skills">Skills</a>
@@ -48,6 +49,11 @@
 
     <section id="detail" class="focus-detail" aria-labelledby="experiment-title" hidden>
       <h2 id="experiment-title"></h2>
+      <div class="account-actions">
+        <button type="button" id="clone-experiment-source" class="secondary">Copy source branch clone command</button>
+        <button type="button" id="clone-experiment" class="secondary">Copy artifact checkout command</button>
+      </div>
+      <p id="experiment-source-commit" hidden></p>
       <p id="experiment-description"></p>
       <p id="experiment-workspace"></p>
       <form id="experiment-workspace-form" class="filters" hidden>

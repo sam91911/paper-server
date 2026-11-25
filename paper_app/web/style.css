@@ -818,3 +818,19 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
   #saved-metadata { grid-template-columns: minmax(0, 1fr); }
   #saved-metadata dd { margin-bottom: .5rem; }
 }
+
+.thread-votes {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+}
+.thread-votes button { min-width: 2rem; padding: .2rem .5rem; }
+.thread-votes button[aria-pressed="true"] { color: var(--accent-dark); background: var(--accent-soft); }
+.thread-votes output { min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; }
+.thread-schedule { display: block; color: var(--muted); margin: .45rem 0; }
+.discussion-page .document-tools,
+.discussion-page #document-comment-dois,
+.discussion-page #document-comment-line,
+.discussion-page #research-goals,
+.discussion-page #research-workspace { display: none; }
+.discussion-page #discussion-meta { margin: .75rem 0; }

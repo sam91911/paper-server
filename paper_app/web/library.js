@@ -3,7 +3,8 @@
 const papersPage = location.pathname === "/papers";
 const accountPage = location.pathname === "/account";
 const newsPage = location.pathname === "/news";
-const documentsPage = location.pathname === "/documents" || newsPage;
+const discussionPage = location.pathname === "/discussions";
+const documentsPage = location.pathname === "/documents" || newsPage || discussionPage;
 const comparePage = !papersPage && !accountPage && !documentsPage;
 const libraryPanel = element("library");
 const libraryStatus = element("library-status");
@@ -236,6 +237,7 @@ function showPaper() {
   commentForm.elements.doi_refs.value = draft?.doiRefs || "";
   commentForm.elements.audience.value = draft?.audience || "owner";
   commentForm.elements.recipients.value = draft?.recipients || "";
+  commentForm.elements.scheduled_at.value = draft?.scheduledAt || "";
   showPaperTargets(draft?.target, draft?.targetLabel);
   commentForm.elements.position.value = draft?.position || "";
   showPositionField();
@@ -268,6 +270,51 @@ function renderPaperComments(selected) {
       showReplyTarget(comment.id);
       newComment.focus();
     });
+}
+
+function scheduledTime(field) {
+  return field?.value ? Math.floor(new Date(field.value).getTime() / 1000) : null;
+}
+
+function localSchedule(seconds) {
+  if (seconds == null) return "";
+  const date = new Date(seconds * 1000);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
+function showSchedule(parent, seconds) {
+  if (seconds == null) return;
+  const date = new Date(seconds * 1000);
+  const time = add(parent, "time", `Scheduled for ${date.toLocaleString()}`, "thread-schedule");
+  time.dateTime = date.toISOString();
+}
+
+function voteControls(parent, item, payload, status, changed = () => {}) {
+  const controls = add(parent, "div", undefined, "thread-votes");
+  const up = add(controls, "button", "↑", "secondary");
+  const score = add(controls, "output", String(item.vote_score ?? 0));
+  const down = add(controls, "button", "↓", "secondary");
+  score.setAttribute("aria-label", "Vote score");
+  for (const [button, label, value] of [[up, "Upvote", 1], [down, "Downvote", -1]]) {
+    button.type = "button";
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-pressed", String(item.my_vote === value));
+    button.addEventListener("click", async () => {
+      up.disabled = down.disabled = true;
+      try {
+        const result = await api("thread-votes", {...payload, vote: item.my_vote === value ? 0 : value});
+        Object.assign(item, result);
+        score.value = String(result.vote_score);
+        up.setAttribute("aria-pressed", String(result.my_vote === 1));
+        down.setAttribute("aria-pressed", String(result.my_vote === -1));
+        changed();
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        up.disabled = down.disabled = false;
+      }
+    });
+  }
 }
 
 function renderComments(comments, summary, items, host, area, status, onReply) {
@@ -305,6 +352,7 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
       add(article, "a", "In reply to parent comment", "parent-comment-link").href = `#comment-${comment.parent_id}`;
     }
     add(article, "p", comment.body, "comment-body");
+    showSchedule(article, comment.scheduled_at);
     if (comment.finding_id) {
       add(article, "a", `Finding #${comment.finding_id}`).href =
         `/documents?document=${comment.document_id}&finding=${comment.finding_id}`;
@@ -330,10 +378,13 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
     }
     if (libraryData.account) {
       const actions = add(article, "div", undefined, "comment-actions");
+      voteControls(actions, comment, {...host, comment_id: comment.id}, status);
       const reply = add(actions, "button", "Reply", "secondary");
       reply.addEventListener("click", () => onReply(comment));
-      const review = add(actions, "button", "Review thread with AI", "secondary");
-      review.addEventListener("click", () => openAgent("thread", comment.id, `Comment thread · #${comment.id}`));
+      if (!discussionPage) {
+        const review = add(actions, "button", "Review thread with AI", "secondary");
+        review.addEventListener("click", () => openAgent("thread", comment.id, `Comment thread · #${comment.id}`));
+      }
     }
     if (!libraryData.account || (!comment.can_manage && comment.author_id !== libraryData.account.id)) {
       continue;
@@ -345,10 +396,17 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
     field.value = comment.body;
     field.required = true;
     field.maxLength = 20000;
-    const refs = add(add(form, "label", "Related papers, one DOI or DOI link per line"), "textarea");
+    const refsLabel = add(form, "label", "Related papers, one DOI or DOI link per line");
+    const refs = add(refsLabel, "textarea");
     refs.value = comment.doi_refs.join("\n");
     refs.maxLength = 9000;
     refs.rows = 2;
+    refsLabel.hidden = discussionPage;
+    const schedule = comment.parent_id == null ? add(add(form, "label", "Scheduled time (optional)"), "input") : null;
+    if (schedule) {
+      schedule.type = "datetime-local";
+      schedule.value = localSchedule(comment.scheduled_at);
+    }
     const access = add(add(form, "label", "Comment access"), "select");
     fillAudiences(access, comment.audience || "inherit");
     const recipients = add(add(form, "label", "Share with usernames"), "input");
@@ -375,6 +433,7 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
       ...host, comment_id: comment.id, body: field.value, doi_refs: doiLines(refs.value),
       audience: access.value === "inherit" ? undefined : access.value,
       recipients: recipientNames(recipients.value),
+      scheduled_at: schedule ? scheduledTime(schedule) : undefined,
     }, "Comment updated.", status), status);
   }
 }
@@ -668,7 +727,7 @@ async function loadPapersPage(paperId) {
 async function loadLibrary(paperId) {
   const previousAccount = libraryData?.account?.id;
   if (papersPage) return loadPapersPage(paperId);
-  const route = accountPage ? "account" : newsPage ? "news"
+  const route = accountPage ? "account" : newsPage ? "news" : discussionPage ? "discussions"
     : documentsPage ? "documents?comments=none&content=summary" : "compare";
   libraryData = await api(route);
   if (accountPage) {
@@ -1226,6 +1285,7 @@ function showReplyTarget(parentId) {
   context.hidden = !parent;
   element("cancel-reply").hidden = !parent;
   element("post-comment").textContent = parent ? "Post reply" : "Add comment";
+  element("paper-thread-schedule").hidden = Boolean(parent);
   context.textContent = parent ? `Replying to ${parent.author_name || "an unknown author"}` : "";
 }
 
@@ -1248,6 +1308,7 @@ function rememberCommentDraft(parentId) {
     targetLabel: commentForm.elements.target.selectedOptions[0]?.textContent,
     position: commentForm.elements.position.value,
     recipients: commentForm.elements.recipients.value,
+    scheduledAt: commentForm.elements.scheduled_at.value,
   });
 }
 
@@ -1271,6 +1332,7 @@ submit(commentForm, async () => {
     doi_refs: doiLines(commentForm.elements.doi_refs.value), parent_id: parentId,
     audience: commentForm.elements.audience.value,
     recipients: recipientNames(commentForm.elements.recipients.value),
+    scheduled_at: parentId ? undefined : scheduledTime(commentForm.elements.scheduled_at),
   });
   if (commentDrafts.get(paperId) === draft) commentDrafts.delete(paperId);
   await loadLibrary();
