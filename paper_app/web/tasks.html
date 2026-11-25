@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tasks · Paper Library</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body class="workspace-shell">
+<!-- workspace-shell -->
+<header class="page-header"><h1>Tasks</h1></header>
+<main class="page-content" id="workspace-content" tabindex="-1">
+  <p id="task-status" role="status"></p>
+  <p id="task-sign-in" hidden><a href="/account">Sign in to manage tasks</a></p>
+  <div id="task-workspace" hidden>
+    <div class="task-toolbar">
+      <label>Show
+        <select id="task-filter">
+          <option value="">Open and in progress</option>
+          <option value="closed">Closed</option>
+          <option value="all">All tasks</option>
+        </select>
+      </label>
+      <button id="new-task" type="button">New task</button>
+    </div>
+    <form id="task-editor" class="task-card" hidden>
+      <h2 id="task-editor-title">New task</h2>
+      <fieldset id="task-details">
+        <label>Title <input name="title" required maxlength="160"></label>
+        <label>Description <textarea name="description" rows="5" maxlength="10000"></textarea></label>
+        <label>Assignee username <input name="assignee" maxlength="32"></label>
+        <label>Deadline <input name="due_on" type="date"></label>
+        <label>GitHub issue URL <input name="issue_url" type="url" maxlength="512" placeholder="https://github.com/owner/repo/issues/123"></label>
+      </fieldset>
+      <label>Status
+        <select name="status">
+          <option value="open">Open</option>
+          <option value="in_progress">In progress</option>
+          <option value="closed">Closed</option>
+        </select>
+      </label>
+      <button>Save task</button>
+      <button id="cancel-task" type="button" class="secondary">Cancel</button>
+    </form>
+    <ul id="task-list" class="task-list" aria-label="Tasks"></ul>
+  </div>
+</main>
+<script src="/assets/api.js"></script>
+<script src="/assets/tasks.js"></script>
+</body>
+</html>

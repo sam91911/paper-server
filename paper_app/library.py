@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import database as storage
-from . import accounts, experiments, findings, goals, google_signin, metrics, sharing, skills, tools_catalog
+from . import accounts, document_context, experiments, findings, goals, google_signin, metrics, sharing, skills, tasks, tools_catalog
 
 FIELDS = ("paper", "page", "metric", "value", "unit", "conditions", "evidence")
 METADATA = ("doi", "title", "authors", "year", "venue", "publisher", "source")
@@ -113,7 +113,7 @@ def initialize(path):
             return
         db.executescript(SCHEMA + COMMENT_SCHEMA.format(table="comments") + accounts.SCHEMA
                          + sharing.SCHEMA + google_signin.SCHEMA + experiments.SCHEMA + tools_catalog.SCHEMA
-                         + skills.SCHEMA + reviews.SCHEMA + ai_accounts.SCHEMA + human_keys.SCHEMA)
+                         + skills.SCHEMA + tasks.SCHEMA + reviews.SCHEMA + ai_accounts.SCHEMA + human_keys.SCHEMA)
         # Existing comments have a mandatory paper_id. Rebuild with the same IDs
         # so authors, grants, reply links, and anchors survive the migration.
         db.execute("PRAGMA foreign_keys=OFF")
@@ -143,6 +143,7 @@ def initialize(path):
         for statement in (*findings.SCHEMA, *goals.SCHEMA, *metrics.SCHEMA):
             db.execute(statement)
         agent_goals.initialize(db)
+        db.execute(document_context.SCHEMA)
         for table, name, definition in (
             ("metric_corrections", "removed", metrics.REMOVED_COLUMN),
             ("papers", "pdf_size", "INTEGER"),

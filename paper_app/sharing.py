@@ -221,6 +221,8 @@ def document_for(db, account, document_id):
 
 
 def documents_for(db, account, *, targets_only=False, summaries=False, news_only=False, discussion_only=False):
+    from . import document_context
+
     if targets_only:
         return [dict(row) for row in db.execute(
             "SELECT id,title FROM documents d WHERE " + access_sql("d.owner_id", "d.audience", "document", "d.id")
@@ -228,17 +230,18 @@ def documents_for(db, account, *, targets_only=False, summaries=False, news_only
             viewer_params(account),
         )]
     columns = "d.id,d.owner_id,d.audience,d.title,d.updated,d.revision,d.source_url,d.kind,d.scheduled_at" if summaries else "d.*"
+    columns += "," + document_context.COLUMNS
     scope = " AND d.source_url<>''" if news_only else ""
     scope += " AND d.kind=:document_kind"
     if discussion_only:
         columns += "," + vote_columns("discussion", "d.id")
     items = [dict(row) for row in db.execute(
         f"SELECT {columns}, a.username AS owner_name, {accounts.ROLE_SQL.format(alias='a')} AS owner_role "
-        "FROM documents d JOIN accounts a ON a.id=d.owner_id WHERE "
+        f"FROM documents d JOIN accounts a ON a.id=d.owner_id{document_context.JOIN} WHERE "
         + access_sql("d.owner_id", "d.audience", "document", "d.id") + scope + " ORDER BY d.updated DESC, d.id DESC",
         viewer_params(account, document_kind="discussion" if discussion_only else "document"),
     )]
-    return attach_recipients(db, "document", items, account)
+    return document_context.redact(db, account, attach_recipients(db, "document", items, account))
 
 
 def validate_news_source(value):
@@ -285,6 +288,8 @@ def save_document(db, account, data, *, kind="document", allow_empty_source=Fals
         if kind != "discussion":
             raise ValueError("Choose a discussion to schedule.")
         scheduled = schedule_value(scheduled)
+    from . import document_context
+
     document_id = data.get("document_id")
     if document_id is None:
         document_id = db.execute(
@@ -307,6 +312,7 @@ def save_document(db, account, data, *, kind="document", allow_empty_source=Fals
             (title.strip(), markdown, validate_audience(data.get("audience", existing["audience"])), source_url,
              existing["scheduled_at"] if scheduled is UNSET else scheduled, document_id),
         )
+    document_context.save(db, account, document_id, data)
     set_recipients(db, "document", document_id, data.get("recipients"))
     if kind == "document":
         db.execute("""

@@ -7,21 +7,7 @@
 <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body class="workspace-shell">
-<a class="skip-link" href="#workspace-content">Skip to content</a>
-<div class="workspace-bar">
-  <a class="workspace-brand" href="/papers"><span class="brand-mark" aria-hidden="true"></span>Paper Library</a>
-</div>
-<nav id="library-nav" class="workspace-nav" aria-label="Library pages">
-  <a id="compare-link" href="/">Compare</a>
-  <a id="papers-link" href="/papers">Papers</a>
-  <a id="news-link" href="/news">News</a>
-  <a id="discussions-link" href="/discussions">Discussions</a>
-  <a id="documents-link" href="/documents">Documents</a>
-  <a href="/experiments">Experiments</a>
-  <a href="/skills">Skills</a>
-  <a href="/agent-goals">Agent goals</a>
-  <a id="account-link" href="/account">Account</a>
-</nav>
+<!-- workspace-shell -->
 <header class="page-header">
 <h1 id="page-title">Paper metrics</h1>
 <p class="page-description" id="page-description">Compare measurements across papers, units, and experimental conditions.</p>
@@ -422,6 +408,7 @@
     <div id="documents-workspace" class="detail-layout" hidden>
       <details id="document-browse-controls" class="browse-controls" open>
         <summary id="document-browse-label">Browse documents</summary>
+      <label>Topic <select id="document-topic-filter"></select></label>
       <section id="news-feed" aria-labelledby="news-feed-title" hidden>
         <h2 id="news-feed-title">Shared news</h2>
         <label id="discussion-sort-label" hidden>Sort threads
@@ -442,6 +429,7 @@
         <button type="button" id="review-document" class="secondary" hidden>Review with AI</button>
       </div>
       <p id="document-owner"></p>
+      <p id="document-context" hidden></p>
       <div id="discussion-meta" hidden></div>
       <p id="news-source" hidden><a id="news-source-link" target="_blank" rel="noopener noreferrer">Read the source</a></p>
       <div class="document-layout" id="document-layout">
@@ -452,6 +440,8 @@
             <label id="news-source-field" class="document-title-field" hidden>Source URL
               <input name="source_url" type="url" maxlength="2048" placeholder="https://">
             </label>
+            <label>Topic (optional) <input name="topic" maxlength="120"></label>
+            <label>Linked goal (optional) <select name="linked_goal"></select></label>
             <label>Document access <select name="audience" class="audience-options"></select></label>
             <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
             <label id="discussion-schedule-field" hidden>Scheduled time (optional)

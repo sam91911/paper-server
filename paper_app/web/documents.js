@@ -1,6 +1,9 @@
 "use strict";
 
 const documentPicker = element("document-picker");
+const documentTopicFilter = element("document-topic-filter");
+let activeDocumentTopic = new URLSearchParams(location.search).get("topic") || "";
+let documentGoalOptionsSequence = 0;
 const documentEditor = element("document-editor");
 const documentFile = element("document-file");
 const documentStatus = element("document-status");
@@ -110,18 +113,64 @@ function selectedDocument() {
   return libraryData.documents.find(item => item.id === Number(documentPicker.value));
 }
 
+function documentsInTopic() {
+  return libraryData.documents.filter(item => !activeDocumentTopic ||
+    item.topic?.toLowerCase() === activeDocumentTopic.toLowerCase());
+}
+
+function documentPageUrl(id, topic = activeDocumentTopic) {
+  const params = new URLSearchParams();
+  if (id) params.set("document", id);
+  if (topic) params.set("topic", topic);
+  return location.pathname + (params.toString() ? `?${params}` : "");
+}
+
+function renderDocumentContext(item) {
+  const context = element("document-context");
+  context.replaceChildren();
+  context.hidden = !item?.topic && !item?.goal_link;
+  if (item?.topic) add(context, "a", item.topic).href = documentPageUrl(null, item.topic);
+  if (item?.goal_link) {
+    if (item.topic) context.append(" · ");
+    add(context, "a", item.goal_link.label).href = item.goal_link.url;
+  }
+}
+
+async function loadDocumentGoalOptions(item, enabled) {
+  const field = documentEditor.elements.linked_goal;
+  const sequence = ++documentGoalOptionsSequence;
+  field.disabled = true;
+  const link = item?.goal_link;
+  const selected = link ? `${link.kind}:${link.id}` : "";
+  setOptions(field, link ? [[selected, link.label]] : [], "No linked goal");
+  field.value = selected;
+  if (!enabled) return;
+  try {
+    const {goals} = await api("document-goals");
+    if (sequence !== documentGoalOptionsSequence) return;
+    setOptions(field, goals.map(goal =>
+      [`${goal.kind}:${goal.id}`, `${goal.kind === "research_goal" ? "Research" : "Agent"} · ${goal.label}`]),
+    "No linked goal");
+    field.value = goals.some(goal => `${goal.kind}:${goal.id}` === selected) ? selected : "";
+    field.disabled = false;
+  } catch (error) {
+    if (sequence === documentGoalOptionsSequence) documentStatus.textContent = error.message;
+  }
+}
+
 function renderDocumentFeed(item) {
   const list = element("news-list");
   list.replaceChildren();
-  if (!libraryData.documents.length) add(list, "li", discussionWorkspace ? "No discussions yet." : "No news has been shared with you yet.");
-  const entries = [...libraryData.documents];
+  const entries = documentsInTopic();
+  if (!entries.length) add(list, "li", activeDocumentTopic ? "No entries match this topic."
+    : discussionWorkspace ? "No discussions yet." : "No news has been shared with you yet.");
   if (discussionWorkspace && element("discussion-sort").value === "top") {
     entries.sort((a, b) => b.vote_score - a.vote_score || b.id - a.id);
   }
   for (const entry of entries) {
     const row = add(list, "li");
     const link = add(row, "a", entry.title);
-    link.href = `${location.pathname}?document=${entry.id}`;
+    link.href = documentPageUrl(entry.id);
     if (entry.id === item?.id) link.setAttribute("aria-current", "true");
     add(row, "p", `Shared by ${entry.owner_name} · ${entry.updated} UTC${discussionWorkspace ? ` · Score ${entry.vote_score}` : ""}`);
     if (discussionWorkspace) showSchedule(row, entry.scheduled_at);
@@ -258,6 +307,9 @@ function openDocument(item, { create = false, edit = false } = {}) {
     : "";
   documentStatus.textContent = "";
   documentEditor.reset();
+  documentEditor.elements.topic.value = item?.topic || (create ? activeDocumentTopic : "");
+  renderDocumentContext(item);
+  void loadDocumentGoalOptions(item, canEdit);
   const isNews = Boolean(item?.source_url) || (newsWorkspace && create);
   const sourceLink = element("news-source-link");
   element("news-source").hidden = !item?.source_url;
@@ -301,7 +353,15 @@ async function showDocuments(accountChanged) {
     element("document-picker-label").textContent = "Discussion";
     element("document-browse-label").textContent = "Browse discussions";
   }
-  setOptions(documentPicker, libraryData.documents.map(item => [item.id, item.title]), "Choose a document");
+  const topics = new Map();
+  for (const {topic} of libraryData.documents) if (topic) topics.set(topic.toLowerCase(), topic);
+  if (activeDocumentTopic && !topics.has(activeDocumentTopic.toLowerCase())) {
+    topics.set(activeDocumentTopic.toLowerCase(), activeDocumentTopic);
+  }
+  setOptions(documentTopicFilter, [...topics.values()].sort((a, b) => a.localeCompare(b))
+    .map(topic => [topic, topic]), "All topics");
+  documentTopicFilter.value = topics.get(activeDocumentTopic.toLowerCase()) || "";
+  setOptions(documentPicker, documentsInTopic().map(item => [item.id, item.title]), "Choose a document");
   setOptions(documentFile, libraryData.papers.filter(paper => paper.has_pdf)
     .map(paper => [paper.id, paper.title || paperFilename(paper)]), "Choose a PDF");
   const requested = selectedDocument();
@@ -335,9 +395,12 @@ documentPicker.addEventListener("change", () => {
   ensureSelectedDocument().then(item => {
     if (item === undefined) return;
     openDocument(item);
-    if (feedWorkspace) history.replaceState(null, "", item ? `${location.pathname}?document=${item.id}` : location.pathname);
+    if (feedWorkspace || activeDocumentTopic) history.replaceState(null, "", documentPageUrl(item?.id));
     return loadDocumentComments();
   }).catch(error => { documentStatus.textContent = error.message; });
+});
+documentTopicFilter.addEventListener("change", () => {
+  location.href = documentPageUrl(null, documentTopicFilter.value);
 });
 element("discussion-sort").addEventListener("change", () => renderDocumentFeed(selectedDocument()));
 element("clone-document").addEventListener("click", () => {
@@ -401,19 +464,30 @@ element("download-document").addEventListener("click", () => {
 submit(documentEditor, async () => {
   try {
     const fields = documentEditor.elements;
+    const linkedGoal = fields.linked_goal.value;
+    const oldGoal = selectedDocument()?.goal_link;
+    const priorLink = oldGoal ? `${oldGoal.kind}:${oldGoal.id}` : "";
+    const [goalKind, goalId] = linkedGoal.split(":");
+    const topic = fields.topic.value.trim();
     const result = await api(discussionWorkspace ? "discussions" : "documents", {
       document_id: selectedDocument()?.id, revision: editingRevision, title: fields.title.value,
       audience: fields.audience.value, markdown: fields.markdown.value,
-      recipients: recipientNames(fields.recipients.value),
+      recipients: recipientNames(fields.recipients.value), topic,
+      ...(!fields.linked_goal.disabled && linkedGoal !== priorLink ? {
+        research_goal_id: goalKind === "research_goal" ? Number(goalId) : null,
+        agent_goal_id: goalKind === "agent_goal" ? Number(goalId) : null,
+      } : {}),
       ...(fields.source_url.required ? {source_url: fields.source_url.value.trim()} : {}),
       ...(discussionWorkspace ? {scheduled_at: scheduledTime(fields.scheduled_at)} : {}),
     });
+    const topicChanged = activeDocumentTopic && activeDocumentTopic.toLowerCase() !== topic.toLowerCase();
+    if (topicChanged) activeDocumentTopic = "";
     await loadLibrary();
     documentPicker.value = String(result.document_id);
     const item = await ensureSelectedDocument();
     if (!item) return;
     openDocument(item);
-    if (feedWorkspace) history.replaceState(null, "", `${location.pathname}?document=${item.id}`);
+    if (feedWorkspace || topicChanged || activeDocumentTopic) history.replaceState(null, "", documentPageUrl(item.id));
     await loadDocumentComments();
     documentStatus.textContent = item.source_url ? "News entry saved." : discussionWorkspace ? "Discussion saved." : "Document saved.";
   } catch (error) {

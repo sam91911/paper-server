@@ -139,6 +139,15 @@ SKILL_SUMMARY = {
 SKILL_MARKDOWN = schema("string", maxLength=10_000)
 SKILL_FIELDS = {name: SKILL_SUMMARY[name] for name in ("audience", "title", "description", "tags")}
 SKILL_FIELDS.update(markdown=SKILL_MARKDOWN, recipients=RECIPIENTS)
+GOAL_LINK = obj({"id": ID, "kind": enum("research_goal", "agent_goal"), "label": STRING, "url": STRING},
+                ("id", "kind", "label", "url"))
+DOCUMENT_CONTEXT = {"topic": schema("string", maxLength=120),
+                    "research_goal_id": nullable(ID), "agent_goal_id": nullable(ID)}
+TASK_FIELDS = {"title": schema("string", maxLength=160), "description": schema("string", maxLength=10000),
+               "status": enum("open", "in_progress", "closed"),
+               "due_on": nullable(schema("string", format="date")),
+               "issue_url": nullable(schema("string", format="uri")), "assignee": nullable(STRING)}
+
 SCHEMAS = {
     "Error": obj({"error": STRING}, ("error",)),
     "AgentGoal": obj({"id": ID, "agent": nullable(STRING), "agent_role": nullable(AI_ROLE),
@@ -159,7 +168,7 @@ SCHEMAS = {
                   "recipients": RECIPIENTS, "can_manage": BOOLEAN}, ("id", "path", "title")),
     "Document": obj({"id": ID, "owner_id": ID, "title": STRING, "markdown": STRING, "audience": AUDIENCE,
                      "source_url": STRING, "kind": enum("document", "discussion"), "scheduled_at": SCHEDULE_TIME,
-                     **VOTE_FIELDS,
+                     **DOCUMENT_CONTEXT, "goal_link": GOAL_LINK, **VOTE_FIELDS,
                      "revision": ID, "recipients": RECIPIENTS, "can_manage": BOOLEAN}, ("id", "title", "revision")),
     "Comment": obj({
         "id": ID, "paper_id": nullable(ID), "document_id": nullable(ID), "parent_id": nullable(ID),
@@ -414,6 +423,18 @@ PATHS = {
     "/papers/{paper_id}/source.pdf": {"get": operation("Download a visible PDF", BINARY,
         params=(param("paper_id", ID, location="path", required=True), param("download", enum("1"))),
         response_type="application/pdf")},
+    "/api/document-goals": {"get": operation("List goals available to link to a document",
+        obj({"goals": array(GOAL_LINK)}, ("goals",)))},
+    "/api/tasks": {
+        "get": operation("List tasks created by or assigned to the current account",
+            obj({"tasks": array(obj({**TASK_FIELDS, "id": ID, "revision": ID, "owner_id": ID,
+                                     "assignee_id": nullable(ID), "creator": STRING},
+                                    ("id", "revision", "title", "status")))}, ("tasks",))),
+        "post": operation("Create or update a task", acknowledgement("id", id=ID),
+            body=obj({**TASK_FIELDS, "id": ID, "revision": ID}),
+            description="Creation requires title. Updates require id and revision. Assignees can update status. "
+                        "Use an HTTPS github.com issue URL for issue_url."),
+    },
     "/api/documents": {
         "get": operation("List visible documents",
             obj({"documents": array(ref("Document")), "comments": array(ref("Comment")),
@@ -421,7 +442,8 @@ PATHS = {
             params=(param("content", enum("summary")), param("comments", enum("none")))),
         "post": operation("Create or update a document or news entry", acknowledgement("document_id", "revision", document_id=ID, revision=ID),
             body=obj({"document_id": ID, "revision": ID, "title": STRING, "markdown": STRING,
-                      "audience": AUDIENCE, "recipients": RECIPIENTS, "source_url": schema("string", format="uri", maxLength=2048)},
+                      "audience": AUDIENCE, "recipients": RECIPIENTS, "source_url": schema("string", format="uri", maxLength=2048),
+                      **DOCUMENT_CONTEXT},
                      ("title", "markdown")), description="Supply an HTTPS source_url to list the document in News."),
     },
     "/api/news": {"get": operation("List visible news entries",
@@ -432,7 +454,7 @@ PATHS = {
         "post": operation("Create or update a standalone discussion thread",
             acknowledgement("document_id", "revision", document_id=ID, revision=ID),
             body=obj({"document_id": ID, "revision": ID, "title": STRING, "markdown": STRING,
-                      "audience": AUDIENCE, "recipients": RECIPIENTS, "scheduled_at": SCHEDULE_TIME},
+                      "audience": AUDIENCE, "recipients": RECIPIENTS, "scheduled_at": SCHEDULE_TIME, **DOCUMENT_CONTEXT},
                       ("title", "markdown"))),
     },
     "/api/document": {"get": operation("Read a visible document", obj({"document": ref("Document")}, ("document",)),

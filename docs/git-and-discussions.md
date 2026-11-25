@@ -73,3 +73,10 @@ Open **Discussions** to create a standalone post and reply in threads. Choose **
 Scheduled times are displayed in each reader's local time zone. Posts and comments are visible as soon as saved according to their sharing settings. The time marks when the discussion is planned.
 
 排定時間會依讀者的本地時區顯示。貼文與留言儲存後即依分享設定顯示，排定的時間用來標示討論預定進行的日期及時間。
+
+
+## Topics, goals, and tasks
+
+A document or discussion can have a topic, one linked research or agent goal, both, or neither. Pick a topic in the browse panel to filter the current page. Readers see the goal link when they have access to the goal and its required sources. For API edits, omit link fields to preserve them or send `null` to clear them. When switching between research and agent goals, clear the previous goal field in the same request.
+
+Open **Tasks** to create a task with a description, an assignee, and an optional deadline. The creator can edit all fields. The assignee can change the status between Open, In progress, and Closed. Only those two accounts can see the task. Open tasks are sorted by deadline, and overdue dates use the browser's local calendar. A GitHub issue URL can be attached as a reference link. Task status and deadlines are managed in Paper Library.

@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
 from . import git_repos, supervisor
-from . import account_routes, accounts, admin_console, agent_goals, ai_accounts, client_distribution, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tools_catalog
+from . import account_routes, accounts, admin_console, agent_goals, ai_accounts, client_distribution, comment_routes, crossref, document_context, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tasks, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
 WEB_ROOT = Path(__file__).resolve().with_name("web")
@@ -37,6 +37,8 @@ ASSETS = {
     "/documents": PAGE,
     "/news": PAGE,
     "/discussions": PAGE,
+    "/tasks": ("tasks.html", "text/html; charset=utf-8"),
+    "/assets/tasks.js": ("tasks.js", "text/javascript; charset=utf-8"),
     "/agent-goals": ("agent-goals.html", "text/html; charset=utf-8"),
     "/assets/agent-goals.js": ("agent-goals.js", "text/javascript; charset=utf-8"),
     "/skills": ("skills.html", "text/html; charset=utf-8"),
@@ -279,7 +281,14 @@ class Handler(BaseHTTPRequestHandler):
             self.read_skills(url)
         elif route in ASSETS:
             filename, content_type = ASSETS[route]
-            self.send_data(200, (WEB_ROOT / filename).read_bytes(), content_type)
+            payload = (WEB_ROOT / filename).read_bytes()
+            if content_type.startswith("text/html"):
+                shell = (WEB_ROOT / "workspace-shell.html").read_bytes()
+                nav_path = f'href="{route}"'.encode()
+                bar, nav = shell.split(b"<nav", 1)
+                shell = bar + b"<nav" + nav.replace(nav_path, nav_path + b' aria-current="page"', 1)
+                payload = payload.replace(b"<!-- workspace-shell -->", shell)
+            self.send_data(200, payload, content_type)
         elif match := re.fullmatch(r"/papers/([1-9][0-9]{0,18})/source\.pdf", route):
             self.serve_pdf(int(match[1]), download=url.query == "download=1")
         elif route == "/exports/metrics.csv":
@@ -339,12 +348,17 @@ class Handler(BaseHTTPRequestHandler):
             except storage.ERRORS as error:
                 LOG.error("Comment read failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read comments."})
-        elif route in ("/api/experiments", "/api/experiment-detail", "/api/research-tools", "/api/research-findings", "/api/research-goals"):
+        elif route in ("/api/experiments", "/api/experiment-detail", "/api/research-tools", "/api/research-findings", "/api/research-goals",
+                       "/api/tasks", "/api/document-goals"):
             try:
                 with library.connect(self.server.database) as db:
                     storage.begin(db)
                     account = self.require_account(db)
-                    if route == "/api/research-tools":
+                    if route == "/api/tasks":
+                        data = tasks.read(db, account)
+                    elif route == "/api/document-goals":
+                        data = {"goals": document_context.options(db, account)}
+                    elif route == "/api/research-tools":
                         data = {"tools": tools_catalog.list_tools(db, account), "host_tools": tools_catalog.host_tools()}
                     elif route == "/api/research-findings":
                         data = findings.read(db, account, parse_qs(url.query, keep_blank_values=True))
@@ -407,7 +421,8 @@ class Handler(BaseHTTPRequestHandler):
                         document = sharing.document_for(db, account, int(value))
                         if document is None:
                             raise LookupError
-                        data = {"document": sharing.attach_recipients(db, "document", [dict(document)], account)[0]}
+                        items = sharing.attach_recipients(db, "document", [dict(document)], account)
+                        data = {"document": document_context.detail(db, account, items[0])}
                     elif route == "/api/usernames":
                         params = parse_qs(url.query)
                         data = accounts.suggest_usernames(db, params.get("q", [""])[0],
@@ -850,6 +865,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Choose create, complete, or withdraw.")
         if self.path == "/api/skills":
             return {"skill": skills.save(db, self.require_account(db), data)}
+        if self.path == "/api/tasks":
+            return tasks.update(db, self.require_account(db), data)
         if self.path == "/api/research-goals":
             return goals.update(db, self.require_account(db), data)
         if self.path == "/api/research-findings":

@@ -78,22 +78,18 @@ To offer Git over SSH, run the [Git-only OpenSSH listener](git-ssh.md#enable-the
 
 Use the supplied reloadable unit and make `/opt/paper-library` a symlink to a release directory containing its own `.venv`. If you already run an older unit or use a real directory at that path, switch to this layout and start the updated unit once during a maintenance window. Keep database and PDF paths outside the release directory.
 
-Run these commands from the new release's source checkout. Include the same optional extras as the current installation, such as `'.[postgres,google]'` if you use PostgreSQL and Google sign-in.
+Install the management command from a trusted checkout, then use it to install and activate later releases.
 
 ```sh
-sudo install -d -m 0755 /opt/paper-library-releases
-release=$(sudo mktemp -d /opt/paper-library-releases/release.XXXXXXXX)
-sudo chmod 0755 "$release"
-sudo python3 -m venv "$release/.venv" &&
-  sudo "$release/.venv/bin/python" -m pip install . &&
-  sudo ln -s "$release" /opt/paper-library.next &&
-  sudo mv -Tf /opt/paper-library.next /opt/paper-library &&
-  sudo systemctl reload paper-library.service
-sudo journalctl -u paper-library.service -n 25 --no-pager
-curl -fsS https://papers.example.org/api/health
+sudo install -m 0755 scripts/paper-libraryctl.sh /usr/local/bin/paper-libraryctl
+sudo paper-libraryctl upgrade .
+sudo paper-libraryctl status
+sudo paper-libraryctl logs -f
 ```
 
-Reload queues a new worker. The supervisor keeps the same port and waits for the new worker to initialize the database before directing the old worker to finish its in-flight requests. Look for a new `HTTP worker … ready` message in the journal to confirm the upgrade. If startup fails, the old worker keeps serving. Keep the previous release directory until its `Drained HTTP worker …` message appears. To roll back a compatible release, repoint the symlink to it and reload again.
+The command builds a separate virtual environment, atomically switches the release link, and waits for systemd's journal to report that the replacement worker is ready. If activation fails, it restores the previous link and prints recent logs. For installations using optional dependencies, run `sudo PAPER_LIBRARY_EXTRAS=postgres,google paper-libraryctl upgrade .` with the extras that apply.
+
+Use `paper-libraryctl releases` to find an earlier release, then `sudo paper-libraryctl rollback /opt/paper-library-releases/RELEASE` to activate it if it can start against the current schema. PostgreSQL releases reject migrations newer than they recognize, so a rollback across those migrations requires a compatible build or a coordinated database restore. Keep the previous release until the journal reports that its worker has drained. Use `upgrade --restart` or `rollback --restart` to restart the service during a maintenance window.
 
 Use live upgrades for releases whose database schema works with both worker versions during the handoff. Schedule maintenance for incompatible schema changes, supervisor changes, and changes to the unit or its environment. For local development, start with `./run_paper_server.sh ./papers.sqlite3 --reloadable` and send `SIGHUP` to that process.
 

@@ -36,6 +36,14 @@ class AgentGoalTests(unittest.TestCase):
         return {"action": "create", "request_id": uuid4().hex, "agent": "worker",
                 "objective": "Write a baseline report", "acceptance_criteria": "Cite a source", **extra}
 
+    def test_document_link_to_agent_goal_follows_the_allowlist(self):
+        source = self.document("Data", audience="all")["document_id"]
+        goal = self.api(data=self.assignment(sources=[{"kind": "document", "id": source}]))["goal"]["id"]
+        document = self.document("Goal notes", audience="all", agent_goal_id=goal)["document_id"]
+        route = f"/api/document?id={document}"
+        self.assertEqual(self.api(route, user="worker")["document"]["goal_link"]["url"], f"/agent-goals?id={goal}")
+        self.assertNotIn("goal_link", self.api(route, user="outsider")["document"])
+
     def test_allowlist_search_suggests_active_ai_accounts(self):
         with library.connect(self.database) as db:
             accounts.create_account(db, "work-human", "sample password", "member")

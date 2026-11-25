@@ -524,6 +524,72 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(re.findall(rb'href="([^"]+)"', experiment_nav),
                          re.findall(rb'href="([^"]+)"', navigation(self.get('/skills')[1])))
 
+    def test_tasks_are_private_to_creator_and_assignee(self):
+        with library.connect(self.db) as db:
+            for name in ("assignee", "other"):
+                db.execute("INSERT INTO accounts(username,password_hash,salt) VALUES (?,?,?)", (name, b'h', b's'))
+            assignee = {"Cookie": "paper_session=" + accounts.start_session(db, 2, None)}
+            other = {"Cookie": "paper_session=" + accounts.start_session(db, 3, None)}
+
+        route = "/api/tasks"
+        self.assertEqual(self.get(route, False)[0], 401)
+        data = {"title": "Check the baseline", "assignee": "assignee", "due_on": "2027-02-01",
+                "issue_url": "https://github.com/example/research/issues/42"}
+        self.assertEqual(self.request(route, data={**data, "due_on": "2027-02-30"})[0], 400)
+        self.assertEqual(self.request(route, data={**data, "issue_url": "https://example.com/issues/42"})[0], 400)
+        status, body = self.request(route, data=data)
+        self.assertEqual(status, 200, body)
+        task_id = json.loads(body)["id"]
+        self.assertEqual(json.loads(self.request(route, False, headers=other)[1])["tasks"], [])
+        edit = {"id": task_id, "revision": 1, "status": "closed", "title": "Assignee cannot rename"}
+        self.assertEqual(self.request(route, False, edit, headers=other)[0], 403)
+        self.assertEqual(self.request(route, False, edit, headers=assignee)[0], 200)
+        self.assertEqual(self.request(route, data=edit)[0], 409)
+        task = json.loads(self.get(route)[1])["tasks"][0]
+        self.assertEqual((task["title"], task["status"], task["revision"]), (data["title"], "closed", 2))
+        self.assertEqual(task["due_on"], data["due_on"])
+        self.assertEqual(task["issue_url"], data["issue_url"])
+        self.assertEqual(self.request(route, data={"id": task_id, "revision": 2, "status": "open",
+                                                  "assignee": None, "due_on": None})[0], 200)
+        self.assertEqual(json.loads(self.request(route, False, headers=assignee)[1])["tasks"], [])
+
+    def test_documents_link_to_visible_goals_and_allow_unlinking(self):
+        with library.connect(self.db) as db:
+            from paper_app import sharing
+            source = sharing.save_document(db, {"id": 1, "role": "user"},
+                                           {"title": "Private source", "markdown": ""})
+            goal = db.execute("""
+                INSERT INTO research_goals(document_id, author_id, author_role, question, rationale, uncertainty)
+                VALUES (?,1,'user','Private question','','') RETURNING id
+            """, (source,)).fetchone()[0]
+            db.execute("INSERT INTO accounts(username,password_hash,salt) VALUES ('reader',?,?)", (b'h', b's'))
+            reader = {"Cookie": "paper_session=" + accounts.start_session(db, 2, None)}
+
+        options = json.loads(self.get("/api/document-goals")[1])["goals"]
+        self.assertEqual(options[0]["url"], f"/documents?document={source}&goal={goal}")
+        self.assertEqual(json.loads(self.request("/api/document-goals", False, headers=reader)[1]), {"goals": []})
+        for route in ("/api/documents", "/api/discussions"):
+            post = {"title": "Shared notes", "markdown": "", "audience": "users", "topic": " Benchmarks ",
+                    "research_goal_id": goal}
+            self.assertEqual(self.request(route, False, post, headers=reader)[0], 403)
+            status, body = self.request(route, data=post)
+            self.assertEqual(status, 200, body)
+            item = json.loads(body)
+            detail = f"/api/document?id={item['document_id']}"
+            private = json.loads(self.request(detail, False, headers=reader)[1])["document"]
+            self.assertEqual(private["topic"], "Benchmarks")
+            self.assertNotIn("goal_link", private)
+            self.assertNotIn("research_goal_id", private)
+            self.assertEqual(json.loads(self.get(detail)[1])["document"]["goal_link"], options[0])
+            edit = {"title": "Revised", "markdown": "Notes", **item}
+            self.assertEqual(self.request(route, data=edit)[0], 200)
+            self.assertEqual(json.loads(self.get(detail)[1])["document"]["goal_link"], options[0])
+            edit.update(revision=2, research_goal_id=None, topic="")
+            self.assertEqual(self.request(route, data=edit)[0], 200)
+            document = json.loads(self.get(detail)[1])["document"]
+            self.assertEqual(document["topic"], "")
+            self.assertNotIn("goal_link", document)
+
     def test_document_comments_are_scoped_and_backward_compatible(self):
         account = {'id': 1, 'role': 'user', 'username': 'owner'}
         with library.connect(self.db) as db:
