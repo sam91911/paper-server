@@ -24,14 +24,15 @@ STATUSES = ("open", "in_progress", "closed")
 
 
 def read(db, account):
-    return {"tasks": [dict(row) for row in db.execute("""
-        SELECT t.*, o.username AS creator, a.username AS assignee
+    owner = sharing.owner_sql("t.owner_id")
+    return {"tasks": [dict(row, can_manage=bool(row["can_manage"])) for row in db.execute(f"""
+        SELECT t.*, o.username AS creator, a.username AS assignee, {owner} AS can_manage
         FROM tasks t JOIN accounts o ON o.id=t.owner_id
         LEFT JOIN accounts a ON a.id=t.assignee_id
-        WHERE t.owner_id=:viewer OR t.assignee_id=:viewer
+        WHERE {owner} OR t.assignee_id=:viewer
         ORDER BY CASE WHEN t.status='closed' THEN 1 ELSE 0 END,
                  CASE WHEN t.due_on IS NULL THEN 1 ELSE 0 END, t.due_on, t.id DESC
-    """, {"viewer": account["id"]})]}
+    """, sharing.viewer_params(account))]}
 
 
 def update(db, account, data):
@@ -43,13 +44,16 @@ def update(db, account, data):
 
     if task_id is not None:
         existing = db.execute("SELECT * FROM tasks WHERE id=?", (findings.positive_id(task_id),)).fetchone()
-        if not existing or viewer not in (existing["owner_id"], existing["assignee_id"]):
+        if not existing:
+            raise sharing.AccessDenied
+        owner = sharing.is_owner(db, account, existing["owner_id"])
+        if not owner and viewer != existing["assignee_id"]:
             raise sharing.AccessDenied
         revision = data.get("revision")
         if type(revision) is not int or existing["revision"] != revision:
             raise sharing.EditConflict("This task changed. Reload it before saving.")
         status = data.get("status", existing["status"])
-        if viewer != existing["owner_id"]:
+        if not owner:
             db.execute("UPDATE tasks SET status=?,revision=revision+1 WHERE id=?", (status, task_id))
             return {"id": task_id}
 

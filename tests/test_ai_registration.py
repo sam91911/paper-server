@@ -167,6 +167,32 @@ class AIRegistrationTests(unittest.TestCase):
         self.api(doc_path, key=self.owner, expected=404)
         self.assertTrue(self.api(doc_path, key=other)["document"]["can_manage"])
 
+    def test_operator_can_edit_agent_created_tasks_without_inheriting_assignments(self):
+        with library.connect(self.database) as db:
+            worker_id = accounts.create_account(db, "worker", "sample password", "local")
+            worker = accounts.create_key(db, worker_id, "worker")
+            other_id = accounts.create_account(db, "other", "sample password", "user")
+            other = accounts.create_key(db, other_id, "other")
+            ai_accounts.assign_operator(db, "worker", "owner")
+
+        route = "/api/tasks"
+        task_id = self.api(route, key=worker, data={"title": "Agent task"})["id"]
+        assigned_id = self.api(route, key=other, data={"title": "Assigned to worker", "assignee": "worker"})["id"]
+        owned = self.api(route, key=self.owner)["tasks"]
+        self.assertEqual([task["id"] for task in owned], [task_id])
+        self.assertTrue(owned[0]["can_manage"])
+        self.api(route, key=self.owner, data={"id": task_id, "revision": 1, "title": "Revised", "due_on": "2027-02-01"})
+        edit = {"id": assigned_id, "revision": 1, "status": "closed"}
+        self.api(route, key=self.owner, data=edit, expected=403)
+        self.api(route, key=worker, data=edit)
+        edited = self.api(route, key=self.owner)["tasks"][0]
+        self.assertEqual((edited["owner_id"], edited["title"], edited["due_on"]), (worker_id, "Revised", "2027-02-01"))
+        with library.connect(self.database) as db:
+            ai_accounts.assign_operator(db, "worker", "other")
+        self.assertEqual(self.api(route, key=self.owner)["tasks"], [])
+        self.api(route, key=self.owner, data={"id": task_id, "revision": 2, "title": "Another edit"}, expected=403)
+        self.api(route, key=other, data={"id": task_id, "revision": 2, "title": "New operator"})
+
     def test_operator_can_cancel_replace_and_rotate_without_changing_account(self):
         route = "/api/ai/invitations"
         with library.connect(self.database) as db:

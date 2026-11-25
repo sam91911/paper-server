@@ -426,9 +426,9 @@ PATHS = {
     "/api/document-goals": {"get": operation("List goals available to link to a document",
         obj({"goals": array(GOAL_LINK)}, ("goals",)))},
     "/api/tasks": {
-        "get": operation("List tasks created by or assigned to the current account",
+        "get": operation("List tasks owned by or assigned to the current account, including its agents’ owned tasks",
             obj({"tasks": array(obj({**TASK_FIELDS, "id": ID, "revision": ID, "owner_id": ID,
-                                     "assignee_id": nullable(ID), "creator": STRING},
+                                     "assignee_id": nullable(ID), "creator": STRING, "can_manage": BOOLEAN},
                                     ("id", "revision", "title", "status")))}, ("tasks",))),
         "post": operation("Create or update a task", acknowledgement("id", id=ID),
             body=obj({**TASK_FIELDS, "id": ID, "revision": ID}),

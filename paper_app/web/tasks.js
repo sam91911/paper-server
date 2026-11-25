@@ -5,7 +5,6 @@ const taskStatus = taskElement("task-status");
 const taskForm = taskElement("task-editor");
 const taskFilter = taskElement("task-filter");
 const taskStatusLabels = {open: "Open", in_progress: "In progress", closed: "Closed"};
-let taskAccount;
 let taskItems = [];
 let editingTask;
 
@@ -19,7 +18,7 @@ function taskPart(parent, tag, content) {
 function openTaskEditor(task) {
   editingTask = task;
   taskForm.reset();
-  taskElement("task-details").disabled = Boolean(task && task.owner_id !== taskAccount.id);
+  taskElement("task-details").disabled = Boolean(task && !task.can_manage);
   taskElement("task-editor-title").textContent = task ? `Edit task #${task.id}` : "New task";
   for (const name of ["title", "description", "assignee", "due_on", "issue_url", "status"]) {
     if (task) taskForm.elements[name].value = task[name] ?? "";
@@ -97,9 +96,9 @@ taskForm.addEventListener("submit", async event => {
 });
 
 async function setupTasks() {
-  ({account: taskAccount} = await api("account"));
-  taskElement("task-sign-in").hidden = Boolean(taskAccount);
-  if (!taskAccount) return;
+  const {account} = await api("account");
+  taskElement("task-sign-in").hidden = Boolean(account);
+  if (!account) return;
   await loadTasks();
   taskElement("task-workspace").hidden = false;
 }
