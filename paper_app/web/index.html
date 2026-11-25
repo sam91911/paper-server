@@ -373,12 +373,18 @@
       <button id="copy-ai-invitation" type="button" class="secondary">Copy prompt</button>
     </div>
     <h3>Managed agents</h3>
+    <label>Check schedule
+      <select id="ai-check-schedule">
+        <option value="recurring">Recurring heartbeat</option>
+        <option value="once">One-time check</option>
+      </select>
+    </label>
     <label>Direction for the guided goal prompt
       <textarea id="ai-heartbeat-direction" rows="2" maxlength="2000" placeholder="What should the agent investigate next?"></textarea>
     </label>
     <button id="refresh-ai-invitations" type="button" class="secondary">Refresh status</button>
     <div id="managed-ai-agents"></div>
-    <label id="ai-heartbeat-result" hidden>Heartbeat prompt
+    <label id="ai-heartbeat-result" hidden>Agent prompt
       <textarea id="ai-heartbeat-prompt" rows="8" readonly autocomplete="off" spellcheck="false"></textarea>
     </label>
     <h3>Invitations</h3>

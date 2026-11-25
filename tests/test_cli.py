@@ -1,11 +1,18 @@
 import io
 import os
 import re
+import shutil
+import signal
+import socket
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
+from http.client import HTTPResponse
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.request import urlopen
 
 from paper_app import accounts, admin_console, library
 
@@ -41,6 +48,94 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("not allowed with argument", result.stderr)
         self.assertFalse((self.directory / "library.sqlite3").exists())
+
+    @unittest.skipUnless(os.name == "posix", "Graceful reload requires POSIX")
+    def test_reload_serves_new_code_and_drains_old_requests(self):
+        try:
+            with socket.create_server(("127.0.0.1", 0)):
+                pass
+        except PermissionError:
+            self.skipTest("Loopback sockets are disabled in this environment")
+        current = self.directory / "current"
+        first_release = self.directory / "first"
+        second_release = self.directory / "second"
+        for release in (first_release, second_release):
+            shutil.copytree(LAUNCHER.parent / "paper_app", release / "paper_app",
+                            ignore=shutil.ignore_patterns("__pycache__"))
+            source = release / "paper_app" / "server.py"
+            code = source.read_text().replace('{"status": "ok"}', f'{{"status": "{release.name}"}}')
+            if release == first_release:
+                code = code.replace("    def read_health(self):\n", """    def read_health(self):
+        if self.headers.get("X-Test-Drain"):
+            import time
+            Path("request-started").touch()
+            while not Path("finish-request").exists():
+                time.sleep(0.02)
+""")
+            source.write_text(code)
+        current.symlink_to(first_release, target_is_directory=True)
+
+        def switch_release(release):
+            pending = self.directory / "next"
+            pending.symlink_to(release, target_is_directory=True)
+            pending.replace(current)
+
+        def eventually(check):
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                value = check()
+                if value:
+                    return value
+                time.sleep(0.03)
+            self.fail(log_path.read_text())
+
+        log_path = self.directory / "server.log"
+        env = {**os.environ, "PYTHONPATH": str(current)}
+        for name in ("PAPER_DATABASE_URL", "PAPER_PUBLIC_URL", "PAPER_SERVER_WORKER_FDS"):
+            env.pop(name, None)
+        with log_path.open("w") as log:
+            server = subprocess.Popen(
+                [sys.executable, "-P", "-m", "paper_app.server", "--reloadable", "--port", "0"],
+                cwd=self.directory, env=env, stdout=log, stderr=log,
+            )
+            try:
+                port = int(eventually(lambda: re.search(r"ready on port (\d+)", log_path.read_text()))[1])
+                url = f"http://127.0.0.1:{port}/api/health"
+
+                def health():
+                    with urlopen(url, timeout=2) as response:
+                        return response.read()
+
+                self.assertIn(b'"first"', health())
+                with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+                    connection.sendall(
+                        f"GET /api/health HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nX-Test-Drain: 1\r\n\r\n".encode("ascii")
+                    )
+                    eventually((self.directory / "request-started").exists)
+                    switch_release(second_release)
+                    server.send_signal(signal.SIGHUP)
+                    eventually(lambda: b'"second"' in health())
+                    eventually(lambda: "Draining HTTP worker" in log_path.read_text())
+                    (self.directory / "finish-request").touch()
+                    with HTTPResponse(connection) as response:
+                        response.begin()
+                        self.assertEqual(response.status, 200)
+                        self.assertIn(b'"first"', response.read())
+
+                switch_release(self.directory / "missing")
+                server.send_signal(signal.SIGHUP)
+                eventually(lambda: "Replacement HTTP worker failed to start" in log_path.read_text())
+                self.assertIn(b'"second"', health())
+            finally:
+                (self.directory / "finish-request").touch()
+                server.terminate()
+                try:
+                    server.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    server.kill()
+                    server.wait()
+                    raise
+        self.assertEqual(server.returncode, 0, log_path.read_text())
 
     def test_bash_completion_matches_launcher_options_paths_and_roles(self):
         completion = LAUNCHER.parent / "scripts" / "paper-server-completion.bash"

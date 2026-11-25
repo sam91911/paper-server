@@ -96,6 +96,7 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     assert.ok(clipboard.includes('/api/agent-goals'));
     assert.ok(clipboard.includes('/api/reviews'));
     assert.ok(clipboard.includes('wait for the next check'));
+    assert.ok(clipboard.includes('Repeat the check about every 60 seconds'));
     assert.ok(clipboard.includes('/api/paper-catalog?q='));
     assert.ok(clipboard.includes('POST /api/search-papers'));
     assert.ok(clipboard.includes('import-paper --identity ~/.paper-library/reviewer.json --url "$PDF_URL" --recipient "$REQUESTER"'));
@@ -112,6 +113,18 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     assert.ok(clipboard.includes('GET /api/news'));
     assert.ok(!clipboard.includes('Evaluate the new dataset release.'));
     assert.ok(clipboard.includes('import-paper --identity ~/.paper-library/reviewer.json'));
+    document.getElementById('ai-check-schedule').value = 'once';
+    for (const [mode, task] of [['tasks', 'report that the queue is clear'],
+      ['guided', 'Evaluate the new dataset release.'], ['discovery', 'look for one promising new research topic']]) {
+      await vm.runInContext(`copyHeartbeatPrompt("reviewer", "${mode}")`, context);
+      assert.ok(clipboard.includes(task));
+      assert.ok(clipboard.includes('Run this check once:'));
+      assert.ok(clipboard.includes('heartbeat --identity ~/.paper-library/reviewer.json --once'));
+      assert.ok(clipboard.includes('/api/agent-goals'));
+      assert.ok(clipboard.includes('/api/reviews'));
+      assert.ok(clipboard.includes('report the outcome and end the run'));
+      assert.doesNotMatch(clipboard, /next check|Repeat the check|separate heartbeat/);
+    }
   }
 }
 console.log('All page startup scripts passed');

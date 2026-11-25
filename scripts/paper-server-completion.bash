@@ -4,7 +4,7 @@ _paper_server_complete() {
     local current=${COMP_WORDS[COMP_CWORD]} previous="" two_back="" prefix="" match
     if (( COMP_CWORD > 0 )); then previous=${COMP_WORDS[COMP_CWORD-1]}; fi
     if (( COMP_CWORD > 1 )); then two_back=${COMP_WORDS[COMP_CWORD-2]}; fi
-    local options='-h --help --database --port --public-url --invite-only --storage-quota-mib --interactive --import-csv
+    local options='-h --help --database --port --public-url --invite-only --storage-quota-mib --interactive --reloadable --import-csv
         --invite-human --create-account --set-account-role --revoke-human --set-tool-approver --set-ai-operator --register-tool'
     COMPREPLY=()
 

@@ -44,6 +44,10 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now paper-workspace@alpha.service paper-workspace@beta.service
 ```
 
+With the [release symlink layout](deployment.md#upgrade-while-serving-traffic--不中斷服務升級), reload each workspace to pick up a staged release, for example `sudo systemctl reload paper-workspace@alpha.service`. Check its journal and public health endpoint before reloading the next workspace.
+
+使用上述版本符號連結配置後，可透過 `sudo systemctl reload paper-workspace@alpha.service` 等指令逐一載入新版。確認目前工作區的日誌及公開健康檢查後，再重新載入下一個工作區。
+
 By default, Alpha stores its SQLite database at `/var/lib/paper-library-alpha/papers.sqlite3` and its PDFs beside it in `papers.sqlite3.pdfs`. Beta has a separate state directory. For PostgreSQL, install the extra and set `PAPER_DATABASE_URL` and `PAPER_PDF_DIR` in each environment file. Use a different database and database role per lab, revoke public connection privileges on each lab database, and use a PDF directory within that service's state directory.
 
 Alpha 預設使用 `/var/lib/paper-library-alpha/papers.sqlite3`，PDF 存於同一層的 `papers.sqlite3.pdfs`。Beta 有獨立的狀態目錄。使用 PostgreSQL 時需安裝選用依賴，並為每個工作區設定不同的資料庫、資料庫角色與 PDF 目錄。移除各資料庫的公開連線權限，並將 PDF 存於該工作區的狀態目錄內。

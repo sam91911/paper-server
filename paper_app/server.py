@@ -12,6 +12,8 @@ import os
 import platform
 import re
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +24,7 @@ from time import perf_counter
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
+from . import supervisor
 from . import account_routes, accounts, admin_console, agent_goals, ai_accounts, client_distribution, comment_routes, crossref, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
@@ -860,16 +863,46 @@ class Handler(BaseHTTPRequestHandler):
 
 
 
-def serve(database, port, external_url=None, *, interactive=False, invite_only=False, storage_limit=0):
+class InheritedHTTPServer(ThreadingHTTPServer):
+    daemon_threads = False
+    timeout = supervisor.POLL_INTERVAL
+
+    def __init__(self, listener_fd):
+        super().__init__(("127.0.0.1", 0), Handler, bind_and_activate=False)
+        self.socket.close()
+        self.socket = socket.socket(fileno=listener_fd)
+        self.socket.setblocking(False)
+        self.server_address = self.socket.getsockname()
+        self.server_name, self.server_port = self.server_address
+
+    def get_request(self):
+        connection, address = super().get_request()
+        connection.setblocking(True)
+        return connection, address
+
+
+def serve(database, port, external_url=None, *, interactive=False, invite_only=False, storage_limit=0,
+          worker_fds=None):
     if not shutil.which("pdftotext"):
         LOG.warning("pdftotext is unavailable; PDF import and text extraction will fail")
-    with ThreadingHTTPServer(("127.0.0.1", port), Handler) as server:
+    server = (InheritedHTTPServer(worker_fds[0]) if worker_fds
+              else ThreadingHTTPServer(("127.0.0.1", port), Handler))
+    with server:
         server.database = database
         server.public_url = external_url
         server.invite_only = invite_only
         server.storage_limit = storage_limit
         server.request_metrics = os.getenv("PAPER_REQUEST_METRICS") == "1"
         server.google_config = google_signin.configuration(server.server_port, origin=external_url)
+        draining = False
+
+        def drain(signum, frame):
+            nonlocal draining
+            draining = True
+
+        if worker_fds:
+            signal.signal(signal.SIGTERM, drain)
+            signal.signal(signal.SIGINT, drain)
         stop = Event()
         worker = Thread(target=metadata_sync.run, args=(database, stop), daemon=True)
         worker.start()
@@ -877,7 +910,12 @@ def serve(database, port, external_url=None, *, interactive=False, invite_only=F
             print(f"Public Paper Library at {external_url}/ via reverse proxy.", flush=True)
         print(f"Paper library at http://127.0.0.1:{server.server_port}/", flush=True)
         try:
-            if interactive:
+            if worker_fds:
+                with os.fdopen(worker_fds[1], "wb") as readiness:
+                    readiness.write(b"1")
+                while not draining:
+                    server.handle_request()
+            elif interactive:
                 http = Thread(target=server.serve_forever)
                 http.start()
                 try:
@@ -892,6 +930,8 @@ def serve(database, port, external_url=None, *, interactive=False, invite_only=F
             pass
         finally:
             stop.set()
+    if worker_fds:
+        worker.join()
 
 
 def main():
@@ -905,6 +945,7 @@ def main():
                         help="Combined workspace quota for uploaded PDFs and artifact versions (0 disables it)")
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--interactive", action="store_true", help="Run the server with an admin console on stdin")
+    modes.add_argument("--reloadable", action="store_true", help="Replace the HTTP worker on SIGHUP (POSIX)")
     modes.add_argument("--import-csv", type=Path, help="Import a metrics CSV and exit")
     modes.add_argument("--invite-human", metavar="EMAIL", help="Print a one-time browser signup URL")
     modes.add_argument("--create-account", nargs=2, metavar=("USERNAME", "ROLE"))
@@ -918,6 +959,17 @@ def main():
     if args.storage_quota_mib < 0:
         parser.error("--storage-quota-mib must be nonnegative")
     try:
+        worker_fds = None
+        if args.reloadable:
+            if os.name != "posix":
+                parser.error("--reloadable requires POSIX process and socket support")
+            inherited = os.environ.pop(supervisor.WORKER_FDS, None)
+            if inherited is None:
+                supervisor.supervise(args.port)
+                return
+            worker_fds = tuple(map(int, inherited.split(",")))
+            for fd in worker_fds:
+                os.set_inheritable(fd, False)
         database = storage.configuration(args.database)
         library.initialize(database)
         if args.revoke_human:
@@ -985,7 +1037,8 @@ def main():
             print(f"Imported metrics for {count} paper path(s).")
             return
         serve(database, args.port, public_url(args.public_url) if args.public_url else None,
-              interactive=args.interactive, invite_only=args.invite_only, storage_limit=args.storage_quota_mib * 1024**2)
+              interactive=args.interactive, invite_only=args.invite_only, storage_limit=args.storage_quota_mib * 1024**2,
+              worker_fds=worker_fds)
     except storage.ERRORS + (csv.Error, ValueError, OSError, EOFError) as error:
         parser.exit(1, f"Paper library: {error}\n")
 

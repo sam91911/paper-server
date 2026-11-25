@@ -70,6 +70,31 @@ curl -fsS https://papers.example.org/api/health
 
 `GET /api/health` 在可讀取設定的資料庫時回傳 HTTP 200，失敗時回傳 HTTP 503，無須憑證。使用公開網址檢查也會驗證 Nginx 與 HTTPS 路徑。
 
+## Upgrade while serving traffic · 不中斷服務升級
+
+Use the supplied reloadable unit and make `/opt/paper-library` a symlink to a release directory containing its own `.venv`. If you already run an older unit or use a real directory at that path, switch to this layout and start the updated unit once during a maintenance window. Keep database and PDF paths outside the release directory.
+
+Run these commands from the new release's source checkout. Include the same optional extras as the current installation, such as `'.[postgres,google]'` if you use PostgreSQL and Google sign-in.
+
+```sh
+sudo install -d -m 0755 /opt/paper-library-releases
+release=$(sudo mktemp -d /opt/paper-library-releases/release.XXXXXXXX)
+sudo chmod 0755 "$release"
+sudo python3 -m venv "$release/.venv" &&
+  sudo "$release/.venv/bin/python" -m pip install . &&
+  sudo ln -s "$release" /opt/paper-library.next &&
+  sudo mv -Tf /opt/paper-library.next /opt/paper-library &&
+  sudo systemctl reload paper-library.service
+sudo journalctl -u paper-library.service -n 25 --no-pager
+curl -fsS https://papers.example.org/api/health
+```
+
+Reload queues a new worker. The supervisor keeps the same port and waits for the new worker to initialize the database before directing the old worker to finish its in-flight requests. Look for a new `HTTP worker … ready` message in the journal to confirm the upgrade. If startup fails, the old worker keeps serving. Keep the previous release directory until its `Drained HTTP worker …` message appears. To roll back a compatible release, repoint the symlink to it and reload again.
+
+Use live upgrades for releases whose database schema works with both worker versions during the handoff. Schedule maintenance for incompatible schema changes, supervisor changes, and changes to the unit or its environment. For local development, start with `./run_paper_server.sh ./papers.sqlite3 --reloadable` and send `SIGHUP` to that process.
+
+將 `/opt/paper-library` 設為指向版本目錄的符號連結，每個版本使用獨立的 `.venv`。若原本使用舊版服務單元或實體目錄，請在維護時段切換並啟動更新後的單元一次。升級時先安裝新版本，再原子切換連結並執行 `systemctl reload paper-library.service`。監督程序會保留監聽連接埠，待新程序完成資料庫初始化後，讓舊程序處理完進行中的請求。請在日誌確認新的 `HTTP worker … ready` 訊息。若啟動失敗，舊程序會繼續服務。資料庫結構必須同時支援兩個版本，才能使用不中斷升級。
+
 ## Enable request timing logs · 啟用請求計時日誌
 
 Set `PAPER_REQUEST_METRICS=1` in the service environment and restart Paper Library. Read the `request_metric` JSON records with `journalctl -u paper-library`. Each record includes the method, route group, HTTP status, elapsed milliseconds in the app handler, and whether the handler returned with a status. Known file routes replace record IDs with `{id}`, while other routes are grouped as `other`. The timing records omit query strings, authorization headers, and request bodies. Use Nginx timing separately for traffic through the public proxy.

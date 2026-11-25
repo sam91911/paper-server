@@ -680,6 +680,7 @@ async function loadLibrary(paperId) {
       element("ai-invitation-prompt").value = "";
       element("ai-invitation-result").hidden = true;
       element("managed-ai-agents").replaceChildren();
+      element("ai-check-schedule").value = "recurring";
       element("ai-heartbeat-direction").value = "";
       element("ai-heartbeat-prompt").value = "";
       element("ai-heartbeat-result").hidden = true;
@@ -989,6 +990,7 @@ Use the HTTPS URLs as provided. If the library uses loopback on another machine,
 async function copyHeartbeatPrompt(username, mode) {
   const command = '"$HOME/.paper-library/venv/bin/python" -m paper_client.agent';
   const identity = `~/.paper-library/${username}.json`;
+  const once = element("ai-check-schedule").value === "once";
   const directionField = element("ai-heartbeat-direction");
   const direction = directionField.value.trim();
   if (mode === "guided" && !direction) {
@@ -997,7 +999,8 @@ async function copyHeartbeatPrompt(username, mode) {
     return;
   }
   const idle = {
-    tasks: "When there is no eligible assigned work, wait for the next check.",
+    tasks: once ? "If there is no eligible assigned work, report that the queue is clear." :
+      "When there is no eligible assigned work, wait for the next check.",
     guided: `After handling eligible assignments, use this research direction to propose one new goal:
 
 ${direction}
@@ -1005,9 +1008,11 @@ ${direction}
 Read relevant News entries and discussions with GET /api/news and GET /api/document-comments?document_id=<id>. Look for evidence that addresses the direction. Check for an existing proposal first. Record supporting findings, then propose the goal in a shared document or news entry using POST /api/research-goals. Include a research question, rationale, uncertainty, and supporting finding IDs. Share the proposal for human review.`,
     discovery: `After handling eligible assignments, independently look for one promising new research topic. Start with GET /api/news and accessible discussions. Check recent public sources and the paper catalog for corroboration and gaps. Compare against existing goals before proposing one. If a topic is supported, record the source URL and supporting findings, then use POST /api/research-goals to propose an evidence-backed goal in a shared document or news entry. If the evidence is too thin to propose a goal, share a short note on what you found.`,
   }[mode];
+  const schedule = once ? "When the work from this check is complete, report the outcome and end the run." :
+    "Repeat the check about every 60 seconds if your environment supports recurring execution. Finish a check before starting another. For longer tasks, keep a separate heartbeat process running by omitting --once.";
   const prompt = `Check in to my Paper Library as ${username} using the enrolled identity you already use. Replace the example path if your identity was saved elsewhere or rotated.
 
-On each check, run:
+${once ? "Run this check once:" : "On each check, run:"}
 ${command} heartbeat --identity ${identity} --once
 ${command} request --identity ${identity} /api/agent-goals
 ${command} request --identity ${identity} /api/reviews
@@ -1021,22 +1026,22 @@ For a goal you have claimed, use its objective, acceptance criteria, and latest 
 Before importing, refresh the goal and check that it is still yours to work on. Run this for each selected PDF, substituting its URL and the goal's requester username:
 ${command} import-paper --identity ${identity} --url "$PDF_URL" --recipient "$REQUESTER"
 
-Record each successful paper ID, title, DOI if available, source URL, and why it helps the goal. Post that to the goal as progress with evidence objects {"kind":"paper","id":PAPER_ID}. Revisit the recorded paper IDs on the next check. If a needed PDF is unavailable or a reusable paper needs sharing, report the gap and continue with accessible evidence where possible.
+Record each successful paper ID, title, DOI if available, source URL, and why it helps the goal. Post that to the goal as progress with evidence objects {"kind":"paper","id":PAPER_ID}.${once ? "" : " Revisit the recorded paper IDs on the next check."} If a needed PDF is unavailable or a reusable paper needs sharing, report the gap and continue with accessible evidence where possible.
 
 If the goal requires an experiment, run it in your own workspace. Record exact reproduction commands and settings in the run. Use the default API skill to upload the committed Git snapshot, outputs, and logs to that run. Cite the experiment and result artifact versions in your report.
 
 ${idle}
 
-Repeat the check about every 60 seconds if your environment supports recurring execution. Finish a check before starting another. For longer tasks, keep a separate heartbeat process running by omitting --once. If authentication is denied, stop and report it.`;
+${schedule} If authentication is denied, stop and report it.`;
   const field = element("ai-heartbeat-prompt");
   field.value = prompt;
   element("ai-heartbeat-result").hidden = false;
   try {
     await navigator.clipboard.writeText(prompt);
-    accountStatus.textContent = "Heartbeat prompt copied.";
+    accountStatus.textContent = "Agent prompt copied.";
   } catch {
     field.select();
-    accountStatus.textContent = "Copy the selected heartbeat prompt.";
+    accountStatus.textContent = "Copy the selected agent prompt.";
   }
 }
 

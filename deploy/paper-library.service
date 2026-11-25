@@ -6,11 +6,13 @@ After=network.target
 Type=simple
 User=paper-library
 Group=paper-library
-WorkingDirectory=/opt/paper-library
+WorkingDirectory=%S/paper-library
 StateDirectory=paper-library
 StateDirectoryMode=0750
 EnvironmentFile=/etc/paper-library.env
-ExecStart=/opt/paper-library/.venv/bin/python -m paper_app.server --database /var/lib/paper-library/library.sqlite3 --port 8765
+ExecStart=/opt/paper-library/.venv/bin/python -P -m paper_app.server --reloadable --database /var/lib/paper-library/library.sqlite3 --port 8765
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
 Restart=on-failure
 RestartSec=3s
 
