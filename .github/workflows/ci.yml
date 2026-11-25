@@ -65,14 +65,15 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y openssh-server python3-venv
       - name: Install the SSH authorization command
         run: |
-          venv=/opt/paper-library-ssh-test
+          # OpenSSH also checks the ownership and permissions of parent directories.
+          venv=/var/lib/paper-library-ssh-test
           sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" "$venv"
           /usr/bin/python3 -m venv --copies "$venv"
           "$venv/bin/python" -m pip install .
           sudo chown -R root:root "$venv"
           sudo chmod go-w "$venv" "$venv/bin" "$venv/bin/python"
       - run: systemd-analyze verify deploy/paper-library-git.service
-      - run: /opt/paper-library-ssh-test/bin/python -m unittest discover -s tests -p test_git_ssh.py -v
+      - run: /var/lib/paper-library-ssh-test/bin/python -m unittest discover -s tests -p test_git_ssh.py -v
         env:
           PAPER_TEST_SSHD: /usr/sbin/sshd
 
