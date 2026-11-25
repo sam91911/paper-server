@@ -172,7 +172,7 @@ def main():
     connection.add_argument("key_hex")
     commands.add_parser("check")
     transaction = commands.add_parser("accept")
-    transaction.add_argument("phase", choices=("prepared", "committed", "aborted"))
+    transaction.add_argument("phase", choices=("preparing", "prepared", "committed", "aborted"))
     args = parser.parse_args()
     try:
         if args.action == "authorized-key":
