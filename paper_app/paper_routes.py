@@ -3,7 +3,7 @@
 import re
 from urllib.parse import parse_qs
 
-from . import accounts, library, metadata_sync, metrics, sharing
+from . import accounts, library, metadata_sync, metrics, sharing, zotero
 
 
 def _positive_number(value, label):
@@ -67,6 +67,10 @@ def read_papers(handler, db, url, account):
 
 
 def update_paper(handler, db, data):
+    if handler.path == "/api/paper-reference":
+        return {"paper_id": library.create_paper_reference(db, handler.require_account(db), data)}
+    if handler.path == "/api/zotero-import":
+        return zotero.import_references(db, handler.require_account(db), data)
     if handler.path in ("/api/paper-metrics", "/api/metric-editors", "/api/claim-paper"):
         account = handler.require_account(db)
         if handler.path == "/api/paper-metrics":
@@ -81,6 +85,8 @@ def update_paper(handler, db, data):
     if handler.path == "/api/paper-access":
         sharing.set_paper_audience(db, paper_id, handler.require_account(db), data.get("audience"),
                                    data.get("recipients"))
+        if "metadata_audience" in data:
+            sharing.set_paper_metadata_audience(db, paper_id, data["metadata_audience"])
         if "allow_title" in data:
             if type(data["allow_title"]) is not bool:
                 raise ValueError("Choose whether to allow a title lookup.")

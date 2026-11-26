@@ -12,7 +12,7 @@ from unittest.mock import patch
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from paper_app import accounts, library, pdf
-from paper_client import agent
+from paper_client import agent, mcp_server
 from test_skill_api import request
 
 
@@ -38,6 +38,36 @@ def fixture_pdf(text=b'Measured power was 12.5 mW.'):
 
 @unittest.skipUnless(shutil.which('pdftotext'), 'Poppler is not installed')
 class PdfIntegrationTests(unittest.TestCase):
+    def test_attach_pdf_keeps_reference_comments_and_checks_owner(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "library.sqlite3"
+            library.initialize(path)
+            with library.connect(path) as db:
+                for username in ("owner", "reader"):
+                    db.execute("INSERT INTO accounts(username,password_hash,salt) VALUES (?,?,?)",
+                               (username, b"h", b"s"))
+                owner, reader = (accounts.start_session(db, account_id, None) for account_id in (1, 2))
+            _, reference = request(path, "/api/paper-reference", cookie=owner,
+                                   data={"doi": "10.1234/example"})
+            paper = reference["paper_id"]
+            _, comment = request(path, "/api/comments", cookie=owner,
+                                 data={"paper_id": paper, "body": "Before the PDF", "audience": "all"})
+            headers = {"Content-Type": "application/pdf", "X-Paper-Filename": "paper.pdf",
+                       "X-Paper-ID": str(paper), "X-Paper-Audience": "owner"}
+            payload = fixture_pdf()
+            self.assertEqual(request(path, "/api/papers", cookie=reader, headers=headers, binary=payload)[0], 403)
+            for _ in range(2):
+                status, attached = request(path, "/api/papers", cookie=owner, headers=headers, binary=payload)
+                self.assertEqual((status, attached["paper_id"]), (200, paper))
+            status, _ = request(path, "/api/papers", cookie=owner, headers=headers,
+                                binary=fixture_pdf(b"Different content"))
+            self.assertEqual(status, 409)
+            url = f"/papers/{paper}/source.pdf"
+            self.assertEqual(request(path, url, cookie=owner), (200, payload))
+            self.assertEqual(request(path, url, cookie=reader)[0], 404)
+            _, comments = request(path, f"/api/paper-comments?paper_id={paper}", cookie=reader)
+            self.assertEqual([item["id"] for item in comments["comments"]], [comment["comment_id"]])
+
     def test_enrolled_agent_imports_a_paper_and_writes_a_document_and_goal(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "library.sqlite3"
@@ -59,7 +89,8 @@ class PdfIntegrationTests(unittest.TestCase):
             self.assertEqual(status, 200, registered)
 
             def send(request_object, timeout):
-                route = urlsplit(request_object.full_url).path
+                url = urlsplit(request_object.full_url)
+                route = url.path + ("?" + url.query if url.query else "")
                 status, result = request(path, route, binary=request_object.data, headers=dict(request_object.header_items()))
                 self.assertEqual(status, 200, result)
                 return io.BytesIO(json.dumps(result).encode())
@@ -68,6 +99,22 @@ class PdfIntegrationTests(unittest.TestCase):
                  patch.object(client.opener, "open", side_effect=send):
                 imported = agent.import_paper(client, "https://repository.example.org/paper.pdf", None, ["alice"], audience="local")
                 paper_id = imported["paper_id"]
+                def tool(name, arguments, allow_comments=False):
+                    return mcp_server.reply(client, {
+                        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                        "params": {"name": name, "arguments": arguments},
+                    }, allow_comments)["result"]
+
+                self.assertEqual(json.loads(tool("read_paper", {"paper_id": paper_id})["content"][0]["text"])
+                                 ["paper"]["id"], paper_id)
+                search = json.loads(tool("search_papers", {"query": "paper.pdf"})["content"][0]["text"])
+                self.assertEqual([paper["id"] for paper in search["papers"]], [paper_id])
+                comment = {"paper_id": paper_id, "body": "Agent discussion"}
+                self.assertTrue(tool("post_comment", comment)["isError"])
+                posted = tool("post_comment", comment, allow_comments=True)
+                self.assertNotIn("isError", posted)
+                comments = json.loads(tool("read_comments", {"paper_id": paper_id})["content"][0]["text"])
+                self.assertEqual([item["body"] for item in comments["comments"]], [comment["body"]])
                 doc = json.loads(client.request("/api/documents", {
                     "title": "Paper notes", "markdown": f"Paper #{paper_id}, page 1.", "recipients": ["alice"],
                 }))

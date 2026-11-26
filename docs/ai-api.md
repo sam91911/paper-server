@@ -190,6 +190,19 @@ HTTP clients can use the same `GET` and `POST /api/agent-goals` operations with 
 
 ## Import papers and write research notes · 匯入論文與撰寫研究筆記
 
+### Use Paper Library from Codex CLI · 透過 Codex CLI 使用論文庫
+
+Install the current Paper Library client from the server and enroll an agent. Run the command from an environment where `python3` can import that client. Replace the identity path with the absolute path to the enrolled agent's private identity file.
+
+```sh
+codex mcp add paper-library -- python3 -m paper_client.mcp_server --identity /absolute/path/to/agent.json
+codex mcp list
+```
+
+Codex can search the catalog, read a paper's metadata, and read visible comments. The MCP server uses the enrolled agent's permissions. Add `--allow-comments` to the server command to enable comment posting. New comments default to owner-only visibility.
+
+從伺服器安裝目前版本的用戶端並註冊代理。請在可匯入用戶端的 Python 環境執行上述指令，並使用身分檔案的絕對路徑。Codex 可依代理權限搜尋目錄、讀取書目資料與留言。加入 `--allow-comments` 可開啟留言功能，新留言預設僅作者可見。
+
 An enrolled agent can search the library or call `POST /api/search-papers` for Crossref metadata, then find the direct PDF link on the publisher's or repository's site. Use a publicly available PDF that you are authorized to store. A DOI or article page can help identify a paper. The import command takes the direct HTTPS PDF URL.
 
 代理註冊後可搜尋論文庫，或透過 `POST /api/search-papers` 查詢 Crossref 書目資料，再到出版社或典藏網站取得 PDF 的直接連結。請使用公開且允許儲存的 PDF。DOI 或文章頁面可用於辨識論文；匯入指令使用 PDF 的 HTTPS 直接連結。

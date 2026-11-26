@@ -490,7 +490,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             with library.connect(self.server.database) as db:
                 storage.begin(db)
-                paper = sharing.paper_for(db, paper_id, self.current_account(db))
+                paper = sharing.paper_for(db, paper_id, self.current_account(db), file_access=True)
             if not paper["sha256"]:
                 self.send_json(404, {"error": "No verified PDF for this paper. Import the PDF first."})
                 return
@@ -674,6 +674,14 @@ class Handler(BaseHTTPRequestHandler):
             if self.path in account_routes.SESSION_ROUTES:
                 account_routes.update_session(self, data)
                 return
+            if self.path == "/api/paper-reference-preview":
+                doi = data.get("doi")
+                with library.connect(self.server.database) as db:
+                    storage.begin(db)
+                    account = self.require_account(db)
+                    existing = library.visible_doi_matches(db, account, doi)
+                self.send_json(200, {"existing": existing, "metadata": crossref.lookup("doi", doi)})
+                return
             if self.path == "/api/lookup":
                 if "paper_id" in data:
                     paper_id = data["paper_id"]
@@ -785,6 +793,8 @@ class Handler(BaseHTTPRequestHandler):
             with library.connect(self.server.database) as db:
                 account = self.require_account(db)
             audience = sharing.validate_audience(self.headers.get("X-Paper-Audience", "owner"))
+            target_header = self.headers.get("X-Paper-ID")
+            attach_to = paper_routes._positive_number(target_header, "paper") if target_header is not None else None
             recipients_header = self.headers.get("X-Paper-Recipients")
             recipients = json.loads(unquote(recipients_header)) if recipients_header is not None else None
             keyword_header = self.headers.get("X-Paper-Metric-Keywords")
@@ -803,12 +813,15 @@ class Handler(BaseHTTPRequestHandler):
             if len(payload) != size or b"%PDF-" not in payload[:1024]:
                 raise ValueError("The upload is incomplete or is not a PDF")
             result = import_pdf(self.server.database, filename, payload, account, audience, recipients,
-                                keywords=keywords, storage_limit=getattr(self.server, "storage_limit", 0))
+                                keywords=keywords, storage_limit=getattr(self.server, "storage_limit", 0),
+                                attach_to=attach_to)
             self.send_json(200, result)
         except accounts.SignInRequired:
             self.send_json(401, {"error": "Sign in to upload PDFs."})
         except sharing.AccessDenied:
             self.send_json(403, {"error": "This PDF could not be imported by this account."})
+        except sharing.EditConflict as error:
+            self.send_json(409, {"error": str(error)})
         except library.UploadQuotaExceeded as error:
             self.send_json(413, {"error": str(error)})
         except ValueError as error:
@@ -884,7 +897,7 @@ class Handler(BaseHTTPRequestHandler):
             return document_routes.save(self, db, data)
         if self.path in ("/api/comments", "/api/delete-comment", "/api/thread-votes"):
             return comment_routes.update_comment(self, db, data)
-        if self.path not in ("/api/paper-access", "/api/metadata", "/api/memberships", "/api/archive-paper",
+        if self.path not in ("/api/paper-reference", "/api/zotero-import", "/api/paper-access", "/api/metadata", "/api/memberships", "/api/archive-paper",
                              "/api/paper-metrics", "/api/metric-editors", "/api/claim-paper"):
             raise LookupError
         return paper_routes.update_paper(self, db, data)

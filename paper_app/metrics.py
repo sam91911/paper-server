@@ -38,7 +38,7 @@ def identifier(value):
 
 
 def paper_for(db, account, paper_id):
-    paper = sharing.paper_for(db, paper_id, account)
+    paper = sharing.paper_for(db, paper_id, account, file_access=True)
     if db.execute("SELECT 1 FROM archived_papers WHERE paper_id=?", (paper_id,)).fetchone():
         raise sharing.AccessDenied
     return paper

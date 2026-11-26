@@ -8,6 +8,7 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import database as storage
 from . import accounts, document_context, experiments, findings, goals, google_signin, metrics, sharing, skills, tasks, tools_catalog
@@ -147,6 +148,7 @@ def initialize(path):
         for table, name, definition in (
             ("metric_corrections", "removed", metrics.REMOVED_COLUMN),
             ("papers", "pdf_size", "INTEGER"),
+            ("papers", "source_url", "TEXT NOT NULL DEFAULT ''"),
             ("experiments", "research_document_id", "INTEGER REFERENCES documents(id)"),
             ("experiment_runs", "methods", "TEXT NOT NULL DEFAULT ''"),
             ("experiment_runs", "settings", "TEXT NOT NULL DEFAULT ''"),
@@ -243,7 +245,7 @@ def metric_rows(db, account=None):
     rows = db.execute(
         sharing.PAPER_SCOPE +
         f"SELECT {metrics.COLUMNS},p.path AS paper FROM metrics m{metrics.LATEST}"
-        "JOIN visible_papers p ON p.id=m.paper_id "
+        "JOIN visible_papers p ON p.id=m.paper_id AND p.can_read_file=1 "
         f"WHERE {metrics.ACTIVE} AND p.id NOT IN (SELECT paper_id FROM archived_papers) "
         "ORDER BY m.paper_id, page, metric, value, unit, conditions, evidence",
         sharing.viewer_params(account),
@@ -260,7 +262,7 @@ def metric_page(db, account=None, *, after=0, limit=500):
     rows = db.execute(
         sharing.PAPER_SCOPE +
         f"SELECT m.cursor_id AS cursor,{metrics.COLUMNS},p.path AS paper FROM metrics m{metrics.LATEST}"
-        "JOIN visible_papers p ON p.id=m.paper_id "
+        "JOIN visible_papers p ON p.id=m.paper_id AND p.can_read_file=1 "
         f"WHERE m.cursor_id>:after AND {metrics.ACTIVE} AND p.id NOT IN (SELECT paper_id FROM archived_papers) "
         "ORDER BY m.cursor_id LIMIT :limit",
         sharing.viewer_params(account, after=after, limit=limit + 1),
@@ -278,8 +280,7 @@ def metric_page(db, account=None, *, after=0, limit=500):
 def paper_page(db, account=None, *, after=0, limit=100):
     rows = db.execute(
         sharing.PAPER_SCOPE +
-        "SELECT id,path,doi,title,authors,year,venue,publisher,source,owner_id,audience, "
-        "CASE WHEN sha256 IS NOT NULL THEN 1 ELSE 0 END AS has_pdf FROM visible_papers "
+        f"SELECT {PAPER_COLUMNS} FROM visible_papers "
         "WHERE id>:after AND id NOT IN (SELECT paper_id FROM archived_papers) "
         "ORDER BY id LIMIT :limit",
         sharing.viewer_params(account, after=after, limit=limit + 1),
@@ -293,9 +294,15 @@ def paper_page(db, account=None, *, after=0, limit=100):
 
 
 ACTIVE_PAPERS = "id NOT IN (SELECT paper_id FROM archived_papers)"
+VISIBLE_PATH = "CASE WHEN can_read_file=1 THEN path ELSE '' END"
+PDF_COLUMNS = ("CASE WHEN sha256 IS NOT NULL AND can_read_file=1 THEN 1 ELSE 0 END AS has_pdf,"
+               "CASE WHEN sha256 IS NOT NULL AND can_read_file=0 THEN 1 ELSE 0 END AS pdf_restricted")
+PAPER_COLUMNS = (
+    f"id,{VISIBLE_PATH} AS path,doi,title,authors,year,venue,publisher,source,source_url,"
+    f"owner_id,audience,metadata_audience,can_read_file,{PDF_COLUMNS}"
+)
 PAPER_DETAIL_COLUMNS = (
-    "id,path,doi,title,authors,year,venue,publisher,source,owner_id,audience,"
-    "CASE WHEN sha256 IS NOT NULL THEN 1 ELSE 0 END AS has_pdf,"
+    PAPER_COLUMNS + ","
     "COALESCE((SELECT allow_title FROM paper_metadata_checks WHERE paper_id=id),0) AS allow_title"
 )
 CATALOG_PAGE_SIZE = 100
@@ -333,16 +340,16 @@ def paper_catalog(db, account, *, query="", group=None, publisher="", from_year=
     postgres = isinstance(db, storage.PostgreSQLConnection)
     if terms and postgres:
         params["terms"] = terms
-        filters.append("paper_matches(title,authors,doi,venue,path,CAST(:terms AS text[]))")
+        filters.append(f"paper_matches(title,authors,doi,venue,{VISIBLE_PATH},CAST(:terms AS text[]))")
     elif terms:
         def matches(title, authors, doi, venue, path):
             text = " ".join(filter(None, (title, authors, doi, venue, _paper_filename(path)))).lower()
             return all(term in text for term in terms)
 
         db.create_function("paper_matches", 5, matches, deterministic=True)
-        filters.append("paper_matches(title,authors,doi,venue,path)")
+        filters.append(f"paper_matches(title,authors,doi,venue,{VISIBLE_PATH})")
     if group is not None:
-        filters.append(":role='user' AND EXISTS (SELECT 1 FROM memberships m "
+        filters.append(":role='user' AND can_read_file=1 AND EXISTS (SELECT 1 FROM memberships m "
                        "WHERE m.paper_id=visible_papers.id AND m.group_id=:group)")
     if publisher:
         filters.append("publisher=:publisher")
@@ -358,7 +365,9 @@ def paper_catalog(db, account, *, query="", group=None, publisher="", from_year=
     count = db.execute(filtered.format("COUNT(*)"), params).fetchone()[0] if filters else total
     page = min(page, max(1, (count + CATALOG_PAGE_SIZE - 1) // CATALOG_PAGE_SIZE))
     rows = db.execute(
-        filtered.format("id,path,title") + " ORDER BY path,id LIMIT :size OFFSET :offset",
+        filtered.format(f"id,{VISIBLE_PATH} AS path,"
+                        "COALESCE(NULLIF(title,''),NULLIF(doi,''),source_url) AS title")
+        + " ORDER BY path,id LIMIT :size OFFSET :offset",
         dict(params, size=CATALOG_PAGE_SIZE, offset=(page - 1) * CATALOG_PAGE_SIZE),
     )
     data = {"papers": _catalog_summaries(rows), "count": count, "total": total, "page": page}
@@ -383,7 +392,7 @@ def paper_detail(db, account, paper_id):
         raise sharing.AccessDenied
     paper = dict(row)
     memberships = []
-    if account and account["role"] == "user":
+    if account and account["role"] == "user" and paper["can_read_file"]:
         memberships = [row[0] for row in db.execute(
             "SELECT group_id FROM memberships WHERE paper_id=? ORDER BY group_id", (paper_id,),
         )]
@@ -397,7 +406,7 @@ def paper_comment_targets(db, account):
     return {
         "papers": _catalog_summaries(db.execute(
             sharing.PAPER_SCOPE + " SELECT id,path,title FROM visible_papers "
-            f"WHERE sha256 IS NOT NULL AND {ACTIVE_PAPERS} ORDER BY path,id",
+            f"WHERE can_read_file=1 AND sha256 IS NOT NULL AND {ACTIVE_PAPERS} ORDER BY path,id",
             sharing.viewer_params(account),
         )),
         "documents": sharing.documents_for(db, account, targets_only=True),
@@ -424,21 +433,18 @@ def snapshot(db, view="library", account=None, *, include_comments=True, documen
         return [dict(row) for row in db.execute(sharing.PAPER_SCOPE + query, sharing.viewer_params(account))]
 
     is_human = account is not None and account["role"] == "user"
-    paper_columns = "id, path, title" if view == "compare" else (
-        "id, path, doi, title, authors, year, venue, publisher, source, owner_id, audience"
-    )
+    paper_columns = f"id,{VISIBLE_PATH} AS path,title,{PDF_COLUMNS}" if view == "compare" else PAPER_COLUMNS
     if view == "library":
-        paper_columns = "*"
-    else:
-        paper_columns += ", CASE WHEN sha256 IS NOT NULL THEN 1 ELSE 0 END AS has_pdf"
+        paper_columns += (",CASE WHEN can_read_file=1 THEN sha256 END AS sha256,"
+                          "CASE WHEN can_read_file=1 THEN pdf_size END AS pdf_size")
     if view == "paper-details":
         paper_columns = PAPER_DETAIL_COLUMNS
     data = {
         "papers": rows(f"SELECT {paper_columns} FROM visible_papers "
-                       "WHERE id NOT IN (SELECT paper_id FROM archived_papers) ORDER BY path"),
+                       "WHERE id NOT IN (SELECT paper_id FROM archived_papers) ORDER BY path,id"),
         "groups": [dict(row) for row in db.execute("SELECT * FROM groups ORDER BY name")] if is_human else [],
         "memberships": rows(
-            "SELECT * FROM memberships WHERE paper_id IN (SELECT id FROM visible_papers) "
+            "SELECT * FROM memberships WHERE paper_id IN (SELECT id FROM visible_papers WHERE can_read_file=1) "
             "AND paper_id NOT IN (SELECT paper_id FROM archived_papers)"
         ) if is_human else [],
     }
@@ -502,6 +508,9 @@ def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id
             WHERE {comment_access_sql()}
         )
         SELECT c.*, a.account_id AS author_id, a.kind AS author_kind,
+               (c.target_kind='pdf' AND NOT EXISTS (
+                   SELECT 1 FROM visible_papers p WHERE p.id=c.target_id AND p.can_read_file=1
+               )) AS restricted_anchor,
                COALESCE(NULLIF(u.display_name,''),u.username) AS author_name,
                {accounts.ROLE_SQL.format(alias="u")} AS author_role, {sharing.vote_columns("comment", "c.id")}
         FROM visible_comments c LEFT JOIN comment_authors a ON a.comment_id=c.id
@@ -513,6 +522,8 @@ def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id
     sharing.attach_recipients(db, "comment", items, account, "author_id")
     for comment in items:
         comment["doi_refs"] = json.loads(comment["doi_refs"])
+        if comment.pop("restricted_anchor"):
+            comment.update(target_kind=None, target_id=None, target_position=None)
         if comment["deleted"]:
             comment.pop("recipients", None)
             comment.pop("can_manage", None)
@@ -526,11 +537,49 @@ def save_metadata(db, paper_id, data):
     values = [data.get(field, "") for field in METADATA]
     if any(not isinstance(value, str) or len(value) > 4000 for value in values):
         raise ValueError("Invalid metadata fields")
+    source_url = data.get("source_url")
+    if "source_url" in data:
+        if not isinstance(source_url, str) or len(source_url) > 2048:
+            raise ValueError("Enter a valid publication link.")
+        if source_url:
+            url = urlsplit(source_url)
+            if (url.scheme not in ("http", "https") or not url.hostname or url.username is not None
+                    or any(char.isspace() or ord(char) < 32 or char == "\\" for char in source_url)):
+                raise ValueError("Enter an HTTP or HTTPS publication link without credentials.")
     if db.execute(
-        "UPDATE papers SET doi=?,title=?,authors=?,year=?,venue=?,publisher=?,source=? WHERE id=?",
-        (*values, paper_id),
+        "UPDATE papers SET doi=?,title=?,authors=?,year=?,venue=?,publisher=?,source=?,"
+        "source_url=COALESCE(?,source_url) WHERE id=?",
+        (*values, source_url, paper_id),
     ).rowcount == 0:
         raise ValueError("Paper not found")
+
+
+def create_paper_reference(db, account, data):
+    doi = data.get("doi", "")
+    if not data.get("title") and not doi and not data.get("source_url"):
+        raise ValueError("Enter a title, DOI, or publication link.")
+    if doi:
+        doi, = json.loads(encode_doi_refs([doi]))
+    paper_id = db.execute("INSERT INTO papers(path) VALUES ('') RETURNING id").fetchone()[0]
+    save_metadata(db, paper_id, {**data, "doi": doi})
+    db.execute("INSERT INTO paper_access VALUES (?,?,?)", (paper_id, account["id"], "owner"))
+    sharing.set_paper_metadata_audience(db, paper_id, data.get("metadata_audience", "all"))
+    return paper_id
+
+
+def visible_doi_matches(db, account, doi):
+    canonical, = json.loads(encode_doi_refs([doi]))
+    return [dict(row) for row in db.execute(
+        sharing.PAPER_SCOPE + " SELECT id,title,doi FROM visible_papers "
+        "WHERE lower(trim(doi)) IN (:doi,:https,:http,:dx,:dx_https,:label,:label_space) "
+        f"AND {ACTIVE_PAPERS} ORDER BY id LIMIT 20",
+        sharing.viewer_params(account, doi=canonical.lower(),
+                              https="https://doi.org/" + canonical.lower(),
+                              http="http://doi.org/" + canonical.lower(),
+                              dx="http://dx.doi.org/" + canonical.lower(),
+                              dx_https="https://dx.doi.org/" + canonical.lower(),
+                              label="doi:" + canonical.lower(), label_space="doi: " + canonical.lower()),
+    )]
 
 
 def encode_doi_refs(values):
@@ -551,9 +600,14 @@ def comment_access_sql():
     owner = "(SELECT account_id FROM comment_authors WHERE comment_id=c.id)"
     audience = sharing.access_sql(owner, "c.audience", "comment", "c.id")
     document_audience = sharing.access_sql("d.owner_id", "d.audience", "document", "d.id")
-    return f"""(c.audience IS NULL OR {audience}) AND
+    return f"""(c.audience IS NULL OR {audience} OR
+        (c.audience='all' AND :role='member' AND c.paper_id IN (
+            SELECT id FROM visible_papers WHERE metadata_audience='all'
+        ))) AND
         (c.target_kind IS NULL
-         OR (c.target_kind='pdf' AND c.target_id IN (SELECT id FROM visible_papers WHERE sha256 IS NOT NULL))
+         OR (c.target_kind='pdf' AND c.target_id IN (
+             SELECT id FROM visible_papers WHERE sha256 IS NOT NULL AND (can_read_file=1 OR id=c.paper_id)
+         ))
          OR (c.target_kind='document' AND EXISTS (
              SELECT 1 FROM documents d WHERE d.id=c.target_id AND {document_audience})))"""
 
@@ -568,7 +622,7 @@ def comment_target(db, account, location):
         or type(position) is not int or not 0 < position <= 1_000_000):
         raise ValueError("Choose a target and a positive page or line number.")
     if kind == "pdf":
-        if not sharing.paper_for(db, target_id, account)["sha256"]:
+        if not sharing.paper_for(db, target_id, account, file_access=True)["sha256"]:
             raise sharing.AccessDenied
     else:
         doc = sharing.document_for(db, account, target_id)

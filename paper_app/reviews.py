@@ -67,7 +67,7 @@ def eligible_agents(db, account, kind, target_id):
 
 def target(db, account, kind, target_id, position):
     if kind == "paper":
-        if not sharing.paper_for(db, target_id, account)["sha256"]:
+        if not sharing.paper_for(db, target_id, account, file_access=True)["sha256"]:
             raise sharing.AccessDenied
         return {"paper_id": target_id, "location": {"kind": "pdf", "id": target_id, "position": position}}
     if kind == "document":

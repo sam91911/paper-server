@@ -84,6 +84,36 @@
           </form>
           <ul id="import-results" aria-label="PDF import results" hidden></ul>
         </details>
+        <details>
+          <summary>Add a paper reference</summary>
+          <p id="reference-sign-in"><a href="/account">Sign in to add a reference</a>.</p>
+          <form id="paper-reference" hidden>
+            <div class="metadata-fields">
+              <label>DOI <input name="doi" maxlength="450"></label>
+              <label>Publication link <input name="source_url" type="url" maxlength="2048"></label>
+              <label>Title <input name="title" maxlength="4000"></label>
+              <label>Authors <input name="authors" maxlength="4000"></label>
+              <label>Year <input name="year" maxlength="20"></label>
+              <label>Venue <input name="venue" maxlength="4000"></label>
+              <label>Publisher <input name="publisher" maxlength="4000"></label>
+            </div>
+            <label>Metadata access <select name="metadata_audience"></select></label>
+            <button id="reference-lookup" type="button">Look up DOI</button>
+            <div id="reference-preview" role="status"></div>
+            <button>Add reference</button>
+          </form>
+        </details>
+        <details>
+          <summary>Import Zotero references</summary>
+          <p id="zotero-sign-in"><a href="/account">Sign in to import references</a>.</p>
+          <form id="zotero-import" hidden>
+            <label>Zotero CSL JSON export <input name="export_file" type="file" accept=".json,application/json" required></label>
+            <label>Metadata access <select name="metadata_audience"></select></label>
+            <button>Import references</button>
+            <p id="zotero-status" role="status"></p>
+            <ul id="zotero-results"></ul>
+          </form>
+        </details>
       </div>
       <details id="paper-archive">
         <summary id="archive-summary">Archived papers</summary>
@@ -107,6 +137,12 @@
     <details open>
       <summary>Paper file</summary>
       <p id="paper-file-name"></p>
+      <form id="attach-paper-pdf" class="account-actions" hidden>
+        <label>PDF <input name="pdf" type="file" accept=".pdf,application/pdf" required></label>
+        <label>PDF access <select name="audience" class="audience-options"></select></label>
+        <label>Share PDF with usernames <input name="recipients" maxlength="1700"></label>
+        <button>Attach PDF</button>
+      </form>
       <p id="paper-file-links" class="file-actions" hidden>
         <button type="button" id="view-paper-pdf">View PDF here</button>
         <button type="button" id="review-paper" class="secondary">Review with AI</button>
@@ -125,8 +161,9 @@
       <details id="paper-management" hidden>
         <summary>Sharing and archive</summary>
       <form id="paper-access" class="account-actions" hidden>
-        <label>File access <select name="audience" class="audience-options"></select></label>
-        <label>Share with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
+        <label>PDF access <select name="audience" class="audience-options"></select></label>
+        <label>Share PDF with usernames <input name="recipients" maxlength="1700" placeholder="alice, reviewer-ai"></label>
+        <label>Metadata access <select name="metadata_audience"></select></label>
         <label class="inline-check"><input name="allow_title" type="checkbox"> Allow automatic title or filename lookup on Crossref</label>
         <button>Save access</button>
       </form>
@@ -156,6 +193,7 @@
       <form id="metadata">
         <div class="metadata-fields">
           <label>DOI <input name="doi"></label>
+          <label>Publication link <input name="source_url" type="url" maxlength="2048"></label>
           <label>Title <input name="title"></label>
           <label>Related papers, one DOI or DOI link per line
           <textarea name="doi_refs" rows="2" maxlength="9000"></textarea>

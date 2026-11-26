@@ -61,7 +61,7 @@ def _reference(db, account, ref, *, pdf_pages=None):
     citation = {"kind": kind, "id": target_id}
     writing = pdf_pages is not None
     if kind == "pdf":
-        paper = sharing.paper_for(db, target_id, account)
+        paper = sharing.paper_for(db, target_id, account, file_access=True)
         if not paper["sha256"] or (not writing and paper["sha256"] != ref["sha256"]):
             raise sharing.AccessDenied
         page = positive_id(ref.get("page"))

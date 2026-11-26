@@ -163,12 +163,14 @@ def detect_existing(database, paper_id, keywords, *, get_account, size_limit):
     return {"metrics": len(rows), "has_text": has_text}
 
 
-def import_pdf(database, filename, payload, account, audience, recipients=None, *, keywords=(), storage_limit=0):
+def import_pdf(database, filename, payload, account, audience, recipients=None, *, keywords=(), storage_limit=0,
+               attach_to=None):
     digest = hashlib.sha256(payload).hexdigest()
     target = storage.pdf_directory(database) / digest / filename
     existed = target.exists()
     try:
-        return _import_pdf(database, filename, payload, digest, account, audience, recipients, keywords, storage_limit)
+        return _import_pdf(database, filename, payload, digest, account, audience, recipients, keywords, storage_limit,
+                           attach_to)
     except Exception:
         # Serialize cleanup against other imports. Never remove a file another
         # successful transaction has already recorded, or one that predated us.
@@ -180,7 +182,7 @@ def import_pdf(database, filename, payload, account, audience, recipients=None, 
         raise
 
 
-def _import_pdf(database, filename, payload, digest, account, audience, recipients, keywords, storage_limit):
+def _import_pdf(database, filename, payload, digest, account, audience, recipients, keywords, storage_limit, attach_to):
     rows, has_text = extract_pdf(payload, keywords=keywords)
     with library.connect(database) as db:
         storage.begin(db, write=True)
@@ -188,7 +190,18 @@ def _import_pdf(database, filename, payload, digest, account, audience, recipien
         keeps_access = existing is not None
         source_id = existing["id"] if existing else None
         matched_source = None
-        if existing:
+        if attach_to is not None:
+            reference = sharing.paper_for(db, attach_to, account, owner_only=True)
+            if (reference["owner_id"] is None
+                    or db.execute("SELECT 1 FROM archived_papers WHERE paper_id=?", (attach_to,)).fetchone()):
+                raise sharing.AccessDenied
+            if reference["sha256"] == digest:
+                return {"paper_id": attach_to, "metrics": len(rows), "has_text": has_text}
+            if reference["path"] or reference["sha256"] or existing:
+                raise sharing.EditConflict("Attach a PDF that is not already stored to a reference without a PDF.")
+            source_id = attach_to
+            sharing.set_paper_audience(db, attach_to, account, audience, recipients)
+        elif existing:
             sharing.paper_for(db, existing["id"], account, owner_only=True)
         else:
             # Match a CSV-only record if its original PDF is still available.
@@ -229,11 +242,13 @@ def _import_pdf(database, filename, payload, digest, account, audience, recipien
                 os.replace(temporary, target)
             finally:
                 temporary.unlink(missing_ok=True)
+        if attach_to is not None:
+            db.execute("UPDATE papers SET sha256=? WHERE id=?", (digest, attach_to))
         rows = metrics.retain_detections(db, source_id, rows)
         paper_id = library.store(db, target, rows, digest)
         db.execute("UPDATE papers SET path=?,pdf_size=? WHERE id=?", (str(target), len(payload), paper_id))
         db.execute("UPDATE paper_metadata_checks SET next_check=0,detected_doi=NULL WHERE paper_id=?", (paper_id,))
-        if not keeps_access:
+        if not keeps_access and attach_to is None:
             db.execute("INSERT INTO paper_access VALUES (?,?,?)", (paper_id, account["id"], audience))
             sharing.set_recipients(db, "paper", paper_id, recipients)
     return {"paper_id": paper_id, "metrics": len(rows), "has_text": has_text}

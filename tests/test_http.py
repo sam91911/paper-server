@@ -1,6 +1,7 @@
 import io
 import json
 import csv
+import hashlib
 import re
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlencode
+from unittest.mock import patch
 from zipfile import ZipFile
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -74,7 +76,8 @@ class HttpTests(unittest.TestCase):
         with ZipFile(io.BytesIO(payload)) as bundle:
             self.assertEqual(set(bundle.namelist()), {
                 "paper-client/pyproject.toml", "paper-client/__init__.py", "paper-client/__main__.py",
-                "paper-client/agent.py", "paper-client/artifacts.py", "paper-client/paper_source.py", "paper-client/review.py",
+                "paper-client/agent.py", "paper-client/artifacts.py", "paper-client/mcp_server.py",
+                "paper-client/paper_source.py", "paper-client/review.py",
                 "paper-client/ssh_key.py",
             })
 
@@ -325,6 +328,98 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(len(second['papers']), 6)
         self.assertIsNone(second['next_after'])
         self.assertEqual(json.loads(self.get('/api/paper-page', False)[1])['papers'], [])
+
+    def test_paper_references_and_independent_comment_sharing(self):
+        metadata = {"title": "Shared paper", "doi": "10.1234/example",
+                    "source_url": "https://publisher.example/paper"}
+        status, body = self.request("/api/paper-reference", True, metadata)
+        self.assertEqual(status, 200)
+        reference = json.loads(body)["paper_id"]
+        self.assertEqual(self.request("/api/paper-reference", True, {
+            "title": "Invalid link", "source_url": "javascript:alert(1)",
+        })[0], 400)
+
+        paper = self.papers[0]
+        payload = b"%PDF-1.7\n"
+        path = self.db.with_name("restricted.pdf")
+        path.write_bytes(payload)
+        with library.connect(self.db) as db:
+            db.execute("UPDATE papers SET path=?,sha256=? WHERE id=?",
+                       (str(path), hashlib.sha256(payload).hexdigest(), paper))
+            library.save_metadata(db, paper, metadata)
+            db.execute("INSERT INTO metrics(paper_id,page,metric,value,unit,conditions,evidence) "
+                       "VALUES (?,1,'Power','5','W','','private evidence')", (paper,))
+            db.execute("INSERT INTO accounts(username,password_hash,salt,role,ai_location) "
+                       "VALUES ('cloud',X'00',X'00','ai','cloud')")
+            db.execute("INSERT INTO accounts(username,password_hash,salt,trusted) VALUES ('member',X'00',X'00',0)")
+            headers = [{"Cookie": "paper_session=" + accounts.start_session(db, account_id, None)}
+                       for account_id in (2, 3)]
+
+        access = {"paper_id": paper, "audience": "owner", "metadata_audience": "all"}
+        self.assertEqual(self.request("/api/paper-access", True, access)[0], 200)
+        pdf_path = f"/papers/{paper}/source.pdf"
+        self.assertEqual(self.get(pdf_path), (200, payload))
+        for paper_id, extra in (
+            (reference, {}),
+            (paper, {"location": {"kind": "pdf", "id": paper, "position": 1}}),
+        ):
+            status, body = self.request("/api/comments", True, {
+                "paper_id": paper_id, "audience": "all", "body": "Shared comment", **extra,
+            })
+            self.assertEqual(status, 200)
+            comment_id = json.loads(body)["comment_id"]
+            detail = f"/api/paper-detail?paper_id={paper_id}"
+            comments = f"/api/paper-comments?paper_id={paper_id}"
+            self.assertEqual(self.get(detail, False)[0], 404)
+            self.assertEqual(json.loads(self.get(comments, False)[1])["comments"], [])
+            for viewer in headers:
+                status, body = self.request(detail, False, headers=viewer)
+                self.assertEqual(status, 200)
+                record = json.loads(body)["paper"]
+                for field, value in metadata.items():
+                    self.assertEqual(record[field], value)
+                self.assertEqual((record["path"], record["has_pdf"], record["pdf_restricted"]),
+                                 ("", 0, int(paper_id == paper)))
+                visible = json.loads(self.request(comments, False, headers=viewer)[1])["comments"]
+                self.assertEqual([item["body"] for item in visible], ["Shared comment"])
+                self.assertIsNone(visible[0]["target_position"])
+                self.assertEqual(self.request(pdf_path, False, headers=viewer)[0], 404)
+                self.assertEqual(self.request(f"/api/paper-metrics?paper_id={paper}", False, headers=viewer)[0], 404)
+                self.assertEqual(json.loads(self.request("/api/metric-page", False, headers=viewer)[1])["metrics"], [])
+            self.assertEqual(self.request("/api/comments", False, {
+                "paper_id": paper_id, "parent_id": comment_id, "audience": "all", "body": "Cloud reply",
+            }, headers=headers[0])[0], 200)
+
+        self.assertEqual(self.request("/api/paper-access", True, {**access, "metadata_audience": None})[0], 200)
+        self.assertEqual(self.request(f"/api/paper-detail?paper_id={paper}", False, headers=headers[0])[0], 404)
+
+    def test_doi_preview_and_zotero_reuse_only_visible_matches(self):
+        doi = "10.1234/shared"
+        csl = {"type": "article-journal", "DOI": doi.upper(), "title": "One article",
+               "author": [{"given": "Ada", "family": "Example"}],
+               "issued": {"date-parts": [[2025]]}, "URL": "https://example.org/article"}
+        with library.connect(self.db) as db:
+            db.execute("UPDATE papers SET doi=? WHERE id=?", (doi, self.papers[0]))
+            db.execute("INSERT INTO accounts(username,password_hash,salt) VALUES ('reader',X'00',X'00')")
+            reader = {"Cookie": "paper_session=" + accounts.start_session(db, 2, None)}
+        with patch("paper_app.server.crossref.lookup", return_value=[{"doi": doi, "title": csl["title"]}]):
+            status, body = self.request("/api/paper-reference-preview", True, {"doi": doi})
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["existing"][0]["id"], self.papers[0])
+            status, body = self.request("/api/paper-reference-preview", False, {"doi": doi}, headers=reader)
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["existing"], [])
+        status, body = self.request("/api/zotero-import", False, {"items": [csl, csl]}, headers=reader)
+        self.assertEqual(status, 200)
+        first, second = json.loads(body)["items"]
+        self.assertEqual((first["existing"], second["existing"]), (False, True))
+        self.assertEqual(first["paper_id"], second["paper_id"])
+        self.assertNotEqual(first["paper_id"], self.papers[0])
+        detail = f"/api/paper-detail?paper_id={first['paper_id']}"
+        self.assertEqual(self.get(detail)[0], 404)
+        record = json.loads(self.request(detail, False, headers=reader)[1])["paper"]
+        self.assertEqual((record["authors"], record["year"], record["source_url"], record["has_pdf"]),
+                         ("Ada Example", "2025", csl["URL"], 0))
 
     def test_paper_catalog_combines_filters_and_clamps_numbered_pages(self):
         with library.connect(self.db) as db:

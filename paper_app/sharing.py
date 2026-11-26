@@ -82,10 +82,18 @@ def access_sql(owner, audience, kind, item_id):
 
 
 PAPER_SCOPE = f"""
-    WITH RECURSIVE visible_papers AS (
-        SELECT p.*, access.owner_id, access.audience
+    WITH RECURSIVE paper_permissions AS (
+        SELECT p.*, access.owner_id, access.audience, metadata.audience AS metadata_audience,
+            CASE WHEN (access.owner_id IS NULL AND :role = 'user')
+                OR {access_sql('access.owner_id', 'access.audience', 'paper', 'p.id')}
+                THEN 1 ELSE 0 END AS can_read_file
         FROM papers p LEFT JOIN paper_access access ON access.paper_id=p.id
-        WHERE (owner_id IS NULL AND :role = 'user') OR {access_sql('owner_id', 'audience', 'paper', 'p.id')}
+        LEFT JOIN paper_metadata_access metadata ON metadata.paper_id=p.id
+    ), visible_papers AS (
+        SELECT p.* FROM paper_permissions p WHERE p.can_read_file=1
+            OR (p.metadata_audience='all' AND :role='member')
+            OR (p.metadata_audience IS NOT NULL
+                AND {access_sql('p.owner_id', 'p.metadata_audience', 'paper', 'p.id')})
     ), visible_documents AS (
         SELECT d.* FROM documents d WHERE {access_sql("d.owner_id", "d.audience", "document", "d.id")}
     )
@@ -108,6 +116,12 @@ def initialize(db):
         db.execute(f"INSERT INTO {table} SELECT * FROM old_{table}")
         db.execute(f"UPDATE {table} SET audience='local' WHERE audience='all'")
         db.execute(f"DROP TABLE old_{table}")
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS paper_metadata_access (
+            paper_id INTEGER PRIMARY KEY REFERENCES paper_access(paper_id),
+            audience TEXT NOT NULL CHECK (audience IN ('owner', 'users', 'local', 'all', 'ai'))
+        )
+    """)
     columns = {row["name"] for row in db.execute("PRAGMA table_info(documents)")}
     if "revision" not in columns:
         db.execute("ALTER TABLE documents ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
@@ -146,12 +160,13 @@ def validate_audience(audience):
     return audience
 
 
-def paper_for(db, paper_id, account, *, owner_only=False):
+def paper_for(db, paper_id, account, *, owner_only=False, file_access=False):
     row = db.execute(
         PAPER_SCOPE + "SELECT * FROM visible_papers WHERE id=:paper",
         viewer_params(account, paper=paper_id),
     ).fetchone()
-    if row is None or (owner_only and row["owner_id"] is not None and not is_owner(db, account, row["owner_id"])):
+    if (row is None or (file_access and not row["can_read_file"])
+            or (owner_only and row["owner_id"] is not None and not is_owner(db, account, row["owner_id"]))):
         raise AccessDenied
     return row
 
@@ -211,6 +226,17 @@ def set_paper_audience(db, paper_id, account, audience, recipients=None):
     ).rowcount == 0:
         raise AccessDenied
     set_recipients(db, "paper", paper_id, recipients)
+
+
+def set_paper_metadata_audience(db, paper_id, audience):
+    if audience is None:
+        db.execute("DELETE FROM paper_metadata_access WHERE paper_id=?", (paper_id,))
+        return
+    db.execute(
+        "INSERT INTO paper_metadata_access(paper_id,audience) VALUES (?,?) "
+        "ON CONFLICT(paper_id) DO UPDATE SET audience=excluded.audience",
+        (paper_id, validate_audience(audience)),
+    )
 
 
 def document_for(db, account, document_id):

@@ -23,7 +23,7 @@ const lookupForm = element("lookup");
 const lookupResults = element("lookup-results");
 const metadataLabels = {
   title: "Title", authors: "Authors", year: "Year", venue: "Venue",
-  publisher: "Publisher", doi: "DOI", source: "Source",
+  publisher: "Publisher", doi: "DOI", source_url: "Publication link", source: "Source",
 };
 const metadataFields = Object.keys(metadataLabels).filter(field => field !== "source");
 let lookupSequence = 0;
@@ -49,6 +49,9 @@ const commentForm = element("add-comment");
 const accountForm = element("account-form");
 const accountStatus = element("account-status");
 const paperAccessForm = element("paper-access");
+const paperReferenceForm = element("paper-reference");
+const zoteroForm = element("zotero-import");
+const attachPdfForm = element("attach-paper-pdf");
 const roleLabels = { user: "Trusted human", member: "Member", local: "Local AI", cloud: "Cloud AI" };
 const audienceLabels = {
   owner: "Owner only",
@@ -70,6 +73,25 @@ for (const select of document.querySelectorAll(".audience-options")) fillAudienc
 function selectAudience(select, value) {
   select.replaceChildren();
   fillAudiences(select, value);
+}
+
+function selectMetadataAudience(select, value, inherit = false) {
+  selectAudience(select, value || "owner");
+  if (inherit) select.options[0].textContent = "Owner and PDF readers";
+  for (const option of select.options) {
+    if (option.value === "all") option.textContent = "All signed-in accounts, including cloud AI";
+  }
+  if (inherit) add(select, "option", "Follow PDF access").value = "";
+  select.value = value || "";
+}
+selectMetadataAudience(paperReferenceForm.elements.metadata_audience, "all");
+selectMetadataAudience(zoteroForm.elements.metadata_audience, "owner");
+
+function commentAudienceLabel(audience, paper) {
+  if (audience === "all" && paper?.metadata_audience === "all") {
+    return "All signed-in accounts, including cloud AI";
+  }
+  return audienceLabels[audience];
 }
 
 function showAccount() {
@@ -106,6 +128,10 @@ function showAccount() {
   element("comment-author-choice").hidden = !["user", "member"].includes(account?.role);
   element("pdf-sign-in").hidden = Boolean(account);
   element("pdf-import").hidden = !account;
+  element("reference-sign-in").hidden = Boolean(account);
+  paperReferenceForm.hidden = !account;
+  element("zotero-sign-in").hidden = Boolean(account);
+  zoteroForm.hidden = !account;
   element("create-group").hidden = account?.role !== "user";
   element("paper-group-filter").closest("label").hidden = account?.role !== "user";
 }
@@ -146,7 +172,15 @@ function showSavedMetadata(paper) {
   for (const [field, label] of Object.entries(metadataLabels)) {
     if (!paper[field]) continue;
     add(details, "dt", label);
-    add(details, "dd", paper[field]);
+    const value = add(details, "dd");
+    if (field === "source_url" || field === "doi") {
+      const link = add(value, "a", paper[field]);
+      link.href = field === "doi" ? doiURL(paper[field]) : paper[field];
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+    } else {
+      value.textContent = paper[field];
+    }
   }
   element("no-metadata").hidden = details.children.length > 0;
 }
@@ -193,12 +227,13 @@ function showPaper() {
   const selected = selectedPaper();
   const viewer = element("paper-pdf-viewer");
   const selectedId = selected ? String(selected.id) : "";
-  if (viewer.dataset.paper !== selectedId) closePdf("paper");
+  if (viewer.dataset.paper !== selectedId || !selected?.has_pdf) closePdf("paper");
   viewer.dataset.paper = selectedId;
   paperPicker.title = selected ? selected.title || selected.path : "";
   element("paper-detail").hidden = !selected;
   element("paper-empty").hidden = Boolean(selected);
-  resetPaperMetrics(selected);
+  metricPanel.hidden = selected?.can_read_file === 0;
+  resetPaperMetrics(metricPanel.hidden ? null : selected);
   lookupResults.replaceChildren();
   lookupForm.reset();
   if (!selected) return;
@@ -206,12 +241,14 @@ function showPaper() {
   element("paper-detail-byline").textContent = [selected.authors, selected.venue, selected.year].filter(Boolean).join(" · ");
   element("paper-file-name").textContent = selected.has_pdf
     ? paperFilename(selected)
-    : "No PDF attached. Use the PDF import to add the source file.";
+    : selected.pdf_restricted ? "PDF access is restricted." : "No PDF attached.";
   element("paper-file-links").hidden = !selected.has_pdf;
   const pdfURL = paperPDFURL(selected.id);
   element("open-paper-pdf").href = pdfURL;
   element("download-paper-pdf").href = `${pdfURL}?download=1`;
   const ownsPaper = selected.can_manage || selected.owner_id === libraryData.account?.id;
+  attachPdfForm.reset();
+  attachPdfForm.hidden = !ownsPaper || Boolean(selected.path || selected.has_pdf);
   const canManage = selected.owner_id === null || ownsPaper;
   element("paper-management").hidden = !canManage;
   element("paper-metadata-editor").hidden = !canManage;
@@ -227,6 +264,7 @@ function showPaper() {
   paperAccessForm.hidden = !ownsPaper;
   if (ownsPaper) {
     selectAudience(paperAccessForm.elements.audience, selected.audience);
+    selectMetadataAudience(paperAccessForm.elements.metadata_audience, selected.metadata_audience, true);
     paperAccessForm.elements.allow_title.checked = Boolean(selected.allow_title);
     paperAccessForm.elements.recipients.value = (selected.recipients || []).join(", ");
   }
@@ -236,6 +274,9 @@ function showPaper() {
   commentForm.elements.kind.value = draft?.kind || "user";
   commentForm.elements.doi_refs.value = draft?.doiRefs || "";
   commentForm.elements.audience.value = draft?.audience || "owner";
+  for (const option of commentForm.elements.audience.options) {
+    option.textContent = commentAudienceLabel(option.value, selected);
+  }
   commentForm.elements.recipients.value = draft?.recipients || "";
   commentForm.elements.scheduled_at.value = draft?.scheduledAt || "";
   showPaperTargets(draft?.target, draft?.targetLabel);
@@ -347,7 +388,8 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
     mark.setAttribute("aria-hidden", "true");
     const byline = add(heading, "div");
     add(byline, "strong", author);
-    add(byline, "p", `Updated ${comment.updated} UTC · ${audienceLabels[comment.audience] || "Item access"}`, "comment-time");
+    const paper = host.paper_id ? selectedPaper() : null;
+    add(byline, "p", `Updated ${comment.updated} UTC · ${commentAudienceLabel(comment.audience, paper) || "Item access"}`, "comment-time");
     if (comment.parent_id) {
       add(article, "a", "In reply to parent comment", "parent-comment-link").href = `#comment-${comment.parent_id}`;
     }
@@ -409,6 +451,9 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
     }
     const access = add(add(form, "label", "Comment access"), "select");
     fillAudiences(access, comment.audience || "inherit");
+    for (const option of access.options) {
+      option.textContent = commentAudienceLabel(option.value, paper) || option.textContent;
+    }
     const recipients = add(add(form, "label", "Share with usernames"), "input");
     recipients.maxLength = 1700;
     recipients.value = (comment.recipients || []).join(", ");
@@ -464,7 +509,7 @@ function rememberPaperSelection() {
 }
 
 function paperFilename(item) {
-  return item.path.split(/[\\/]/).pop();
+  return item.path.split(/[\\/]/).pop() || item.doi || item.source_url || `Paper ${item.id}`;
 }
 
 function readPaperFilters() {
@@ -884,7 +929,7 @@ function metricKeywords(value) {
   return value.split(/[,\n]/).map(phrase => phrase.trim()).filter(Boolean);
 }
 
-async function importPaper(file, audience, recipients, keywords) {
+async function importPaper(file, audience, recipients, keywords, paperId) {
   const response = await fetch("/api/papers", {
     method: "POST",
     headers: {
@@ -893,6 +938,7 @@ async function importPaper(file, audience, recipients, keywords) {
       "X-Paper-Audience": audience,
       "X-Paper-Recipients": encodeURIComponent(JSON.stringify(recipients)),
       "X-Paper-Metric-Keywords": encodeURIComponent(JSON.stringify(keywords)),
+      ...(paperId ? {"X-Paper-ID": String(paperId)} : {}),
     },
     body: file,
   });
@@ -900,6 +946,14 @@ async function importPaper(file, audience, recipients, keywords) {
   if (!response.ok) throw new Error(imported.error || "PDF import failed.");
   return imported;
 }
+
+submit(attachPdfForm, async () => {
+  const {id} = selectedPaper();
+  const fields = attachPdfForm.elements;
+  await importPaper(fields.pdf.files[0], fields.audience.value, recipientNames(fields.recipients.value), [], id);
+  await loadLibrary(id);
+  libraryStatus.textContent = "PDF attached.";
+});
 
 submit(element("pdf-import"), async () => {
   const field = element("paper-pdf");
@@ -1340,9 +1394,84 @@ submit(commentForm, async () => {
 });
 submit(paperAccessForm, () => updateLibrary("paper-access", {
   paper_id: selectedPaper().id, audience: paperAccessForm.elements.audience.value,
+  metadata_audience: paperAccessForm.elements.metadata_audience.value || null,
   allow_title: paperAccessForm.elements.allow_title.checked,
   recipients: recipientNames(paperAccessForm.elements.recipients.value),
-}, "File access updated."));
+}, "Paper sharing updated."));
+let referenceSource = "Manual";
+let referenceLookupSequence = 0;
+const referencePreview = element("reference-preview");
+paperReferenceForm.addEventListener("input", () => {
+  referenceLookupSequence++;
+  referenceSource = "Manual";
+  referencePreview.replaceChildren();
+});
+element("reference-lookup").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  const fields = paperReferenceForm.elements;
+  const doi = fields.doi.value.trim();
+  const sequence = ++referenceLookupSequence;
+  referencePreview.textContent = "Looking up DOI…";
+  button.disabled = true;
+  try {
+    const {metadata, existing} = await api("paper-reference-preview", {doi});
+    if (sequence !== referenceLookupSequence) return;
+    referencePreview.replaceChildren();
+    for (const paper of existing) {
+      const link = add(referencePreview, "a", `Open existing record · ${paper.title || paper.doi}`);
+      link.href = `/papers?paper=${paper.id}`;
+    }
+    const match = metadata[0];
+    if (match) {
+      for (const field of metadataFields) {
+        if (match[field]) fields[field].value = match[field];
+      }
+      if (!fields.source_url.value) fields.source_url.value = doiURL(match.doi || doi);
+      referenceSource = "Crossref";
+    }
+    add(referencePreview, "p", match ? "Review the metadata before saving." : "Crossref returned no match.");
+  } catch (error) {
+    if (sequence === referenceLookupSequence) referencePreview.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+submit(paperReferenceForm, async () => {
+  const fields = Object.fromEntries(metadataFields.map(key => [key, paperReferenceForm.elements[key].value.trim()]));
+  const {paper_id} = await api("paper-reference", {
+    ...fields, source: referenceSource, metadata_audience: paperReferenceForm.elements.metadata_audience.value,
+  });
+  paperReferenceForm.reset();
+  referenceLookupSequence++;
+  referenceSource = "Manual";
+  referencePreview.replaceChildren();
+  selectMetadataAudience(paperReferenceForm.elements.metadata_audience, "all");
+  await loadLibrary(paper_id);
+  libraryStatus.textContent = "Paper reference added.";
+});
+submit(zoteroForm, async () => {
+  const file = zoteroForm.elements.export_file.files[0];
+  if (file.size > 1_000_000) throw new Error("Choose a CSL JSON export under 1 MB.");
+  let references;
+  try {
+    references = JSON.parse(await file.text());
+  } catch {
+    throw new Error("Choose a valid Zotero CSL JSON file.");
+  }
+  const {items} = await api("zotero-import", {
+    items: references, metadata_audience: zoteroForm.elements.metadata_audience.value,
+  });
+  const results = element("zotero-results");
+  results.replaceChildren();
+  items.forEach((item, index) => {
+    const link = add(add(results, "li"), "a", references[index].title || references[index].DOI || `Paper ${item.paper_id}`);
+    link.href = `/papers?paper=${item.paper_id}`;
+  });
+  const created = items.filter(item => !item.existing).length;
+  element("zotero-status").textContent = `Imported ${created} · Reused ${items.length - created}`;
+  zoteroForm.elements.export_file.value = "";
+  await loadLibrary();
+}, element("zotero-status"));
 submit(element("archive-paper"), async () => {
   const {id} = selectedPaper();
   await api("archive-paper", { paper_id: id, archived: true });
@@ -1398,7 +1527,7 @@ async function findMetadata(query) {
     const button = add(item, "button", label || "Untitled result");
     button.type = "button";
     button.addEventListener("click", () => {
-      setMetadata(match);
+      setMetadata({...match, source_url: metadataForm.elements.source_url.value});
       libraryStatus.textContent = "Result selected. Save metadata to update this paper.";
     });
   });
