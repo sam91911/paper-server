@@ -152,17 +152,20 @@ SCHEMAS = {
     "Error": obj({"error": STRING}, ("error",)),
     "AgentGoal": obj({"id": ID, "agent": nullable(STRING), "agent_role": nullable(AI_ROLE),
                       "agents": array(STRING), "requester": STRING,
+                      "continuous": BOOLEAN, "require_approval": BOOLEAN,
                       "objective": STRING, "acceptance_criteria": STRING, "sources": AGENT_GOAL_REFERENCES,
                       "required_skills": array(obj({"id": ID, "title": STRING, "revision": ID, "api_path": STRING},
                                                    ("id", "title", "revision", "api_path"))),
                       "status": AGENT_GOAL_STATUS, "revision": ID, "created": COUNT, "updated": COUNT,
                       "source_unavailable": BOOLEAN, "actions": array(AGENT_GOAL_ACTION)},
-                     ("id", "status", "revision", "agent", "agent_role", "agents", "requester", "source_unavailable", "actions")),
+                     ("id", "status", "revision", "agent", "agent_role", "agents", "requester",
+                      "continuous", "require_approval", "source_unavailable", "actions")),
     "AgentGoalEvent": obj({"revision": ID, "action": enum("create", *AGENT_GOAL_ACTION["enum"]),
                            "actor": STRING, "status": AGENT_GOAL_STATUS, "note": STRING, "evidence": AGENT_GOAL_REFERENCES,
                            "created": COUNT, "redacted": BOOLEAN}, ("revision", "action", "actor", "status", "note", "evidence")),
     "Account": obj({"id": ID, "role": enum("user", "member", "local", "cloud"), "username": STRING,
-                    "display_name": STRING, "has_private_key": BOOLEAN, "key_only": BOOLEAN}, ("id", "role", "username")),
+                    "display_name": STRING, "email": nullable(STRING), "has_avatar": BOOLEAN,
+                    "has_private_key": BOOLEAN, "key_only": BOOLEAN}, ("id", "role", "username")),
     "Paper": obj({"id": ID, "path": STRING, **METADATA, "source_url": STRING, "owner_id": nullable(ID),
                   "audience": nullable(AUDIENCE), "has_pdf": schema("integer", enum=[0, 1]),
                   "metadata_audience": nullable(AUDIENCE), "pdf_restricted": schema("integer", enum=[0, 1]),
@@ -248,22 +251,27 @@ PATHS = {
         "get": operation("Read your agent goals or a goal's progress history", {"oneOf": [
             obj({"goals": array(ref("AgentGoal")), "next_before": nullable(ID), "assignable_agents": array(STRING)},
                 ("goals", "next_before", "assignable_agents")),
-            obj({"goal": ref("AgentGoal"), "events": array(ref("AgentGoalEvent")), "next_before": nullable(ID)},
+            obj({"goal": ref("AgentGoal"), "events": array(ref("AgentGoalEvent")), "next_before": nullable(ID),
+                 "last_submission": nullable(ref("AgentGoalEvent")), "last_approval": nullable(ref("AgentGoalEvent"))},
                 ("goal", "events", "next_before")),
-        ]}, params=(param("id", ID, description="Goal ID for a detail view."), BEFORE),
+        ]}, params=(param("id", ID, description="Goal ID for a detail view."), BEFORE,
+                    param("work", enum("ready"), description="AI accounts can list claimable and in-progress work.")),
             description="The requester and allowlisted AI accounts with access to the sources can read a goal. "
                         "The agent and agent_role fields identify the claimant and are null before a claim. "
-                        "With id, before pages through older events by revision. Otherwise it pages through goals by ID.",
+                        "With id, before pages through older events by revision. Otherwise it pages through goals by ID. "
+                        "Continuous or approval-gated goal details include the latest applicable checkpoint regardless of history pagination.",
             security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
         "post": operation("Create an agent goal or update its progress",
             acknowledgement("goal", "events", "next_before", goal=ref("AgentGoal"), events=array(ref("AgentGoalEvent")),
-                            next_before=nullable(ID)),
+                            next_before=nullable(ID), last_submission=nullable(ref("AgentGoalEvent")),
+                            last_approval=nullable(ref("AgentGoalEvent"))),
             body={"oneOf": [
                 {**obj({"action": enum("create"), "request_id": AGENT_GOAL_REQUEST_ID, "agent": STRING,
                      "agents": schema("array", items=STRING, minItems=1, maxItems=50),
+                     "continuous": BOOLEAN, "require_approval": BOOLEAN,
                      "objective": STRING, "acceptance_criteria": STRING, "sources": AGENT_GOAL_REFERENCES,
                      "required_skill_ids": schema("array", items=ID, maxItems=agent_goals.MAX_REQUIRED_SKILLS)},
-                    ("action", "request_id", "objective", "acceptance_criteria")),
+                    ("action", "request_id", "objective")),
                  "oneOf": [{"required": ["agents"]}, {"required": ["agent"]}]},
                 obj({"action": AGENT_GOAL_ACTION, "request_id": AGENT_GOAL_REQUEST_ID, "id": ID, "revision": ID,
                      "note": STRING, "evidence": AGENT_GOAL_REFERENCES}, ("action", "request_id", "id", "revision")),
@@ -271,6 +279,9 @@ PATHS = {
             description="The requester must own or have goal posting access for every selected AI account. "
                         "Use agents to create an unclaimed goal for an allowlist. The legacy agent field assigns it immediately. "
                         "The first allowlisted agent to start claims the goal. Use an action from the goal's actions list. "
+                        "Acceptance criteria are required unless continuous is true. "
+                        "Continuous goals stay open until the requester finishes or cancels them. "
+                        "When require_approval is true, the requester must approve the first and each subsequent round. "
                         "Retry an identical update with the same request_id. "
                         "A stale revision returns 409. Progress, block, submit, and request_changes require a note.",
             security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
@@ -380,6 +391,14 @@ PATHS = {
              "sign_in_keys": array(obj({"key_id": STRING, "label": STRING, "created": nullable(COUNT)})),
              "passkeys": array(obj({"id": STRING, "label": STRING, "created": COUNT}))}, ("account",)),
         security=[{}, {"ApplicationKey": []}, {"BrowserSession": []}])},
+    "/api/account/profile": {"post": operation("Update your profile",
+        acknowledgement(), body=obj({"display_name": schema("string", maxLength=120), "email": nullable(STRING),
+                                      "avatar": nullable(STRING)}),
+        description="An empty nickname uses the username. A blank email removes the profile email. "
+                    "Upload a base64-encoded PNG up to 256 × 256 pixels and 350 KB, or pass null to remove the avatar.",
+        security=[{"BrowserSession": []}])},
+    "/api/account/avatar": {"get": operation("Read your profile avatar",
+        schema("string", format="binary"), response_type="image/png", security=[{"BrowserSession": []}])},
     "/api/paper-catalog": {"get": operation("Search the library's visible papers",
         obj({"papers": array(ref("Paper")), "count": COUNT, "total": COUNT, "page": ID,
              "groups": array(obj({"id": ID, "name": STRING})), "publishers": array(STRING), "account": nullable(ref("Account"))},

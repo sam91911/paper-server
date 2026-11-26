@@ -144,7 +144,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             connections = "'self' https:" if remote_catalog else "'self'"
             policy = ("default-src 'none'; script-src 'self'; style-src 'self'; "
-                      f"connect-src {connections}; frame-src 'self'; frame-ancestors 'none'")
+                      f"connect-src {connections}; img-src 'self'; frame-src 'self'; frame-ancestors 'none'")
         self.send_header("Content-Security-Policy", policy)
         self.end_headers()
         self.wfile.write(data)
@@ -287,6 +287,8 @@ class Handler(BaseHTTPRequestHandler):
             self.read_ai_invitations(url)
         elif route == "/api/agent-goals":
             self.read_agent_goals(url)
+        elif route == "/api/account/avatar":
+            self.read_account_avatar()
         elif route in ("/api/reviews", "/api/review-agents"):
             self.read_reviews(url)
         elif route == "/api/skills" or route.startswith("/api/skills/"):
@@ -479,6 +481,9 @@ class Handler(BaseHTTPRequestHandler):
                         if account and self.headers.get("Authorization") is None:
                             data["keys"] = accounts.list_keys(db, account["id"])
                             if account["role"] in ("user", "member"):
+                                account["has_avatar"] = bool(db.execute(
+                                    "SELECT avatar IS NOT NULL FROM accounts WHERE id=?", (account["id"],)
+                                ).fetchone()[0])
                                 data["sign_in_keys"] = human_keys.list_keys(db, account["id"])
                                 data["passkeys"] = passkeys.list_passkeys(db, account["id"])
                     elif route in ("/api/documents", "/api/news", "/api/discussions"):
@@ -571,9 +576,12 @@ class Handler(BaseHTTPRequestHandler):
             params = parse_qs(url.query, keep_blank_values=True)
             goal_id = skills.query_id(params["id"][0]) if "id" in params else None
             before = skills.query_id(params["before"][0]) if "before" in params else None
+            ready_only = "work" in params
+            if ready_only and (goal_id is not None or params["work"] != ["ready"]):
+                raise ValueError("Use work=ready on the goal list.")
             with library.connect(self.server.database) as db:
                 storage.begin(db)
-                result = agent_goals.read(db, self.require_account(db), goal_id=goal_id, before=before)
+                result = agent_goals.read(db, self.require_account(db), goal_id=goal_id, before=before, ready_only=ready_only)
             self.send_json(200, result)
         except accounts.SignInRequired:
             self.send_json(401, {"error": "Sign in to continue."})
@@ -768,7 +776,9 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, OverflowError) as error:
             self.send_json(400, {"error": str(error)})
         except storage.INTEGRITY_ERRORS:
-            self.send_json(409, {"error": "A group already exists or a selected record is missing"})
+            message = ("That email address is already in use." if self.path == "/api/account/profile"
+                       else "A group already exists or a selected record is missing")
+            self.send_json(409, {"error": message})
         except storage.ERRORS as error:
             LOG.error("Database update failed (%s)", type(error).__name__)
             self.send_json(500, {"error": "Could not update the library database"})
@@ -869,7 +879,27 @@ class Handler(BaseHTTPRequestHandler):
             LOG.error("PDF import failed (%s)", type(error).__name__)
             self.send_json(500, {"error": "Could not save the local PDF import"})
 
+    def read_account_avatar(self):
+        try:
+            with library.connect(self.server.database) as db:
+                account = self.require_browser_account(db)
+                avatar = db.execute("SELECT avatar FROM accounts WHERE id=?", (account["id"],)).fetchone()[0]
+            if avatar is None:
+                self.send_json(404, {"error": "No profile avatar."})
+            else:
+                self.send_data(200, bytes(avatar), "image/png")
+        except accounts.SignInRequired:
+            self.send_json(401, {"error": "Sign in to view your avatar."})
+        except storage.ERRORS:
+            self.send_json(500, {"error": "Could not read the avatar."})
+
     def update(self, db, data):
+        if self.path == "/api/account/profile":
+            account = self.require_browser_account(db)
+            if account["role"] not in ("user", "member"):
+                raise sharing.AccessDenied
+            accounts.update_profile(db, account, data)
+            return
         if self.path == "/api/human-invitations":
             issuer_id = self.human_invitation_issuer(db)
             action = data.get("action", "create")

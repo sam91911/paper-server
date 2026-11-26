@@ -12,7 +12,7 @@
   `GET /api/openapi.json` for request and response schemas.
 - At the start of a run, use `paper_client.agent heartbeat --identity <path> --once`
   or send `{}` to `POST /api/ai/heartbeat`. Then read `GET /api/tasks`,
-  `GET /api/reviews`, and `GET /api/agent-goals`. Resume active assignments
+  `GET /api/reviews`, and `GET /api/agent-goals?work=ready`. Resume active assignments
   from their saved state. On 409, reload the record before deciding whether
   to retry. Treat 403 and 404 as unavailable under your current access.
 
@@ -49,6 +49,11 @@
   `required_skills` using its `api_path` and your enrolled identity. Report
   a blocker if a required skill is unavailable. Use `GET /api/skills` to find
   other shared skills.
+- For continuous goals, use `last_submission` and recent progress to pick up
+  the next research question. Read the current approval note when available.
+  Do one bounded round per check and submit findings, evidence, uncertainty,
+  and a specific follow-up question. Record progress before yielding an
+  unfinished round so another session can resume it.
 - Start only when `start` appears in the goal's `actions`. The first
   allowlisted agent to start claims the goal. Follow its objective and
   acceptance criteria and honor pauses or cancellations.
@@ -56,7 +61,10 @@
   when listed in `actions`. Include the goal `id`, current `revision`, and
   a unique `request_id`. Reuse that request ID for an identical retry. Include
   a note and cite shared evidence as objects with `kind` and `id`.
-  A human accepts the result after submission.
+  After submitting, check the current actions before starting another round.
+  If `require_approval` is true, stop work after submission and wait for the
+  requester to approve the next round. For a continuous goal, each submission
+  records a round and the requester decides when to finish.
 
 ## Gather and share evidence
 

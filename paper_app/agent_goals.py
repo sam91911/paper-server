@@ -14,6 +14,8 @@ GOAL_TABLE = """CREATE TABLE IF NOT EXISTS {table} (
         objective TEXT NOT NULL, acceptance_criteria TEXT NOT NULL, sources TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('assigned','in_progress','blocked','paused','submitted','completed','canceled')),
         revision INTEGER NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+        continuous BOOLEAN NOT NULL DEFAULT FALSE,
+        require_approval BOOLEAN NOT NULL DEFAULT FALSE,
         CHECK ((agent_id IS NULL) = (agent_role IS NULL))
     )"""
 SCHEMA = (
@@ -43,6 +45,8 @@ OWNER_ACTIONS = {
     "resume": (("paused",), "assigned"),
     "request_changes": (("submitted",), "in_progress"),
     "accept": (("submitted",), "completed"),
+    "approve": (("paused", "submitted"), "assigned"),
+    "finish": (STATES[:-2], "completed"),
     "release": (("assigned", "in_progress", "blocked"), "assigned"),
     "cancel": (STATES[:-2], "canceled"),
 }
@@ -59,12 +63,17 @@ def initialize(db):
     if legacy:
         db.execute(GOAL_TABLE.format(table="agent_goals_new"))
         db.execute("INSERT INTO agent_goals_new "
+                   "(id,requester_id,agent_id,agent_role,objective,acceptance_criteria,sources,status,revision,created,updated) "
                    "SELECT id,requester_id,agent_id,agent_role,objective,acceptance_criteria,sources,status,revision,created,updated "
                    "FROM agent_goals")
         db.execute("DROP TABLE agent_goals")
         db.execute("ALTER TABLE agent_goals_new RENAME TO agent_goals")
     for statement in SCHEMA:
         db.execute(statement)
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_goals)")}
+    for name in ("continuous", "require_approval"):
+        if name not in columns:
+            db.execute(f"ALTER TABLE agent_goals ADD COLUMN {name} BOOLEAN NOT NULL DEFAULT FALSE")
     if legacy:
         db.execute("INSERT INTO agent_goal_readers(goal_id,agent_id,agent_role) SELECT id,agent_id,agent_role FROM agent_goals")
 
@@ -122,7 +131,7 @@ def check_references(db, participants, items):
     return resolved
 
 
-def scoped_rows(db, account, *, goal_id=None, before=None):
+def scoped_rows(db, account, *, goal_id=None, before=None, ready_only=False):
     owner = account["role"] in HUMAN_ROLES
     condition = ("g.requester_id=?" if owner else
                  "EXISTS (SELECT 1 FROM agent_goal_readers w WHERE w.goal_id=g.id AND w.agent_id=? AND w.agent_role=?)")
@@ -133,6 +142,10 @@ def scoped_rows(db, account, *, goal_id=None, before=None):
     if before is not None:
         condition += " AND g.id<?"
         parameters += (before,)
+    if ready_only:
+        condition += (" AND ((g.status='assigned' AND g.agent_id IS NULL)"
+                      " OR (g.status IN ('assigned','in_progress') AND g.agent_id=?))")
+        parameters += (account["id"],)
     return db.execute(
         f"""SELECT g.*, h.username AS requester, a.username AS agent,
             {accounts.ROLE_SQL.format(alias='h')} AS requester_role,
@@ -165,7 +178,18 @@ def available_actions(row, account, owner):
         return ["start"] if row["status"] == "assigned" else []
     if not owner and claimant != account["id"]:
         return []
-    return [action for action, (allowed, _) in (OWNER_ACTIONS if owner else AGENT_ACTIONS).items()
+    transitions = OWNER_ACTIONS if owner else AGENT_ACTIONS
+    if owner:
+        transitions = OWNER_ACTIONS.copy()
+        if row["require_approval"]:
+            del transitions["resume"], transitions["request_changes"]
+        else:
+            del transitions["approve"]
+        if row["continuous"]:
+            del transitions["accept"]
+        else:
+            del transitions["finish"]
+    return [action for action, (allowed, _) in transitions.items()
             if row["status"] in allowed and (action != "release" or claimant is not None)]
 
 
@@ -188,6 +212,7 @@ def visible_sources(db, row, account, agents):
 def summary(db, account, row):
     owner = account["role"] in HUMAN_ROLES
     result = {key: row[key] for key in ("id", "status", "revision", "agent", "agent_role", "requester", "created", "updated")}
+    result.update(continuous=bool(row["continuous"]), require_approval=bool(row["require_approval"]))
     agents = listed_agents(db, row["id"])
     result["agents"] = [agent["username"] for agent in agents]
     actions = available_actions(row, account, owner)
@@ -197,7 +222,7 @@ def summary(db, account, row):
         if not owner:
             raise LookupError("Agent goal unavailable.") from None
         return {**result, "source_unavailable": True,
-                "actions": [action for action in actions if action in ("pause", "cancel", "release")]}
+                "actions": [action for action in actions if action in ("pause", "cancel", "release", "finish")]}
     return {**result, "objective": row["objective"], "acceptance_criteria": row["acceptance_criteria"],
             "sources": [item for item in source_items if item["kind"] != "skill"],
             "required_skills": [{key: value for key, value in item.items() if key != "kind"}
@@ -205,10 +230,25 @@ def summary(db, account, row):
             "source_unavailable": False, "actions": actions}
 
 
-def read(db, account, *, goal_id=None, before=None):
+EVENT_SELECT = ("SELECT e.revision,e.action,e.status,e.note,e.evidence,e.created,a.username AS actor "
+                "FROM agent_goal_events e JOIN accounts a ON a.id=e.actor_id WHERE e.goal_id=?")
+
+
+def visible_event(db, participants, event):
+    result = dict(event)
+    try:
+        result["evidence"] = check_references(db, participants, json.loads(result["evidence"]))
+    except (sharing.AccessDenied, LookupError, ValueError):
+        result.update(note="", evidence=[], redacted=True)
+    return result
+
+
+def read(db, account, *, goal_id=None, before=None, ready_only=False):
     if goal_id is None:
+        if ready_only and account["role"] in HUMAN_ROLES:
+            raise ValueError("The ready queue is available to AI accounts.")
         visible = []
-        for row in scoped_rows(db, account, before=before):
+        for row in scoped_rows(db, account, before=before, ready_only=ready_only):
             try:
                 visible.append(summary(db, account, row))
             except LookupError:
@@ -224,27 +264,30 @@ def read(db, account, *, goal_id=None, before=None):
     goal = summary(db, account, row)
     if goal["source_unavailable"]:
         return {"goal": goal, "events": [], "next_before": None}
-    events = []
+    participants = participants_for(row, account)
     limit = before if before is not None else row["revision"] + 1
-    for event in db.execute(
-        "SELECT e.revision,e.action,e.status,e.note,e.evidence,e.created,a.username AS actor "
-        "FROM agent_goal_events e JOIN accounts a ON a.id=e.actor_id WHERE e.goal_id=? AND e.revision<? "
-        "ORDER BY e.revision DESC LIMIT ?", (goal_id, limit, PAGE_SIZE + 1),
-    ):
-        result = dict(event)
-        result["evidence"] = json.loads(result["evidence"])
-        try:
-            result["evidence"] = check_references(db, participants_for(row, account), result["evidence"])
-        except (sharing.AccessDenied, LookupError, ValueError):
-            result.update(note="", evidence=[], redacted=True)
-        events.append(result)
-    return {"goal": goal, "events": events[:PAGE_SIZE],
-            "next_before": events[PAGE_SIZE - 1]["revision"] if len(events) > PAGE_SIZE else None}
+    events = [visible_event(db, participants, event) for event in db.execute(
+        EVENT_SELECT + " AND e.revision<? ORDER BY e.revision DESC LIMIT ?", (goal_id, limit, PAGE_SIZE + 1),
+    )]
+    detail = {"goal": goal, "events": events[:PAGE_SIZE],
+              "next_before": events[PAGE_SIZE - 1]["revision"] if len(events) > PAGE_SIZE else None}
+    for enabled, key, action in ((goal["continuous"], "last_submission", "submit"),
+                                 (goal["require_approval"], "last_approval", "approve")):
+        if enabled:
+            event = db.execute(EVENT_SELECT + " AND e.action=? ORDER BY e.revision DESC LIMIT 1",
+                               (goal_id, action)).fetchone()
+            detail[key] = visible_event(db, participants, event) if event is not None else None
+    return detail
 
 
 def create(db, account, data, now):
     if account["role"] not in HUMAN_ROLES:
         raise sharing.AccessDenied
+    continuous = data.get("continuous", False)
+    require_approval = data.get("require_approval", False)
+    if not isinstance(continuous, bool) or not isinstance(require_approval, bool):
+        raise ValueError("Goal options must be true or false.")
+    status = "paused" if require_approval else "assigned"
     legacy = "agents" not in data
     names = [data.get("agent")] if legacy else data["agents"]
     if not isinstance(names, list) or not 1 <= len(names) <= 50 or (not legacy and "agent" in data):
@@ -270,15 +313,17 @@ def create(db, account, data, now):
         raise ValueError("Share every source, supporting evidence, and required skill with each allowlisted agent first.") from None
     claimant = next(iter(agents.values())) if legacy else None
     goal_id = db.execute(
-        """INSERT INTO agent_goals(requester_id,agent_id,agent_role,objective,acceptance_criteria,sources,status,revision,created,updated)
-           VALUES (?,?,?,?,?,?,'assigned',1,?,?) RETURNING id""",
+        """INSERT INTO agent_goals(requester_id,agent_id,agent_role,objective,acceptance_criteria,sources,
+                                  status,revision,created,updated,continuous,require_approval)
+           VALUES (?,?,?,?,?,?,?,1,?,?,?,?) RETURNING id""",
         (account["id"], claimant["id"] if claimant else None, claimant["role"] if claimant else None,
          text(data.get("objective"), "an objective", 8000),
-         text(data.get("acceptance_criteria"), "acceptance criteria", 8000), json.dumps(sources), now, now),
+         text(data.get("acceptance_criteria", "" if continuous else None), "acceptance criteria", 8000,
+              required=not continuous), json.dumps(sources), status, now, now, continuous, require_approval),
     ).fetchone()[0]
     db.executemany("INSERT INTO agent_goal_readers(goal_id,agent_id,agent_role) VALUES (?,?,?)",
                    ((goal_id, agent["id"], agent["role"]) for agent in agents.values()))
-    return goal_id
+    return goal_id, status
 
 
 def update(db, account, data):
@@ -298,7 +343,8 @@ def update(db, account, data):
     now = int(time.time())
     evidence, note = [], ""
     if action == "create":
-        goal_id, revision, status = create(db, account, data, now), 1, "assigned"
+        goal_id, status = create(db, account, data, now)
+        revision = 1
     else:
         goal_id = data.get("id")
         if not reviews.valid_id(goal_id) or not reviews.valid_id(data.get("revision")) or not isinstance(action, str):
@@ -313,6 +359,10 @@ def update(db, account, data):
             raise sharing.EditConflict("This action is unavailable for the current goal status.")
         owner = account["role"] in HUMAN_ROLES
         _, status = (OWNER_ACTIONS if owner else AGENT_ACTIONS)[action]
+        if action == "submit" and row["continuous"] and not row["require_approval"]:
+            status = "assigned"
+        elif action == "release" and row["require_approval"]:
+            status = "paused"
         note = text(data.get("note", ""), "a progress note or result", 16000,
                     required=action in ("progress", "block", "submit", "request_changes"))
         evidence = references(data.get("evidence", []))

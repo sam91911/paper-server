@@ -320,6 +320,7 @@
   </div>
 </section>
 <section id="account-page" hidden>
+  <img id="account-avatar" alt="Your profile avatar" width="64" height="64" hidden>
   <h2 id="account-summary">Sign in</h2>
   <div id="human-key-entry">
     <form id="passkey-login" hidden>
@@ -371,6 +372,17 @@
   <p id="account-username" hidden></p>
   <p id="account-email" hidden></p>
   <div class="account-options">
+  <details id="account-profile-panel" name="account-panel" hidden>
+    <summary>Profile</summary>
+    <form id="account-profile">
+      <label>Nickname <input name="display_name" autocomplete="nickname" maxlength="120"></label>
+      <label>Email <input name="email" type="email" autocomplete="email" maxlength="254"></label>
+      <label>Avatar <input name="avatar" type="file" accept="image/png,image/jpeg,image/webp" aria-describedby="account-avatar-help"></label>
+      <p id="account-avatar-help">PNG, JPEG, or WebP up to 5 MB.</p>
+      <label id="remove-account-avatar" class="inline-check" hidden><input name="remove_avatar" type="checkbox"> Remove current avatar</label>
+      <button>Save profile</button>
+    </form>
+  </details>
   <details id="passkey-panel" name="account-panel" hidden>
     <summary>Passkeys</summary>
     <div id="passkey-list"></div>

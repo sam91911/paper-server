@@ -106,6 +106,18 @@ function showAccount() {
     element("password-signup-note").textContent = required
       ? "An invitation is required to join this workspace."
       : "You can create an account without an invitation.";
+    const profile = element("account-profile");
+    const profilePanel = element("account-profile-panel");
+    const avatar = element("account-avatar");
+    profilePanel.hidden = !["user", "member"].includes(account?.role);
+    if (profilePanel.hidden) profilePanel.open = false;
+    profile.reset();
+    profile.elements.display_name.value = account?.display_name || "";
+    profile.elements.email.value = account?.email || "";
+    avatar.hidden = !account?.has_avatar;
+    element("remove-account-avatar").hidden = avatar.hidden;
+    if (avatar.hidden) avatar.removeAttribute("src");
+    else avatar.src = `/api/account/avatar?v=${Date.now()}`;
   }
   element("account-summary").textContent = account ? `${account.display_name || account.username} · ${roleLabels[account.role]}` : "Sign in";
   element("human-key-entry").hidden = Boolean(account);
@@ -1332,6 +1344,34 @@ submit(createKeyForm, async () => {
     accountStatus.textContent = error.message;
   }
 });
+
+const profileForm = element("account-profile");
+submit(profileForm, async () => {
+  const {display_name, email, avatar, remove_avatar} = profileForm.elements;
+  const data = {display_name: display_name.value, email: email.value};
+  const file = avatar.files[0];
+  if (file && remove_avatar.checked) throw new Error("Choose a new avatar or remove the current one.");
+  if (file) {
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 5_000_000) {
+      throw new Error("Choose a PNG, JPEG, or WebP image of up to 5 MB.");
+    }
+    const bitmap = await createImageBitmap(file).catch(() => {
+      throw new Error("Could not read this image.");
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 256;
+    const size = Math.min(bitmap.width, bitmap.height);
+    canvas.getContext("2d").drawImage(bitmap, (bitmap.width - size) / 2, (bitmap.height - size) / 2,
+      size, size, 0, 0, 256, 256);
+    bitmap.close();
+    data.avatar = canvas.toDataURL("image/png").split(",")[1];
+  } else if (remove_avatar.checked) {
+    data.avatar = null;
+  }
+  await api("account/profile", data);
+  await loadLibrary();
+  accountStatus.textContent = "Profile saved.";
+}, accountStatus);
 
 const passwordForm = element("change-password");
 submit(passwordForm, async () => {

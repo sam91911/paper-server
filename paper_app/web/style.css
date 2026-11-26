@@ -826,6 +826,7 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
 .goal-list-status[data-status="completed"] { color: #316849; }
 .goal-list-status[data-status="blocked"], .goal-list-status[data-status="canceled"] { color: #8d3d28; }
 #account-page { max-width: 56rem; }
+#account-avatar { border-radius: 50%; object-fit: cover; }
 .account-options:has(> details[open]:not([hidden])) { display: grid; gap: .65rem; }
 .account-options:has(> details[open]:not([hidden])) > details { margin: 0; }
 .account-options > details[open] { grid-row: 1; background: var(--surface); }

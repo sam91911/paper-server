@@ -17,6 +17,7 @@ const labels = {
   create: "Created goal", start: "Start or resume work", progress: "Record progress", block: "Report blocker",
   submit: "Submit result", pause: "Pause", resume: "Resume", request_changes: "Request changes",
   accept: "Accept result", release: "Release claim", cancel: "Cancel goal",
+  approve: "Approve next round", finish: "Finish goal",
 };
 
 let activeGoal, goalCursor, eventCursor, pending, busy;
@@ -50,7 +51,8 @@ function add(parent, tag, value, className) {
 }
 
 function goalStatus(goal) {
-  const state = goal.status === "assigned" ? "Ready" : labels[goal.status];
+  let state = goal.status === "assigned" ? "Ready" : labels[goal.status];
+  if (goal.require_approval && ["paused", "submitted"].includes(goal.status)) state = "Awaiting approval";
   return `${state} · ${goal.agent ? `Claimed by ${goal.agent} (${goal.agent_role})` : "Unclaimed"}`;
 }
 
@@ -163,13 +165,17 @@ function showGoal({goal, events, next_before}) {
   content.replaceChildren();
   add(content, "h3", "AI allowlist");
   add(content, "p", goal.agents.join(", "));
+  if (goal.continuous) add(content, "p", "Continuous goal");
+  if (goal.require_approval) add(content, "p", "Approval required before each round");
   if (goal.source_unavailable) {
     add(content, "p", "The goal’s sources or allowlisted accounts are unavailable.");
   } else {
     add(content, "h3", "Objective");
     add(content, "p", goal.objective, "goal-brief-text");
-    add(content, "h3", "Acceptance criteria");
-    add(content, "p", goal.acceptance_criteria, "goal-brief-text");
+    if (goal.acceptance_criteria) {
+      add(content, "h3", "Acceptance criteria");
+      add(content, "p", goal.acceptance_criteria, "goal-brief-text");
+    }
     if (goal.required_skills.length) {
       add(content, "h3", "Required skills");
       const skills = add(content, "ul");
@@ -193,10 +199,14 @@ async function openGoal(id, focus = false) {
   if (focus) element("agent-goal-title").focus();
 }
 
+createForm.elements.continuous.addEventListener("change", () => {
+  createForm.elements.acceptance_criteria.required = !createForm.elements.continuous.checked;
+});
+
 createForm.addEventListener("submit", event => {
   event.preventDefault();
   run(async () => {
-    const {agents, objective, acceptance_criteria, sources, required_skills} = createForm.elements;
+    const {agents, objective, acceptance_criteria, sources, required_skills, continuous, require_approval} = createForm.elements;
     const usernames = agentNames(agents.value);
     const skillIds = agentNames(required_skills.value).map(value => {
       const id = Number(value);
@@ -204,8 +214,10 @@ createForm.addEventListener("submit", event => {
       return id;
     });
     const result = await post({action: "create", agents: usernames, objective: objective.value,
+      continuous: continuous.checked, require_approval: require_approval.checked,
       acceptance_criteria: acceptance_criteria.value, sources: references(sources.value), required_skill_ids: skillIds});
     createForm.reset();
+    acceptance_criteria.required = true;
     showGoal(result);
     history.replaceState(null, "", `/agent-goals?id=${result.goal.id}`);
     await loadList();

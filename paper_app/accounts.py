@@ -1,5 +1,6 @@
 """Local accounts and expiring browser sessions."""
 
+import base64
 import hashlib
 import hmac
 import re
@@ -15,6 +16,7 @@ ROLE_SQL = """CASE WHEN {alias}.role = 'user' THEN
     CASE WHEN {alias}.trusted=1 THEN 'user' ELSE 'member' END ELSE {alias}.ai_location END"""
 SESSION_SECONDS = 7 * 24 * 60 * 60
 HUMAN_INVITE_SECONDS = 24 * 60 * 60
+MAX_AVATAR_BYTES = 350_000
 AI_SESSION_PREFIX = "pl_ai_"
 TOKEN_PATTERN = r"[A-Za-z0-9_-]{43}"
 
@@ -86,6 +88,7 @@ def initialize(db):
         ("ai_location", "TEXT NOT NULL DEFAULT 'cloud' CHECK (ai_location IN ('local', 'cloud'))"),
         ("display_name", "TEXT NOT NULL DEFAULT ''"),
         ("email", "TEXT COLLATE NOCASE"),
+        ("avatar", "BLOB"),
         ("trusted", "INTEGER NOT NULL DEFAULT 1 CHECK (trusted IN (0,1))"),
         ("disabled_at", "INTEGER"),
         ("last_heartbeat", "INTEGER"),
@@ -126,7 +129,8 @@ def current_account(db, token, *, application_key=False, ai_session=False):
 
 def email_address(email):
     email = email.strip().lower() if isinstance(email, str) else ""
-    if len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+", email):
+    if (len(email) > 254 or any(ord(char) < 32 for char in email)
+            or not re.fullmatch(r"[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+", email)):
         raise ValueError("Enter a valid email address.")
     return email
 
@@ -136,6 +140,31 @@ def person_name(name):
     if not 1 <= len(name) <= 120 or any(ord(char) < 32 for char in name):
         raise ValueError("Enter a name of up to 120 characters.")
     return name
+
+
+def update_profile(db, account, data):
+    if not data or data.keys() - {"display_name", "email", "avatar"}:
+        raise ValueError("Choose the profile fields to update.")
+    name = data.get("display_name", account["display_name"])
+    name = "" if isinstance(name, str) and not name.strip() else person_name(name)
+    email = data.get("email", account["email"])
+    email = None if email is None or (isinstance(email, str) and not email.strip()) else email_address(email)
+    if "avatar" in data:
+        avatar = data["avatar"]
+        if avatar is not None:
+            if not isinstance(avatar, str) or len(avatar) > 4 * ((MAX_AVATAR_BYTES + 2) // 3):
+                raise ValueError("Choose a PNG avatar of up to 350 KB.")
+            try:
+                avatar = base64.b64decode(avatar, validate=True)
+            except ValueError:
+                raise ValueError("Choose a valid PNG avatar.") from None
+            if (not 45 <= len(avatar) <= MAX_AVATAR_BYTES
+                    or not avatar.startswith(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+                    or not avatar.endswith(b"\x00\x00\x00\x00IEND\xaeB\x60\x82")
+                    or any(not 1 <= int.from_bytes(avatar[offset:offset + 4], "big") <= 256 for offset in (16, 20))):
+                raise ValueError("Choose a PNG avatar up to 256 × 256 pixels and 350 KB.")
+        db.execute("UPDATE accounts SET avatar=? WHERE id=?", (avatar, account["id"]))
+    db.execute("UPDATE accounts SET display_name=?,email=? WHERE id=?", (name, email, account["id"]))
 
 
 def create_invite(db, email, *, issuer_id=None, role="user"):

@@ -125,6 +125,52 @@ class AgentGoalTests(unittest.TestCase):
             "id": goal["id"], "revision": goal["revision"], "action": action, "request_id": uuid4().hex, **extra,
         })
 
+    def test_continuous_goal_waits_for_requester_approval_each_round(self):
+        payload = self.assignment(continuous=True, require_approval=True, agents=["worker", "other"])
+        del payload["agent"], payload["acceptance_criteria"]
+        goal = self.api(data=payload)["goal"]
+        queue = f"{ROUTE}?work=ready"
+        self.assertEqual(self.api(queue, user="worker")["goals"], [])
+        self.assertEqual(goal["status"], "paused")
+        self.assertEqual(goal["acceptance_criteria"], "")
+        self.action(goal, "start", expected=409)
+        self.action(goal, "approve", expected=409)
+        self.action(goal, "approve", user="another-owner", expected=404)
+        goal = self.action(goal, "approve", user="owner")["goal"]
+        self.assertEqual([item["id"] for item in self.api(queue, user="worker")["goals"]], [goal["id"]])
+        goal = self.action(goal, "start")["goal"]
+        self.assertEqual(self.api(queue, user="other")["goals"], [])
+        self.assertEqual(self.api(queue, user="worker")["goals"][0]["status"], "in_progress")
+        goal = self.action(goal, "submit", note="First round complete")["goal"]
+        self.assertEqual(self.api(queue, user="worker")["goals"], [])
+        self.assertEqual(goal["status"], "submitted")
+        self.action(goal, "start", expected=409)
+        self.action(goal, "progress", note="Next round", expected=409)
+        self.action(goal, "accept", user="owner", expected=409)
+        goal = self.action(goal, "approve", user="owner", note="Compare the paper's baselines")["goal"]
+        self.assertEqual(self.api(queue, user="worker")["goals"][0]["status"], "assigned")
+        detail = self.api(f"{ROUTE}?id={goal['id']}&before=2", user="worker")
+        self.assertEqual([event["action"] for event in detail["events"]], ["create"])
+        self.assertEqual(detail["last_submission"]["note"], "First round complete")
+        self.assertEqual(detail["last_approval"]["note"], "Compare the paper's baselines")
+        self.action(goal, "start", user="other", expected=409)
+        goal = self.action(goal, "start")["goal"]
+        goal = self.action(goal, "finish", user="owner")["goal"]
+        self.assertEqual(goal["status"], "completed")
+        self.assertEqual(self.api(queue, user="worker")["goals"], [])
+        self.action(goal, "progress", note="Extra work", expected=409)
+
+    def test_continuous_goal_can_start_another_round_without_approval(self):
+        self.api(data=self.assignment(acceptance_criteria=""), expected=400)
+        self.api(data=self.assignment(continuous="true"), expected=400)
+        goal = self.api(data=self.assignment(continuous=True, acceptance_criteria=""))["goal"]
+        goal = self.action(goal, "start")["goal"]
+        goal = self.action(goal, "submit", note="Round complete")["goal"]
+        self.assertEqual(goal["status"], "assigned")
+        self.assertEqual(goal["actions"], ["start"])
+        self.assertEqual(self.api(f"{ROUTE}?work=ready", user="worker")["goals"][0]["id"], goal["id"])
+        self.assertEqual(self.api(f"{ROUTE}?id={goal['id']}", user="worker")["last_submission"]["note"], "Round complete")
+
     def test_lifecycle_permissions_and_idempotency(self):
         shared = self.document("Report", recipients=["worker"])
         private = self.document("Private")

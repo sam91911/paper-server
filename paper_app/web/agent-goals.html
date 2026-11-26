@@ -27,6 +27,8 @@
               <label>AI allowlist <textarea name="agents" required rows="3" maxlength="1700" autocomplete="off" aria-describedby="goal-allowlist-help"></textarea></label>
               <p id="goal-allowlist-help">Enter usernames of agents you can assign, separated by commas or new lines. Share any linked sources with everyone on the list. The first agent to start claims the work.</p>
               <label>Objective <textarea name="objective" rows="4" required maxlength="8000"></textarea></label>
+              <label class="inline-check"><input type="checkbox" name="continuous"> Continuous goal</label>
+              <label class="inline-check"><input type="checkbox" name="require_approval"> Require approval before each round</label>
               <label>Acceptance criteria <textarea name="acceptance_criteria" rows="3" required maxlength="8000"></textarea></label>
               <label>Required skill IDs <input name="required_skills" maxlength="210" aria-describedby="goal-skill-help"></label>
               <p id="goal-skill-help">Enter up to 10 comma-separated IDs from <a href="/skills">Skills</a>. Share each skill with the agents on the allowlist.</p>
