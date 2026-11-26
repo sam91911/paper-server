@@ -95,6 +95,8 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     assert.ok(clipboard.includes('heartbeat --identity ~/.paper-library/reviewer.json --once'));
     assert.ok(clipboard.includes('/api/agent-goals'));
     assert.ok(clipboard.includes('/api/reviews'));
+    assert.ok(clipboard.includes('request --identity ~/.paper-library/reviewer.json /api/tasks'));
+    assert.ok(clipboard.includes('assignee "reviewer" for yourself'));
     assert.ok(clipboard.includes('wait for the next check'));
     assert.ok(clipboard.includes('Repeat the check about every 60 seconds'));
     assert.ok(clipboard.includes('/api/paper-catalog?q='));
@@ -122,6 +124,7 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
       assert.ok(clipboard.includes('heartbeat --identity ~/.paper-library/reviewer.json --once'));
       assert.ok(clipboard.includes('/api/agent-goals'));
       assert.ok(clipboard.includes('/api/reviews'));
+      assert.ok(clipboard.includes('/api/tasks'));
       assert.ok(clipboard.includes('report the outcome and end the run'));
       assert.doesNotMatch(clipboard, /next check|Repeat the check|separate heartbeat/);
     }

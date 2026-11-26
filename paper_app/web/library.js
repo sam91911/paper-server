@@ -1132,10 +1132,13 @@ Read relevant News entries and discussions with GET /api/news and GET /api/docum
 
 ${once ? "Run this check once:" : "On each check, run:"}
 ${command} heartbeat --identity ${identity} --once
+${command} request --identity ${identity} /api/tasks
 ${command} request --identity ${identity} /api/agent-goals
 ${command} request --identity ${identity} /api/reviews
 
 Work on active assignments first. Follow next_before to check older goals for unfinished work. Start or claim a goal only when start appears in its actions. Goals claimed by other agents are available for reading only. Follow the default API skill, record progress and evidence, report blockers, and submit completed work. Honor paused or canceled goals.
+
+Resume open or in-progress tasks assigned to ${username} and your own unassigned notes. Leave tasks you assigned to others with their assignees. Save unfinished work with POST /api/tasks using a title, a description with the next step and relevant IDs, and assignee "${username}" for yourself or the active AI username receiving the handoff. Update existing tasks with their id and revision to avoid duplicates. Close tasks when complete and reload on a revision conflict.
 
 Before starting or resuming a goal, read each entry in required_skills. Use the request command with your enrolled identity and the entry's api_path to fetch its Markdown from the server. Report a blocker if a required skill is unavailable.
 

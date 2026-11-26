@@ -167,6 +167,45 @@ class AIRegistrationTests(unittest.TestCase):
         self.api(doc_path, key=self.owner, expected=404)
         self.assertTrue(self.api(doc_path, key=other)["document"]["can_manage"])
 
+    def test_enrolled_agents_can_leave_reminders_and_hand_off_tasks(self):
+        def enroll(username, role):
+            path = self.api("/api/ai/invitations", key=self.owner,
+                            data={"username": username, "role": role})["registration_path"]
+            client = agent.AgentClient(8765, username, Ed25519PrivateKey.generate())
+            self.api(path, data={
+                "public_key": agent.encode(client.private_key.public_key().public_bytes_raw()),
+                "signature": client.sign("register", username, path),
+            })
+            return client
+
+        def login(client):
+            challenge = self.api("/api/ai/challenge", data={"username": client.username})["challenge"]
+            return self.api("/api/ai/login", data={
+                "username": client.username, "challenge": challenge,
+                "signature": client.sign("login", client.username, challenge),
+            })["access_token"]
+
+        reviewer = enroll("reviewer", "local")
+        analyst = enroll("analyst", "cloud")
+        creator = login(reviewer)
+        recipient = login(analyst)
+        route = "/api/tasks"
+        reminder = self.api(route, key=creator, data={
+            "title": "Resume comparison", "description": "Check units in paper 42.", "assignee": "reviewer",
+        })["id"]
+        handoff = self.api(route, key=creator, data={
+            "title": "Verify baseline", "description": "Review experiment 7.", "assignee": "analyst",
+        })["id"]
+        resumed = {task["id"]: task for task in self.api(route, key=login(reviewer))["tasks"]}
+        self.assertEqual(resumed[reminder]["description"], "Check units in paper 42.")
+        self.assertEqual(resumed[reminder]["assignee"], "reviewer")
+        tasks = self.api(route, key=recipient)["tasks"]
+        self.assertEqual([task["id"] for task in tasks], [handoff])
+        self.assertEqual(tasks[0]["description"], "Review experiment 7.")
+        self.api(route, key=recipient, data={"id": reminder, "revision": 1, "status": "closed"}, expected=403)
+        self.api(route, key=recipient, data={"id": handoff, "revision": tasks[0]["revision"], "status": "closed"})
+        self.assertEqual(self.api(route, key=recipient)["tasks"][0]["status"], "closed")
+
     def test_operator_can_edit_agent_created_tasks_without_inheriting_assignments(self):
         with library.connect(self.database) as db:
             worker_id = accounts.create_account(db, "worker", "sample password", "local")
