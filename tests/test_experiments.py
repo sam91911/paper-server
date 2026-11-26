@@ -2,6 +2,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote
@@ -25,6 +26,50 @@ class ExperimentTests(unittest.TestCase):
                            (name, b'h', b's', *accounts.role_fields(role), role == 'user'))
             self.users = {r['username']: {'id': r['id'], 'username': r['username'], 'role': r['effective']}
                           for r in db.execute(f"SELECT a.*, {accounts.ROLE_SQL.format(alias='a')} effective FROM accounts a")}
+
+    def test_compute_tasks_have_resource_estimates_and_one_claimant(self):
+        with library.connect(self.path) as db:
+            owner = self.users["owner"]
+            keys = {name: accounts.create_key(db, user["id"], "Compute")
+                    for name, user in self.users.items()}
+            experiment = experiments.save_experiment(db, owner, {"title": "Compute benchmark", "audience": "owner"})
+            experiments.set_grants(db, "experiment", experiment, owner,
+                                   experiments.require_experiment(db, experiment, owner), ["local", "cloud"], [])
+        route = "/api/experiment-compute"
+        query = f"{route}?experiment_id={experiment}"
+        estimate = {"cpu_cores": 32, "ram_gib": 128, "disk_gib": 512, "wall_minutes": 240,
+                    "gpu_count": 2, "vram_gib_per_gpu": 48}
+        create = {"action": "create", "experiment_id": experiment, "title": "Rerun the benchmark",
+                  "instructions": "Run the pinned benchmark in a dedicated VM.", "resources": estimate}
+        self.assertEqual(request(self.path, route, key=keys["owner"], data={**create, "resources": {}})[0], 400)
+        self.assertEqual(request(self.path, route, key=keys["local"], data=create)[0], 403)
+        status, task = request(self.path, route, key=keys["owner"], data=create)
+        self.assertEqual(status, 200)
+        self.assertEqual(request(self.path, query, key=keys["human"])[0], 404)
+        self.assertEqual(request(self.path, query, key=keys["local"])[1]["tasks"][0]["resources"], estimate)
+        claim = {"action": "claim", "experiment_id": experiment, "id": task["id"], "revision": task["revision"]}
+
+        def compete(name):
+            return name, request(self.path, route, key=keys[name], data=claim)[0]
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            claims = dict(pool.map(compete, ("local", "cloud")))
+        self.assertEqual(sorted(claims.values()), [200, 409])
+        winner = next(name for name, status in claims.items() if status == 200)
+        loser = next(name for name, status in claims.items() if status == 409)
+        result = {**claim, "action": "complete", "revision": 2, "result": "Completed in 190 minutes."}
+        self.assertEqual(request(self.path, route, key=keys[loser], data=result)[0], 403)
+        self.assertEqual(request(self.path, route, key=keys[winner], data=result)[0], 200)
+        saved = request(self.path, query, key=keys["owner"])[1]["tasks"][0]
+        self.assertEqual((saved["status"], saved["claimant"], saved["result"]),
+                         ("complete", winner, result["result"]))
+        status, second = request(self.path, route, key=keys["owner"], data=create)
+        self.assertEqual(status, 200)
+        claim["id"] = second["id"]
+        self.assertEqual(request(self.path, route, key=keys["local"], data=claim)[0], 200)
+        release = {**claim, "action": "release", "revision": 2}
+        self.assertEqual(request(self.path, route, key=keys["local"], data=release)[0], 200)
+        self.assertEqual(request(self.path, route, key=keys["cloud"], data={**claim, "revision": 3})[0], 200)
 
     def test_rerun_checks_follow_run_visibility_and_revision(self):
         with library.connect(self.path) as db:

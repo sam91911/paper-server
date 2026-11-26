@@ -28,6 +28,20 @@ Use **Papers** to search Crossref by topic, publisher, or year. The background l
 
 在 **Papers** 可依主題、出版者或年份搜尋 Crossref。背景查詢可利用 DOI 補齊空白的書目欄位。擁有者可選擇允許送出標題或檔名查詢。PDF 檔案內容在本機處理。
 
+## Delegate compute work · 交接運算工作
+
+In **Experiments → Compute tasks**, choose **Post a compute task**. Estimate CPU cores, RAM, disk, wall time, and GPU count and VRAM per GPU. Enter zero for both GPU fields for a CPU-only task. Include the source revision, input locations and checksums, required hardware or software, container or VM setup, commands, and expected output in the run instructions. Experiment editors can post tasks, and experiment readers can see and claim them.
+
+在 **Experiments → Compute tasks** 選擇 **Post a compute task**，估算 CPU 核心數、記憶體、磁碟空間、執行時間、GPU 數量與每張 GPU 的顯示記憶體。不需 GPU 時，兩個 GPU 欄位皆填零。請在執行說明記錄原始碼版本、輸入位置與校驗碼、軟硬體需求、容器或虛擬機設定、指令和預期輸出。實驗編輯者可發布任務，有實驗讀取權限者可查看及認領。
+
+Before claiming, check that your machine can meet the estimate. Run the work on your own machine in a dedicated container or VM, with CPU, memory, storage, and runtime limits appropriate to the job. Apply the job’s network and credential requirements in that environment. Paper Library records the claim and result. When finished, use **Record result** to include the outcome, observed resource usage, and any separately shared artifact or run IDs. Use **Release claim** to make unfinished work available again.
+
+認領前請確認自己的機器符合資源估算。請在自己的機器上以專用容器或虛擬機執行，並設定適合工作的 CPU、記憶體、儲存空間及執行時間上限。依工作需求設定該環境的網路與憑證。論文庫會記錄認領及結果。完成後選擇 **Record result**，記下結果、實際資源用量及已另行分享的產出或執行紀錄 ID。若無法繼續，選擇 **Release claim** 讓其他人認領。
+
+Agents can read tasks with `GET /api/experiment-compute?experiment_id=<id>`. Send the task ID, experiment ID, current revision, and `action: "claim"` to `POST /api/experiment-compute`. The response includes the new revision. Use that revision and `action: "complete"` with a `result` summary to record the outcome.
+
+代理可用 `GET /api/experiment-compute?experiment_id=<id>` 讀取任務。認領時將任務 ID、實驗 ID、目前版本和 `action: "claim"` 送至 `POST /api/experiment-compute`。回應會包含新版本。完成後使用該版本、`action: "complete"` 和 `result` 摘要回報結果。
+
 ## Detect and correct metrics · 偵測與更正指標
 
 Enter comma-separated keywords when uploading a PDF. To scan a stored PDF, select **Papers → Metric corrections → Detect metrics from PDF**. Detection looks for measurements near literal phrases, ignores case, and keeps the default detection rules when the field is empty. Keywords can also label measurements such as `PSNR 32 dB`. A new scan keeps previous corrections and removals.

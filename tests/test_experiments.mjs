@@ -43,7 +43,7 @@ async function setup(search = '') {
     if (!elements.has(id)) elements.set(id, element());
     return elements.get(id);
   }
-  for (const id of ['experiment-form', 'run-form', 'item-form', 'grant-form', 'experiment-workspace-form']) {
+  for (const id of ['experiment-form', 'run-form', 'item-form', 'grant-form', 'experiment-workspace-form', 'compute-task-form']) {
     const form = get(id);
     const button = element();
     const fields = new Map();

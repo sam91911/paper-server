@@ -544,8 +544,25 @@ PATHS = {
     },
     "/api/experiment-detail": {"get": operation("Read an experiment, its runs, and artifact versions",
         obj({"experiment": ref("Experiment"), "runs": array(ref("Run")), "items": array(ref("Artifact")),
-             "can_edit": BOOLEAN, "brief": nullable(obj())}, ("experiment", "runs", "items", "can_edit", "brief")),
+             "can_edit": BOOLEAN, "brief": nullable(obj()), "compute_tasks": array(obj())},
+            ("experiment", "runs", "items", "can_edit", "brief")),
         params=(param("id", ID, required=True),))},
+    "/api/experiment-compute": {
+        "get": operation("Read compute tasks for an accessible experiment",
+            obj({"tasks": array(obj())}, ("tasks",)), params=(param("experiment_id", ID, required=True),)),
+        "post": operation("Post, claim, release, complete, or cancel a compute task",
+            acknowledgement("id", "revision", id=ID, revision=ID),
+            body=obj({"action": enum("create", "claim", "release", "complete", "cancel"), "experiment_id": ID,
+                      "id": ID, "revision": ID, "title": STRING, "instructions": STRING, "result": STRING,
+                      "resources": obj({
+                          "cpu_cores": ID, "ram_gib": ID, "disk_gib": ID, "wall_minutes": ID,
+                          "gpu_count": COUNT, "vram_gib_per_gpu": COUNT,
+                      }, ("cpu_cores", "ram_gib", "disk_gib", "wall_minutes", "gpu_count", "vram_gib_per_gpu"))},
+                     ("action", "experiment_id")),
+            description="Editors create tasks with a title, run instructions, and resource estimates. "
+                        "Experiment readers can claim an open task. Actions on existing tasks require id and revision. "
+                        "The claimant completes the task with a result summary after running it externally."),
+    },
     "/api/experiment-runs": {"post": operation("Create or update a run", acknowledgement("id", id=ID),
         body=obj(RUN_FIELDS, ("experiment_id", "title")),
         description="Updates require id and revision. Omit reproduction to retain its value or send an empty object to clear it.")},

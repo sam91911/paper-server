@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 from . import database as storage
 from . import git_repos, supervisor
 from . import passkeys
+from . import compute_tasks
 from . import account_routes, accounts, admin_console, agent_goals, ai_accounts, client_distribution, comment_routes, crossref, document_context, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tasks, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
@@ -365,7 +366,8 @@ class Handler(BaseHTTPRequestHandler):
             except storage.ERRORS as error:
                 LOG.error("Comment read failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read comments."})
-        elif route in ("/api/experiments", "/api/experiment-detail", "/api/research-tools", "/api/research-findings", "/api/research-goals",
+        elif route in ("/api/experiments", "/api/experiment-detail", "/api/experiment-compute",
+                       "/api/research-tools", "/api/research-findings", "/api/research-goals",
                        "/api/tasks", "/api/document-goals"):
             try:
                 with library.connect(self.server.database) as db:
@@ -385,10 +387,17 @@ class Handler(BaseHTTPRequestHandler):
                     elif route == "/api/experiments":
                         data = {"experiments": experiments.visible_experiments(db, account)}
                     else:
-                        value = parse_qs(url.query).get("id", [""])[0]
+                        compute_queue = route == "/api/experiment-compute"
+                        param = "experiment_id" if compute_queue else "id"
+                        value = parse_qs(url.query).get(param, [""])[0]
                         if not re.fullmatch(r"[1-9][0-9]{0,18}", value) or int(value) >= 2**63:
                             raise ValueError("Choose an experiment.")
-                        data = experiments.detail(db, account, int(value))
+                        experiment_id = int(value)
+                        if compute_queue:
+                            data = compute_tasks.read(db, account, experiment_id)
+                        else:
+                            data = experiments.detail(db, account, experiment_id)
+                            data["compute_tasks"] = compute_tasks.read(db, account, experiment_id)["tasks"]
                 self.send_json(200, data)
             except accounts.SignInRequired:
                 self.send_json(401, {"error": "Sign in to continue."})
@@ -902,7 +911,7 @@ class Handler(BaseHTTPRequestHandler):
             return goals.update(db, self.require_account(db), data)
         if self.path == "/api/research-findings":
             return findings.save(db, self.require_account(db), data)
-        if self.path in ("/api/experiments", "/api/experiment-runs", "/api/run-reproductions",
+        if self.path in ("/api/experiments", "/api/experiment-runs", "/api/run-reproductions", "/api/experiment-compute",
                          "/api/research-items", "/api/research-grants", "/api/tool-jobs", "/api/approve-tool-job"):
             return experiment_routes.update(self, db, data)
         if self.path in ("/api/application-keys", "/api/revoke-key"):

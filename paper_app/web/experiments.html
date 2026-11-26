@@ -48,6 +48,32 @@
       </form>
 
       <div class="experiment-group">
+        <h3>Compute tasks</h3>
+        <p>Check the resource estimate before claiming. Run the work in an isolated container or VM on your own machine.</p>
+        <div id="compute-tasks" class="experiment-records"></div>
+        <details id="new-compute-task" hidden>
+          <summary>Post a compute task</summary>
+          <form id="compute-task-form" class="experiment-form">
+            <label>Title <input name="title" maxlength="160" required></label>
+            <label>Run instructions <textarea name="instructions" rows="4" maxlength="20000" required
+              placeholder="Include the source revision, inputs, container or VM setup, commands, and expected output."></textarea></label>
+            <fieldset>
+              <legend>Estimated resources</legend>
+              <div class="metadata-fields">
+                <label>CPU cores <input name="cpu_cores" type="number" min="1" max="1000000" required></label>
+                <label>RAM (GiB) <input name="ram_gib" type="number" min="1" max="1000000" required></label>
+                <label>Disk (GiB) <input name="disk_gib" type="number" min="1" max="10000000" required></label>
+                <label>Wall time (minutes) <input name="wall_minutes" type="number" min="1" max="1000000" required></label>
+                <label>GPU count <input name="gpu_count" type="number" min="0" max="100000" value="0" required></label>
+                <label>VRAM per GPU (GiB) <input name="vram_gib_per_gpu" type="number" min="0" max="1000000" value="0" required></label>
+              </div>
+            </fieldset>
+            <button>Post compute task</button>
+          </form>
+        </details>
+      </div>
+
+      <div class="experiment-group">
         <h3>Runs</h3>
         <div id="runs" class="experiment-records"></div>
         <form id="run-form" class="experiment-form">

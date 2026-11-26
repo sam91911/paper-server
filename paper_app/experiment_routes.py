@@ -1,11 +1,13 @@
 """HTTP operations for experiments and their versioned artifacts."""
-from . import experiments, sharing, tools_catalog
+from . import compute_tasks, experiments, sharing, tools_catalog
 
 
 def update(handler, db, data):
     account = handler.require_account(db)
     if handler.path == '/api/experiments':
         return {'id': experiments.save_experiment(db, account, data)}
+    if handler.path == '/api/experiment-compute':
+        return compute_tasks.update(db, account, data)
     if handler.path == '/api/experiment-runs':
         return {'id': experiments.save_run(db, account, data)}
     if handler.path == '/api/run-reproductions':

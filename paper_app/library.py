@@ -110,7 +110,7 @@ def connect(path):
 
 
 def initialize(path):
-    from . import agent_goals, ai_accounts, human_keys, passkeys, reviews
+    from . import agent_goals, ai_accounts, compute_tasks, human_keys, passkeys, reviews
 
     with connect(path) as db:
         if isinstance(path, storage.PostgreSQL):
@@ -119,7 +119,7 @@ def initialize(path):
         db.executescript(SCHEMA + COMMENT_SCHEMA.format(table="comments") + accounts.SCHEMA
                          + sharing.SCHEMA + google_signin.SCHEMA + experiments.SCHEMA + tools_catalog.SCHEMA
                          + skills.SCHEMA + tasks.SCHEMA + reviews.SCHEMA + ai_accounts.SCHEMA + human_keys.SCHEMA
-                         + passkeys.SCHEMA)
+                         + passkeys.SCHEMA + compute_tasks.SCHEMA)
         # Existing comments have a mandatory paper_id. Rebuild with the same IDs
         # so authors, grants, reply links, and anchors survive the migration.
         db.execute("PRAGMA foreign_keys=OFF")

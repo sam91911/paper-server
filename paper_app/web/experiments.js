@@ -10,7 +10,8 @@ const runForm = $("run-form");
 const itemForm = $("item-form");
 const grantForm = $("grant-form");
 const workspaceForm = $("experiment-workspace-form");
-const detailForms = [runForm, itemForm, grantForm, ...(workspaceForm ? [workspaceForm] : [])];
+const computeForm = $("compute-task-form");
+const detailForms = [runForm, itemForm, grantForm, computeForm, ...(workspaceForm ? [workspaceForm] : [])];
 const requested = globalThis.location ? new URLSearchParams(location.search) : null;
 const submitButton = form => form.querySelector("button");
 
@@ -348,6 +349,52 @@ function browseArchive(version, parent) {
   });
 }
 
+const resourceLabels = {
+  cpu_cores: "CPU cores", ram_gib: "GiB RAM", disk_gib: "GiB disk", wall_minutes: "min wall time",
+  gpu_count: "GPUs", vram_gib_per_gpu: "GiB VRAM per GPU",
+};
+const computeStatusLabels = {open: "Open", claimed: "Claimed", complete: "Complete", cancelled: "Cancelled"};
+
+function changeComputeTask(task, action, payload = {}) {
+  return api("experiment-compute", {
+    experiment_id: task.experiment_id, id: task.id, revision: task.revision, action, ...payload,
+  });
+}
+
+function renderComputeTasks(result) {
+  const list = $("compute-tasks");
+  list.replaceChildren();
+  $("new-compute-task").hidden = !result.can_edit;
+  for (const task of result.compute_tasks || []) {
+    const card = text("article", "", list);
+    text("h4", task.title, card);
+    text("p", `${computeStatusLabels[task.status]} · Posted by ${task.creator}${task.claimant ? ` · Claimed by ${task.claimant}` : ""}`, card);
+    text("p", Object.entries(resourceLabels).map(([key, label]) => `${task.resources[key]} ${label}`).join(" · "), card);
+    text("p", task.instructions, card).className = "task-description";
+    if (task.result) {
+      text("h5", "Result", card);
+      text("p", task.result, card).className = "task-description";
+    }
+    for (const action of task.actions) {
+      const form = text("form", "", card);
+      if (action === "complete") form.className = "experiment-form";
+      const labels = {claim: "Claim task", release: "Release claim", cancel: "Cancel task", complete: "Record result"};
+      if (action === "complete") {
+        const label = text("label", "Result summary", form);
+        const field = text("textarea", "", label);
+        field.name = "result";
+        field.required = true;
+        field.maxLength = 20000;
+      }
+      const button = text("button", labels[action], form);
+      if (action === "release" || action === "cancel") button.className = "secondary";
+      submit(form, fields => changeComputeTask(task, action, action === "complete" ? {result: fields.result.value} : {}),
+        (_result, id) => showExperiment(id, true), {reloadOnConflict: true});
+    }
+  }
+  if (!list.children.length) text("p", "No compute tasks for this experiment.", list);
+}
+
 function renderExperiment(result) {
   const {experiment, runs, items, brief} = result;
   if (runBrief?.id !== brief?.id) {
@@ -372,6 +419,7 @@ function renderExperiment(result) {
     workspaceForm.elements.research_document_id.value = experiment.research_document_id ?? "";
   }
   runForm.hidden = !result.can_edit;
+  renderComputeTasks(result);
   const runList = $("runs");
   const runSelect = $("run-select");
   const selectedRun = runSelect.value;
@@ -491,7 +539,7 @@ async function refreshExperiments(id = null, saved = false) {
   }
 }
 
-function submit(form, save, reload) {
+function submit(form, save, reload, {reloadOnConflict = false} = {}) {
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const id = displayedExperimentId;
@@ -506,6 +554,7 @@ function submit(form, save, reload) {
       form.reset();
       await reload(result, id);
     } catch (error) {
+      if (reloadOnConflict && error.status === 409) await showExperiment(id);
       setStatus(error.message);
     } finally {
       saving = false;
@@ -516,6 +565,7 @@ function submit(form, save, reload) {
 
 picker.addEventListener("change", () => {
   for (const form of detailForms) form.reset();
+  $("new-compute-task").open = false;
   runBrief = null;
   editRun();
   $("run-select").replaceChildren();
@@ -530,6 +580,14 @@ $("clone-experiment-source").addEventListener("click", () => {
   if (displayedExperimentId !== null) copyCloneCommand("experiments", displayedExperimentId, $("status"), "source");
 });
 $("cancel-run-edit").addEventListener("click", () => editRun());
+
+submit(computeForm, (fields, id) => api("experiment-compute", {
+  action: "create", experiment_id: id, title: fields.title.value, instructions: fields.instructions.value,
+  resources: Object.fromEntries(Object.keys(resourceLabels).map(key => [key, fields[key].valueAsNumber])),
+}), (_result, id) => {
+  $("new-compute-task").open = false;
+  return showExperiment(id, true);
+});
 
 submit(experimentForm, fields => api("experiments", {
   title: fields.title.value,
