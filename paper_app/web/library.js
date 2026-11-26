@@ -1091,10 +1091,29 @@ const olderAIInvitations = element("older-ai-invitations");
 let aiInvitationCursor;
 let aiInvitationRequest = 0;
 
+const agentClientCommand = '"$HOME/.paper-library/venv/bin/python" -m paper_client.agent';
+
+async function loadPromptResource(name) {
+  const response = await fetch(`/assets/prompts/${name}`);
+  if (!response.ok) throw new Error("Could not load the agent prompt. Try again.");
+  return name.endsWith(".json") ? response.json() : response.text();
+}
+
+function renderAgentPrompt(template, values) {
+  return template.replace(/{{([a-zA-Z]+)}}/g, (_placeholder, name) => {
+    if (!Object.hasOwn(values, name)) throw new Error(`Missing agent prompt value: ${name}.`);
+    return values[name];
+  }).trim();
+}
+
 async function updateAIInvitation(data) {
   const accountId = libraryData.account?.id;
   aiInvitationPrompt.value = "";
   element("ai-invitation-result").hidden = true;
+  const [template, options] = data.action === "cancel" ? [] : await Promise.all([
+    loadPromptResource("registration.md"), loadPromptResource("options.json"),
+  ]);
+  if (libraryData.account?.id !== accountId) return;
   const {registration_path, registration_url, client_download_url, username, role, mode, invite_id} =
     await api("ai/invitations", data);
   if (libraryData.account?.id !== accountId) return;
@@ -1105,38 +1124,18 @@ async function updateAIInvitation(data) {
   }
   const rotating = mode === "rotate";
   const identity = `~/.paper-library/${username}${rotating ? `-${invite_id}` : ""}.json`;
-  const client = '"$HOME/.paper-library/venv/bin/python" -m paper_client.agent';
-  const task = rotating ? "Replace your current key using a new identity file. Use that file for future requests after verifying the connection." :
-    "Register this agent and verify the connection.";
-  aiInvitationPrompt.value = `Connect to my Paper Library as ${username} (${role} AI). ${task}
-
-One-time registration URL (expires in 15 minutes):
-${registration_url}
-
-Install the client from this server with Python 3.11 or later:
-archive="$(mktemp -d)/paper-client.zip"
-curl -fsS '${client_download_url}' -o "$archive" &&
-  python3 -m venv "$HOME/.paper-library/venv" &&
-  "$HOME/.paper-library/venv/bin/python" -m pip install "$archive"
-
-After installation, run:
-${client} register --username ${username} --identity ${identity}
-
-Supply the registration URL when prompted, or pass it privately on stdin. This command generates and saves an Ed25519 private key in the identity file. Keep the key and any access tokens out of chat and logs. Verify the account and read the usage guide:
-${client} request --identity ${identity} /api/account
-${client} request --identity ${identity} /api/skills/default
-${client} heartbeat --identity ${identity} --once
-
-If you use your own HTTP client, send POST bodies as JSON with Content-Type: application/json. Generate and store an Ed25519 key and sign paper-library:register:${username}:${registration_path} as ASCII. POST public_key and signature as unpadded base64url to the registration URL. Then POST {"username":"${username}"} to /api/ai/challenge, sign paper-library:login:${username}:<challenge> as ASCII, and POST username, challenge, and base64url signature to /api/ai/login. Use the returned access_token as a Bearer token. Verify the role with /api/account. The API contract is at /api/openapi.json.
-
-Use the HTTPS URLs as provided. If the library uses loopback on another machine, use its forwarded loopback port for both URLs and keep their paths. Report the connected username and role.`;
+  aiInvitationPrompt.value = renderAgentPrompt(template, {
+    username, role, identity, client: agentClientCommand,
+    task: options.registration[rotating ? "rotate" : "enroll"],
+    registrationURL: registration_url, registrationPath: registration_path,
+    downloadURL: "'" + client_download_url.replaceAll("'", "'\"'\"'") + "'",
+  });
   element("ai-invitation-result").hidden = false;
   accountStatus.textContent = "";
   await showAIInvitations();
 }
 
 async function copyHeartbeatPrompt(username, mode) {
-  const command = '"$HOME/.paper-library/venv/bin/python" -m paper_client.agent';
   const identity = `~/.paper-library/${username}.json`;
   const once = element("ai-check-schedule").value === "once";
   const directionField = element("ai-heartbeat-direction");
@@ -1146,44 +1145,22 @@ async function copyHeartbeatPrompt(username, mode) {
     directionField.focus();
     return;
   }
-  const idle = {
-    tasks: once ? "If there is no eligible assigned work, report that the queue is clear." :
-      "When there is no eligible assigned work, wait for the next check.",
-    guided: `After handling eligible assignments, use this research direction to propose one new goal:
-
-${direction}
-
-Read relevant News entries and discussions with GET /api/news and GET /api/document-comments?document_id=<id>. Look for evidence that addresses the direction. Check for an existing proposal first. Record supporting findings, then propose the goal in a shared document or news entry using POST /api/research-goals. Include a research question, rationale, uncertainty, and supporting finding IDs. Share the proposal for human review.`,
-    discovery: `After handling eligible assignments, independently look for one promising new research topic. Start with GET /api/news and accessible discussions. Check recent public sources and the paper catalog for corroboration and gaps. Compare against existing goals before proposing one. If a topic is supported, record the source URL and supporting findings, then use POST /api/research-goals to propose an evidence-backed goal in a shared document or news entry. If the evidence is too thin to propose a goal, share a short note on what you found.`,
-  }[mode];
-  const schedule = once ? "When the work from this check is complete, report the outcome and end the run." :
-    "Repeat the check about every 60 seconds if your environment supports recurring execution. Finish a check before starting another. For longer tasks, keep a separate heartbeat process running by omitting --once.";
-  const prompt = `Check in to my Paper Library as ${username} using the enrolled identity you already use. Replace the example path if your identity was saved elsewhere or rotated.
-
-${once ? "Run this check once:" : "On each check, run:"}
-${command} heartbeat --identity ${identity} --once
-${command} request --identity ${identity} /api/tasks
-${command} request --identity ${identity} /api/agent-goals
-${command} request --identity ${identity} /api/reviews
-
-Work on active assignments first. Follow next_before to check older goals for unfinished work. Start or claim a goal only when start appears in its actions. Goals claimed by other agents are available for reading only. Follow the default API skill, record progress and evidence, report blockers, and submit completed work. Honor paused or canceled goals.
-
-Resume open or in-progress tasks assigned to ${username} and your own unassigned notes. Leave tasks you assigned to others with their assignees. Save unfinished work with POST /api/tasks using a title, a description with the next step and relevant IDs, and assignee "${username}" for yourself or the active AI username receiving the handoff. Update existing tasks with their id and revision to avoid duplicates. Close tasks when complete and reload on a revision conflict.
-
-Before starting or resuming a goal, read each entry in required_skills. Use the request command with your enrolled identity and the entry's api_path to fetch its Markdown from the server. Report a blocker if a required skill is unavailable.
-
-For a goal you have claimed, use its objective, acceptance criteria, and latest progress to decide whether more papers would help. Search the library first using /api/paper-catalog?q= followed by URL-encoded keywords, titles, or DOIs. Reuse papers the requester can access. If there are gaps, automatically search the public web and use POST /api/search-papers with a JSON topic for Crossref metadata. Use public search terms that fit the goal. Select papers that directly address the gaps and find direct HTTPS links to PDFs you are allowed to store.
-
-Before importing, refresh the goal and check that it is still yours to work on. Run this for each selected PDF, substituting its URL and the goal's requester username:
-${command} import-paper --identity ${identity} --url "$PDF_URL" --recipient "$REQUESTER"
-
-Record each successful paper ID, title, DOI if available, source URL, and why it helps the goal. Post that to the goal as progress with evidence objects {"kind":"paper","id":PAPER_ID}.${once ? "" : " Revisit the recorded paper IDs on the next check."} If a needed PDF is unavailable or a reusable paper needs sharing, report the gap and continue with accessible evidence where possible.
-
-If the goal requires an experiment, run it in your own workspace. Record exact reproduction commands and settings in the run. Use the default API skill to upload the committed Git snapshot, outputs, and logs to that run. Cite the experiment and result artifact versions in your report.
-
-${idle}
-
-${schedule} If authentication is denied, stop and report it.`;
+  const accountId = libraryData.account?.id;
+  let prompt;
+  try {
+    const [template, options] = await Promise.all([
+      loadPromptResource("agent-check.md"), loadPromptResource("options.json"),
+    ]);
+    if (libraryData.account?.id !== accountId) return;
+    const {checkHeading, idle, finish} = options[once ? "once" : "recurring"];
+    const afterAssignments = mode === "tasks" ? idle : renderAgentPrompt(options[mode], {direction});
+    prompt = renderAgentPrompt(template, {
+      username, identity, client: agentClientCommand, checkHeading, afterAssignments, finish,
+    });
+  } catch (error) {
+    if (libraryData.account?.id === accountId) accountStatus.textContent = error.message;
+    return;
+  }
   const field = element("ai-heartbeat-prompt");
   field.value = prompt;
   element("ai-heartbeat-result").hidden = false;

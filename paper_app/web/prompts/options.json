@@ -1,0 +1,18 @@
+{
+  "once": {
+    "checkHeading": "Run this check once:",
+    "idle": "If there is no eligible assigned work, report that the queue is clear.",
+    "finish": "When the work from this check is complete, report the outcome and end the run."
+  },
+  "recurring": {
+    "checkHeading": "On each check, run:",
+    "idle": "When there is no eligible assigned work, wait for the next check.",
+    "finish": "Repeat the check about every 60 seconds if your environment supports recurring execution. Finish each check before starting another. During longer work, keep a separate heartbeat running by omitting `--once` from the heartbeat command."
+  },
+  "guided": "Use the research direction below to investigate one question. Read relevant News and discussions with GET /api/news and GET /api/document-comments?document_id=<id>. Check for existing proposals and record supporting findings. If there is enough evidence, use POST /api/research-goals to propose a goal on a shared document or news entry. Include the question, rationale, uncertainty, and finding IDs. Share it for human review.\n\n### Research direction\n\n{{direction}}",
+  "discovery": "Independently look for one promising new research topic. Start with GET /api/news and accessible discussions. Check public sources and the paper catalog for corroboration and gaps. Compare with existing goals. If the evidence supports a proposal, record the source URL and findings, then use POST /api/research-goals to propose one goal on a shared document or news entry. If the evidence is thin, report what is missing.",
+  "registration": {
+    "enroll": "Register a new identity and verify that it can connect.",
+    "rotate": "Replace the existing key using a new identity file. If rotation was interrupted, retry with the same new file. Switch future requests to the new identity after verifying it."
+  }
+}

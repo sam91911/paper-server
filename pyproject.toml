@@ -18,5 +18,5 @@ include = ["paper_app*", "paper_client*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-paper_app = ["web/*.html", "web/*.css", "web/*.js", "sql/*.sql"]
-paper_client = ["pyproject.toml"]
+paper_app = ["web/*.html", "web/*.css", "web/*.js", "sql/*.sql", "web/prompts/*.md", "web/prompts/*.json"]
+paper_client = ["pyproject.toml", "review-prompt.md"]

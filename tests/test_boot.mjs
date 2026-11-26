@@ -41,6 +41,10 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
       return ['username', 'role'].map(name => [name, form.elements[name].value]);
     },
     fetch: async (route, options) => {
+      if (route.startsWith('/assets/prompts/')) {
+        const resource = fs.readFileSync(new URL(`../paper_app/web/${route.slice('/assets/'.length)}`, import.meta.url), 'utf8');
+        return {ok: true, text: async () => resource, json: async () => JSON.parse(resource)};
+      }
       if (route === '/api/human-invitations') {
         if (!options) return {ok: true, json: async () => ({invitations: []})};
         assert.deepEqual(JSON.parse(options.body), {email: 'friend@example.org', role: 'member'});
@@ -88,6 +92,7 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     assert.equal(document.getElementById('ai-invitation-result').hidden, false);
     await document.getElementById('copy-ai-invitation').fire('click');
     assert.ok(clipboard.includes(invitation.registration_url));
+    assert.doesNotMatch(clipboard, /{{[a-zA-Z]+}}/);
     assert.ok(clipboard.includes(invitation.client_download_url));
     assert.ok(clipboard.includes('-m pip install "$archive"'));
     assert.ok(clipboard.includes('paper_client.agent register --username reviewer'));
@@ -111,7 +116,7 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     assert.ok(clipboard.includes('Evaluate the new dataset release.'));
     assert.ok(clipboard.includes('POST /api/research-goals'));
     await vm.runInContext('copyHeartbeatPrompt("reviewer", "discovery")', context);
-    assert.ok(clipboard.includes('independently look for one promising new research topic'));
+    assert.ok(clipboard.includes('Independently look for one promising new research topic'));
     assert.ok(clipboard.includes('GET /api/news'));
     assert.ok(!clipboard.includes('Evaluate the new dataset release.'));
     assert.ok(clipboard.includes('import-paper --identity ~/.paper-library/reviewer.json'));

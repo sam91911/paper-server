@@ -8,7 +8,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 DOWNLOAD_ROUTE = "/api/client/download"
 FILENAME = "paper-client.zip"
 SOURCES = ("pyproject.toml", "__init__.py", "__main__.py", "agent.py", "artifacts.py", "mcp_server.py",
-           "paper_source.py", "pdf_text.py", "review.py", "ssh_key.py")
+           "paper_source.py", "pdf_text.py", "review.py", "review-prompt.md", "ssh_key.py")
 
 
 def archive():

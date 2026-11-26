@@ -12,3 +12,6 @@ dependencies = ["cryptography>=40"]
 [tool.setuptools]
 packages = ["paper_client"]
 package-dir = {paper_client = "."}
+
+[tool.setuptools.package-data]
+paper_client = ["review-prompt.md"]

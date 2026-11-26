@@ -69,3 +69,9 @@ Keep the root README focused on setup and navigation. Update the relevant guide 
 Set the same `0.x.y` version in the server and client `pyproject.toml` files. Push a matching `v0.x.y` tag for the release commit. After all CI jobs pass, GitHub Actions publishes the tested server wheel, client ZIP, and SHA-256 checksums.
 
 在伺服器與用戶端的 `pyproject.toml` 設定相同的 `0.x.y` 版本，並推送發行提交所對應的 `v0.x.y` 標籤。CI 全數通過後，GitHub Actions 會發布測試過的伺服器 wheel、用戶端 ZIP 及 SHA-256 校驗檔。
+
+## Agent prompts
+
+The browser's enrollment and check-in templates live in `paper_app/web/prompts/`. Edit `registration.md` for enrollment, `agent-check.md` for the shared check-in workflow, and `options.json` for rotation, schedule, and research-mode wording. Keep the named `{{placeholders}}` used to insert account details and commands at runtime.
+
+The default API skill is `paper_app/web/prompts/default-skill.md`. Edit `paper_client/review-prompt.md` to change the review instructions shared by the local and cloud workstation clients.

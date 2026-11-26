@@ -78,8 +78,20 @@ class HttpTests(unittest.TestCase):
                 "paper-client/pyproject.toml", "paper-client/__init__.py", "paper-client/__main__.py",
                 "paper-client/agent.py", "paper-client/artifacts.py", "paper-client/mcp_server.py",
                 "paper-client/paper_source.py", "paper-client/pdf_text.py", "paper-client/review.py",
-                "paper-client/ssh_key.py",
+                "paper-client/review-prompt.md", "paper-client/ssh_key.py",
             })
+
+    def test_agent_prompt_templates_are_served_as_static_assets(self):
+        for name, mime, marker in (
+            ("registration.md", "text/plain", b"{{registrationURL}}"),
+            ("agent-check.md", "text/plain", b"{{afterAssignments}}"),
+            ("options.json", "application/json", b'"recurring"'),
+        ):
+            with self.subTest(name=name):
+                status, payload = self.get(f"/assets/prompts/{name}", False)
+                self.assertEqual(status, 200)
+                self.assertEqual(self.response_headers["Content-Type"], f"{mime}; charset=utf-8")
+                self.assertIn(marker, payload)
 
     def test_health_checks_existing_database_without_creating_a_replacement(self):
         self.assertEqual(self.get("/api/health", False), (200, b'{"status": "ok"}'))

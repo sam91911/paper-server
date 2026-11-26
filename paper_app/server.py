@@ -59,6 +59,9 @@ ASSETS = {
     "/assets/library.js": ("library.js", "text/javascript; charset=utf-8"),
     "/assets/metrics.js": ("metrics.js", "text/javascript; charset=utf-8"),
     "/assets/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/assets/prompts/registration.md": ("prompts/registration.md", "text/plain; charset=utf-8"),
+    "/assets/prompts/agent-check.md": ("prompts/agent-check.md", "text/plain; charset=utf-8"),
+    "/assets/prompts/options.json": ("prompts/options.json", "application/json; charset=utf-8"),
 }
 MAX_PDF_BYTES = 50 * 1024 * 1024
 LOG = logging.getLogger(__name__)
