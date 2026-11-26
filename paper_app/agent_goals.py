@@ -15,7 +15,7 @@ GOAL_TABLE = """CREATE TABLE IF NOT EXISTS {table} (
         status TEXT NOT NULL CHECK (status IN ('assigned','in_progress','blocked','paused','submitted','completed','canceled')),
         revision INTEGER NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL,
         continuous BOOLEAN NOT NULL DEFAULT FALSE,
-        require_approval BOOLEAN NOT NULL DEFAULT FALSE,
+        require_approval BOOLEAN NOT NULL DEFAULT FALSE, attention TEXT NOT NULL DEFAULT '',
         CHECK ((agent_id IS NULL) = (agent_role IS NULL))
     )"""
 SCHEMA = (
@@ -27,7 +27,7 @@ SCHEMA = (
     """CREATE TABLE IF NOT EXISTS agent_goal_events (
         goal_id INTEGER NOT NULL REFERENCES agent_goals(id), revision INTEGER NOT NULL,
         actor_id INTEGER NOT NULL REFERENCES accounts(id), request_id TEXT NOT NULL, request_hash TEXT NOT NULL,
-        action TEXT NOT NULL, status TEXT NOT NULL, note TEXT NOT NULL, evidence TEXT NOT NULL, created INTEGER NOT NULL,
+        action TEXT NOT NULL, status TEXT NOT NULL, note TEXT NOT NULL, evidence TEXT NOT NULL, created INTEGER NOT NULL, research TEXT,
         PRIMARY KEY (goal_id,revision), UNIQUE (actor_id,request_id)
     )""",
     "CREATE INDEX IF NOT EXISTS agent_goals_requester ON agent_goals(requester_id,id)",
@@ -46,6 +46,7 @@ OWNER_ACTIONS = {
     "request_changes": (("submitted",), "in_progress"),
     "accept": (("submitted",), "completed"),
     "approve": (("paused", "submitted"), "assigned"),
+    "retry": (("paused",), "assigned"),
     "finish": (STATES[:-2], "completed"),
     "release": (("assigned", "in_progress", "blocked"), "assigned"),
     "cancel": (STATES[:-2], "canceled"),
@@ -74,6 +75,14 @@ def initialize(db):
     for name in ("continuous", "require_approval"):
         if name not in columns:
             db.execute(f"ALTER TABLE agent_goals ADD COLUMN {name} BOOLEAN NOT NULL DEFAULT FALSE")
+    if "attention" not in columns:
+        db.execute("ALTER TABLE agent_goals ADD COLUMN attention TEXT NOT NULL DEFAULT ''")
+        db.execute("""UPDATE agent_goals SET attention='approval'
+                      WHERE require_approval AND status='paused' AND EXISTS (
+                        SELECT 1 FROM agent_goal_events e WHERE e.goal_id=agent_goals.id
+                        AND e.revision=agent_goals.revision AND e.action IN ('create','release'))""")
+    if "research" not in {row["name"] for row in db.execute("PRAGMA table_info(agent_goal_events)")}:
+        db.execute("ALTER TABLE agent_goal_events ADD COLUMN research TEXT")
     if legacy:
         db.execute("INSERT INTO agent_goal_readers(goal_id,agent_id,agent_role) SELECT id,agent_id,agent_role FROM agent_goals")
 
@@ -131,7 +140,7 @@ def check_references(db, participants, items):
     return resolved
 
 
-def scoped_rows(db, account, *, goal_id=None, before=None, ready_only=False):
+def scoped_rows(db, account, *, goal_id=None, before=None, ready_only=False, attention_only=False):
     owner = account["role"] in HUMAN_ROLES
     condition = ("g.requester_id=?" if owner else
                  "EXISTS (SELECT 1 FROM agent_goal_readers w WHERE w.goal_id=g.id AND w.agent_id=? AND w.agent_role=?)")
@@ -146,6 +155,8 @@ def scoped_rows(db, account, *, goal_id=None, before=None, ready_only=False):
         condition += (" AND ((g.status='assigned' AND g.agent_id IS NULL)"
                       " OR (g.status IN ('assigned','in_progress') AND g.agent_id=?))")
         parameters += (account["id"],)
+    if attention_only:
+        condition += " AND (g.attention<>'' OR g.status='submitted')"
     return db.execute(
         f"""SELECT g.*, h.username AS requester, a.username AS agent,
             {accounts.ROLE_SQL.format(alias='h')} AS requester_role,
@@ -182,9 +193,17 @@ def available_actions(row, account, owner):
     if owner:
         transitions = OWNER_ACTIONS.copy()
         if row["require_approval"]:
-            del transitions["resume"], transitions["request_changes"]
+            del transitions["request_changes"]
+            if row["status"] == "paused" and row["attention"] != "approval":
+                del transitions["approve"]
+            else:
+                del transitions["resume"]
         else:
             del transitions["approve"]
+        if row["attention"]:
+            transitions.pop("resume", None)
+        if row["attention"] != "stalled":
+            del transitions["retry"]
         if row["continuous"]:
             del transitions["accept"]
         else:
@@ -211,7 +230,7 @@ def visible_sources(db, row, account, agents):
 
 def summary(db, account, row):
     owner = account["role"] in HUMAN_ROLES
-    result = {key: row[key] for key in ("id", "status", "revision", "agent", "agent_role", "requester", "created", "updated")}
+    result = {key: row[key] for key in ("id", "status", "revision", "agent", "agent_role", "requester", "created", "updated", "attention")}
     result.update(continuous=bool(row["continuous"]), require_approval=bool(row["require_approval"]))
     agents = listed_agents(db, row["id"])
     result["agents"] = [agent["username"] for agent in agents]
@@ -230,25 +249,31 @@ def summary(db, account, row):
             "source_unavailable": False, "actions": actions}
 
 
-EVENT_SELECT = ("SELECT e.revision,e.action,e.status,e.note,e.evidence,e.created,a.username AS actor "
+EVENT_SELECT = ("SELECT e.revision,e.action,e.status,e.note,e.evidence,e.research,e.created,a.username AS actor "
                 "FROM agent_goal_events e JOIN accounts a ON a.id=e.actor_id WHERE e.goal_id=?")
 
 
 def visible_event(db, participants, event):
     result = dict(event)
+    research = result.pop("research")
+    if research is not None:
+        result["research"] = json.loads(research)
     try:
         result["evidence"] = check_references(db, participants, json.loads(result["evidence"]))
     except (sharing.AccessDenied, LookupError, ValueError):
+        result.pop("research", None)
         result.update(note="", evidence=[], redacted=True)
     return result
 
 
-def read(db, account, *, goal_id=None, before=None, ready_only=False):
+def read(db, account, *, goal_id=None, before=None, ready_only=False, attention_only=False):
     if goal_id is None:
         if ready_only and account["role"] in HUMAN_ROLES:
             raise ValueError("The ready queue is available to AI accounts.")
+        if attention_only and account["role"] not in HUMAN_ROLES:
+            raise ValueError("The review inbox is available to goal requesters.")
         visible = []
-        for row in scoped_rows(db, account, before=before, ready_only=ready_only):
+        for row in scoped_rows(db, account, before=before, ready_only=ready_only, attention_only=attention_only):
             try:
                 visible.append(summary(db, account, row))
             except LookupError:
@@ -314,16 +339,37 @@ def create(db, account, data, now):
     claimant = next(iter(agents.values())) if legacy else None
     goal_id = db.execute(
         """INSERT INTO agent_goals(requester_id,agent_id,agent_role,objective,acceptance_criteria,sources,
-                                  status,revision,created,updated,continuous,require_approval)
-           VALUES (?,?,?,?,?,?,?,1,?,?,?,?) RETURNING id""",
+                                  status,revision,created,updated,continuous,require_approval,attention)
+           VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?) RETURNING id""",
         (account["id"], claimant["id"] if claimant else None, claimant["role"] if claimant else None,
          text(data.get("objective"), "an objective", 8000),
          text(data.get("acceptance_criteria", "" if continuous else None), "acceptance criteria", 8000,
-              required=not continuous), json.dumps(sources), status, now, now, continuous, require_approval),
+              required=not continuous), json.dumps(sources), status, now, now, continuous, require_approval, "approval" if require_approval else ""),
     ).fetchone()[0]
     db.executemany("INSERT INTO agent_goal_readers(goal_id,agent_id,agent_role) VALUES (?,?,?)",
                    ((goal_id, agent["id"], agent["role"]) for agent in agents.values()))
     return goal_id, status
+
+
+def stalled(db, goal_id, action, note, evidence):
+    rows = db.execute("""SELECT action,note,evidence FROM agent_goal_events WHERE goal_id=?
+                         AND action IN ('submit','block','retry') ORDER BY revision DESC LIMIT 2""",
+                      (goal_id,)).fetchall()
+    if len(rows) != 2 or any(row["action"] != action for row in rows):
+        return False
+    if action == "block":
+        normalized = " ".join(note.casefold().split())
+        return all(" ".join(row["note"].casefold().split()) == normalized for row in rows)
+    recent, older = ({(item["kind"], item["id"]) for item in json.loads(row["evidence"])} for row in rows)
+    current = {(item["kind"], item["id"]) for item in evidence}
+    return recent <= older and current <= older
+
+
+def research_record(data):
+    if not isinstance(data, dict) or data.keys() != {"findings", "uncertainty", "next_step"}:
+        raise ValueError("Provide findings, uncertainty, and a next step for the research round.")
+    return {key: text(data[key], key.replace("_", " "), 4000, required=key != "uncertainty")
+            for key in ("findings", "uncertainty", "next_step")}
 
 
 def update(db, account, data):
@@ -341,7 +387,11 @@ def update(db, account, data):
         return read(db, account, goal_id=previous["goal_id"])
 
     now = int(time.time())
-    evidence, note = [], ""
+    evidence, note, research = [], "", None
+    if "research" in data:
+        if action != "submit":
+            raise ValueError("A research record belongs to a submission.")
+        research = research_record(data["research"])
     if action == "create":
         goal_id, status = create(db, account, data, now)
         revision = 1
@@ -363,24 +413,27 @@ def update(db, account, data):
             status = "assigned"
         elif action == "release" and row["require_approval"]:
             status = "paused"
-        note = text(data.get("note", ""), "a progress note or result", 16000,
-                    required=action in ("progress", "block", "submit", "request_changes"))
+        note = text(data.get("note", research["findings"] if research else ""), "a progress note or result", 16000,
+                    required=action in ("progress", "block", "submit", "request_changes", "retry"))
         evidence = references(data.get("evidence", []))
         try:
             check_references(db, participants_for(row, account), evidence)
         except (sharing.AccessDenied, LookupError, ValueError):
             raise ValueError("Both participants must be able to read the evidence.") from None
+        attention = "approval" if action == "release" and row["require_approval"] else ""
+        if row["continuous"] and action in ("submit", "block") and stalled(db, goal_id, action, note, evidence):
+            status, attention = "paused", "stalled"
         revision = row["revision"] + 1
         claimant_id, claimant_role = row["agent_id"], row["agent_role"]
         if action == "start" and claimant_id is None:
             claimant_id, claimant_role = account["id"], account["role"]
         elif action == "release":
             claimant_id, claimant_role = None, None
-        db.execute("UPDATE agent_goals SET status=?,revision=?,updated=?,agent_id=?,agent_role=? WHERE id=?",
-                   (status, revision, now, claimant_id, claimant_role, goal_id))
+        db.execute("UPDATE agent_goals SET status=?,revision=?,updated=?,agent_id=?,agent_role=?,attention=? WHERE id=?",
+                   (status, revision, now, claimant_id, claimant_role, attention, goal_id))
     db.execute(
-        """INSERT INTO agent_goal_events(goal_id,revision,actor_id,request_id,request_hash,action,status,note,evidence,created)
-           VALUES (?,?,?,?,?,?,?,?,?,?)""",
-        (goal_id, revision, account["id"], request_id, digest, action, status, note, json.dumps(evidence), now),
+        """INSERT INTO agent_goal_events(goal_id,revision,actor_id,request_id,request_hash,action,status,note,evidence,created,research)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (goal_id, revision, account["id"], request_id, digest, action, status, note, json.dumps(evidence), now, json.dumps(research) if research is not None else None),
     )
     return read(db, account, goal_id=goal_id)

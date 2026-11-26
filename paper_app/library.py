@@ -110,7 +110,7 @@ def connect(path):
 
 
 def initialize(path):
-    from . import agent_goals, ai_accounts, compute_tasks, human_keys, passkeys, reviews
+    from . import agent_goals, agent_schedules, ai_accounts, compute_tasks, human_keys, passkeys, reviews
 
     with connect(path) as db:
         if isinstance(path, storage.PostgreSQL):
@@ -149,6 +149,8 @@ def initialize(path):
         for statement in (*findings.SCHEMA, *goals.SCHEMA, *metrics.SCHEMA):
             db.execute(statement)
         agent_goals.initialize(db)
+        for statement in agent_schedules.SCHEMA:
+            db.execute(statement)
         db.execute(document_context.SCHEMA)
         for table, name, definition in (
             ("metric_corrections", "removed", metrics.REMOVED_COLUMN),

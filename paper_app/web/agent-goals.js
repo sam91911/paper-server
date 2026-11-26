@@ -11,13 +11,17 @@ const moreEvents = element("more-agent-goal-events");
 const agentSearch = element("find-goal-agent");
 const agentMatches = element("goal-agent-matches");
 const setGoalPanel = element("set-goal-panel");
+const attentionOnly = element("goal-attention-only");
+const scheduleForm = element("agent-schedules");
+const researchFields = element("agent-research-fields");
+let schedules = [];
 const labels = {
   assigned: "Assigned", in_progress: "In progress", blocked: "Blocked", paused: "Paused",
   submitted: "Submitted", completed: "Completed", canceled: "Canceled",
   create: "Created goal", start: "Start or resume work", progress: "Record progress", block: "Report blocker",
   submit: "Submit result", pause: "Pause", resume: "Resume", request_changes: "Request changes",
   accept: "Accept result", release: "Release claim", cancel: "Cancel goal",
-  approve: "Approve next round", finish: "Finish goal",
+  approve: "Approve next round", finish: "Finish goal", retry: "Retry stalled research",
 };
 
 let activeGoal, goalCursor, eventCursor, pending, busy;
@@ -52,7 +56,9 @@ function add(parent, tag, value, className) {
 
 function goalStatus(goal) {
   let state = goal.status === "assigned" ? "Ready" : labels[goal.status];
-  if (goal.require_approval && ["paused", "submitted"].includes(goal.status)) state = "Awaiting approval";
+  if (goal.attention === "stalled") state = "Needs research direction";
+  else if (goal.attention === "approval" || (goal.require_approval && goal.status === "submitted")) state = "Awaiting approval";
+  else if (goal.status === "submitted") state = "Awaiting review";
   return `${state} · ${goal.agent ? `Claimed by ${goal.agent} (${goal.agent_role})` : "Unclaimed"}`;
 }
 
@@ -111,14 +117,17 @@ async function post(payload) {
 }
 
 async function loadList(before) {
-  const {goals, next_before, assignable_agents} = await api(before ? `agent-goals?before=${before}` : "agent-goals");
+  const params = new URLSearchParams();
+  if (before) params.set("before", before);
+  if (attentionOnly.checked) params.set("work", "attention");
+  const {goals, next_before, assignable_agents} = await api(`agent-goals?${params}`);
   if (!before) {
     list.replaceChildren();
     agentMatches.replaceChildren();
     for (const username of assignable_agents) add(agentMatches, "option").value = username;
     setGoalPanel.hidden = assignable_agents.length === 0;
   }
-  if (!goals.length && !before) add(list, "li", "No goals yet.");
+  if (!goals.length && !before) add(list, "li", attentionOnly.checked ? "No goals need review." : "No goals yet.");
   for (const goal of goals) {
     const row = add(list, "li");
     const label = goal.source_unavailable ? `Goal #${goal.id} · Source unavailable` : goal.objective.slice(0, 160);
@@ -138,21 +147,39 @@ async function loadList(before) {
   moreGoals.hidden = goalCursor === null;
 }
 
+function showResearch(parent, event) {
+  if (event.redacted) add(parent, "p", "Evidence is unavailable to this account.");
+  if (event.research) {
+    for (const [key, label] of [["findings", "Findings"], ["uncertainty", "Uncertainty"], ["next_step", "Next step"]]) {
+      if (event.research[key]) {
+        add(parent, "strong", label);
+        add(parent, "p", event.research[key], "goal-brief-text");
+      }
+    }
+  }
+  if (event.note && event.note !== event.research?.findings) add(parent, "p", event.note, "goal-brief-text");
+  addReferences(parent, event.evidence);
+}
+
+function updateResearchFields() {
+  const enabled = actionForm.elements.action.value === "submit" && activeGoal?.continuous;
+  researchFields.hidden = !enabled;
+  researchFields.disabled = !enabled;
+}
+
 function showEvents(events, nextBefore, append = false) {
   if (!append) historyList.replaceChildren();
   for (const event of events) {
     const row = add(historyList, "li");
     add(row, "strong", labels[event.action]);
     add(row, "p", `${event.actor} · ${new Date(event.created * 1000).toLocaleString()}`);
-    if (event.redacted) add(row, "p", "Evidence is unavailable to this account.");
-    if (event.note) add(row, "p", event.note, "goal-brief-text");
-    addReferences(row, event.evidence);
+    showResearch(row, event);
   }
   eventCursor = nextBefore;
   moreEvents.hidden = eventCursor === null;
 }
 
-function showGoal({goal, events, next_before}) {
+function showGoal({goal, events, next_before, last_submission}) {
   activeGoal = goal;
   element("agent-goal-empty").hidden = true;
   element("agent-goal-detail").hidden = false;
@@ -186,10 +213,22 @@ function showGoal({goal, events, next_before}) {
     if (goal.sources.length) add(content, "h3", "Shared sources");
     addReferences(content, goal.sources);
   }
+  const latestRound = element("agent-latest-round");
+  const submission = last_submission || events.find(event => event.action === "submit");
+  latestRound.replaceChildren();
+  latestRound.hidden = !submission;
+  if (submission) {
+    add(latestRound, "h3", "Latest research submission");
+    showResearch(latestRound, submission);
+  }
+  if (goal.attention === "stalled") {
+    add(content, "p", "The agent reported the same blocker repeatedly or submitted rounds without new evidence. Add research direction before retrying.");
+  }
   actionForm.hidden = goal.actions.length === 0;
   const action = actionForm.elements.action;
   action.replaceChildren();
   for (const value of goal.actions) add(action, "option", labels[value]).value = value;
+  updateResearchFields();
   showEvents(events, next_before);
 }
 
@@ -229,15 +268,68 @@ actionForm.addEventListener("submit", event => {
   event.preventDefault();
   run(async () => {
     const {action, note, evidence} = actionForm.elements;
-    const result = await post({id: activeGoal.id, revision: activeGoal.revision, action: action.value,
-      note: note.value, evidence: references(evidence.value)});
-    note.value = "";
-    evidence.value = "";
+    const payload = {id: activeGoal.id, revision: activeGoal.revision, action: action.value,
+      note: note.value, evidence: references(evidence.value)};
+    if (!researchFields.disabled) {
+      const research = Object.fromEntries(["findings", "uncertainty", "next_step"].map(key => [key, actionForm.elements[key].value.trim()]));
+      if (Object.values(research).some(Boolean)) {
+        payload.research = research;
+        if (!payload.note.trim()) delete payload.note;
+      }
+    }
+    const result = await post(payload);
+    actionForm.reset();
     showGoal(result);
     await loadList();
     status.textContent = "Goal updated.";
   });
 });
+
+actionForm.elements.action.addEventListener("change", updateResearchFields);
+attentionOnly.addEventListener("change", () => run(() => loadList()));
+
+function showSchedule() {
+  const schedule = schedules.find(item => item.agent === scheduleForm.elements.agent.value);
+  if (!schedule) return;
+  scheduleForm.elements.interval.value = schedule.interval_seconds;
+  const format = stamp => new Date(stamp * 1000).toLocaleString();
+  element("agent-schedule-summary").textContent = `Next due ${schedule.next_run ? format(schedule.next_run) : "—"} · Consecutive failures ${schedule.failures}`;
+  const history = element("agent-schedule-runs");
+  history.replaceChildren();
+  for (const execution of schedule.runs) {
+    const state = execution.finished === null
+      ? (execution.deadline * 1000 <= Date.now() ? "Completion overdue" : "Running")
+      : (execution.success ? "Succeeded" : "Failed");
+    const row = add(history, "li", `${state} · ${format(execution.started)}`);
+    if (execution.detail) add(row, "p", execution.detail);
+  }
+  if (!schedule.runs.length) add(history, "li", "No executions yet.");
+}
+
+function setSchedules(result) {
+  schedules = result.schedules;
+  const picker = scheduleForm.elements.agent;
+  const selected = picker.value;
+  picker.replaceChildren();
+  for (const schedule of schedules) add(picker, "option", schedule.agent).value = schedule.agent;
+  if (schedules.some(item => item.agent === selected)) picker.value = selected;
+  element("agent-schedules-panel").hidden = schedules.length === 0;
+  showSchedule();
+}
+
+scheduleForm.elements.agent.addEventListener("change", showSchedule);
+scheduleForm.addEventListener("submit", event => {
+  event.preventDefault();
+  run(async () => {
+    const action = event.submitter?.value || "configure";
+    setSchedules(await api("agent-schedules", {action, agent: scheduleForm.elements.agent.value,
+      interval_seconds: Number(scheduleForm.elements.interval.value)}));
+    status.textContent = action === "run_now" ? "Run queued for the agent." : "Schedule saved.";
+  });
+});
+element("refresh-agent-schedules").addEventListener("click", () => run(async () => {
+  setSchedules(await api("agent-schedules"));
+}));
 
 element("refresh-agent-goals").addEventListener("click", () => run(async () => {
   await loadList();
@@ -257,7 +349,9 @@ run(async () => {
   }
   const params = new URLSearchParams(location.search);
   element("agent-goal-workspace").hidden = false;
+  element("goal-attention-filter").hidden = !["user", "member"].includes(account.role);
   await loadList();
+  if (account.role === "user") setSchedules(await api("agent-schedules"));
   const researchGoal = Number(params.get("research_goal"));
   if (!setGoalPanel.hidden && Number.isSafeInteger(researchGoal) && researchGoal > 0) {
     setGoalPanel.open = true;

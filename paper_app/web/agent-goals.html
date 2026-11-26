@@ -13,6 +13,20 @@
     <p id="agent-goal-status" role="status"></p>
     <p id="agent-goal-sign-in" hidden><a href="/account">Sign in to view agent goals</a>.</p>
     <section id="agent-goal-workspace" hidden>
+      <details id="agent-schedules-panel" hidden>
+        <summary>Agent schedules</summary>
+        <p>Schedules run when the enrolled agent polls from its execution environment.</p>
+        <form id="agent-schedules" class="filters">
+          <label>Agent <select name="agent" required></select></label>
+          <label>Interval in seconds <input name="interval" type="number" min="0" max="86400" required></label>
+          <button type="submit" value="configure">Save schedule</button>
+          <button type="submit" value="run_now" formnovalidate>Run now</button>
+          <button type="button" id="refresh-agent-schedules" class="secondary">Refresh execution history</button>
+        </form>
+        <p>Use 0 to disable recurring runs, or choose 60 to 86,400 seconds.</p>
+        <p id="agent-schedule-summary"></p>
+        <ol id="agent-schedule-runs" class="experiment-records"></ol>
+      </details>
       <div class="goal-browser detail-layout">
         <details class="goal-index browse-controls" id="goal-browse-controls" open>
           <summary>Browse goals</summary>
@@ -37,6 +51,9 @@
               <button>Save goal</button>
             </form>
           </details>
+          <label id="goal-attention-filter" class="inline-check" hidden>
+            <input id="goal-attention-only" type="checkbox"> Review inbox
+          </label>
           <ul id="agent-goal-list" class="skill-results"></ul>
           <div class="file-actions">
             <button id="refresh-agent-goals" class="secondary" type="button">Refresh goals</button>
@@ -51,9 +68,16 @@
           <h2 id="agent-goal-title" tabindex="-1"></h2>
           <p id="agent-goal-summary"></p>
           <div id="agent-goal-content"></div>
+          <section id="agent-latest-round" hidden></section>
           <form id="agent-goal-action" class="experiment-form" hidden>
             <label>Action <select name="action"></select></label>
             <label>Note or result <textarea name="note" rows="3" maxlength="16000"></textarea></label>
+            <fieldset id="agent-research-fields" hidden disabled>
+              <legend>Research round</legend>
+              <label>Findings <textarea name="findings" rows="2" maxlength="4000"></textarea></label>
+              <label>Uncertainty <textarea name="uncertainty" rows="2" maxlength="4000"></textarea></label>
+              <label>Next step <textarea name="next_step" rows="2" maxlength="4000"></textarea></label>
+            </fieldset>
             <label>Evidence references <textarea name="evidence" rows="2" maxlength="600" aria-describedby="goal-reference-help"></textarea></label>
             <button>Update goal</button>
           </form>

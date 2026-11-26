@@ -91,6 +91,14 @@ GOAL_ACCESS_FIELDS = {"audience": enum("inherit", *AUDIENCES), "recipients": REC
 ID_LIST = array(ID)
 AGENT_GOAL_REQUEST_ID = schema("string", pattern="^[A-Za-z0-9_-]{16,64}$")
 AGENT_GOAL_STATUS = enum(*agent_goals.STATES)
+AGENT_RESEARCH = obj({field: schema("string", maxLength=4000)
+                      for field in ("findings", "uncertainty", "next_step")},
+                     ("findings", "uncertainty", "next_step"))
+AGENT_SCHEDULES = obj({"schedules": array(obj({
+    "agent": STRING, "interval_seconds": COUNT, "next_run": nullable(COUNT), "failures": COUNT,
+    "runs": array(obj({"started": COUNT, "deadline": COUNT, "finished": nullable(COUNT),
+                       "success": nullable(BOOLEAN), "detail": STRING})),
+}))}, ("schedules",))
 AGENT_GOAL_ACTION = enum(*agent_goals.OWNER_ACTIONS, *agent_goals.AGENT_ACTIONS)
 AGENT_GOAL_REFERENCES = schema("array", maxItems=20, items=obj(
     {"kind": enum(*agent_goals.SOURCE_KINDS), "id": ID,
@@ -152,7 +160,7 @@ SCHEMAS = {
     "Error": obj({"error": STRING}, ("error",)),
     "AgentGoal": obj({"id": ID, "agent": nullable(STRING), "agent_role": nullable(AI_ROLE),
                       "agents": array(STRING), "requester": STRING,
-                      "continuous": BOOLEAN, "require_approval": BOOLEAN,
+                      "continuous": BOOLEAN, "require_approval": BOOLEAN, "attention": enum("", "approval", "stalled"),
                       "objective": STRING, "acceptance_criteria": STRING, "sources": AGENT_GOAL_REFERENCES,
                       "required_skills": array(obj({"id": ID, "title": STRING, "revision": ID, "api_path": STRING},
                                                    ("id", "title", "revision", "api_path"))),
@@ -162,7 +170,8 @@ SCHEMAS = {
                       "continuous", "require_approval", "source_unavailable", "actions")),
     "AgentGoalEvent": obj({"revision": ID, "action": enum("create", *AGENT_GOAL_ACTION["enum"]),
                            "actor": STRING, "status": AGENT_GOAL_STATUS, "note": STRING, "evidence": AGENT_GOAL_REFERENCES,
-                           "created": COUNT, "redacted": BOOLEAN}, ("revision", "action", "actor", "status", "note", "evidence")),
+                           "created": COUNT, "redacted": BOOLEAN, "research": AGENT_RESEARCH},
+                          ("revision", "action", "actor", "status", "note", "evidence")),
     "Account": obj({"id": ID, "role": enum("user", "member", "local", "cloud"), "username": STRING,
                     "display_name": STRING, "email": nullable(STRING), "has_avatar": BOOLEAN,
                     "has_private_key": BOOLEAN, "key_only": BOOLEAN}, ("id", "role", "username")),
@@ -247,6 +256,21 @@ PATHS = {
             "503": {"description": "Database unavailable", **media(obj({"status": enum("unavailable")}, ("status",)))},
         },
     }},
+    "/api/agent-schedules": {
+        "get": operation("List managed agent schedules and their latest executions", AGENT_SCHEDULES,
+                         security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
+        "post": operation("Manage a schedule or report an agent execution",
+            acknowledgement(schedules=AGENT_SCHEDULES["properties"]["schedules"],
+                            run=nullable(obj({"id": STRING, "timeout_seconds": COUNT}))),
+            body={"oneOf": [
+                obj({"action": enum("configure"), "agent": STRING, "interval_seconds": COUNT},
+                    ("action", "agent", "interval_seconds")),
+                obj({"action": enum("run_now"), "agent": STRING}, ("action", "agent")),
+                obj({"action": enum("claim")}, ("action",)),
+                obj({"action": enum("finish"), "id": STRING, "success": BOOLEAN, "detail": STRING},
+                    ("action", "id", "success")),
+            ]}, security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
+    },
     "/api/agent-goals": {
         "get": operation("Read your agent goals or a goal's progress history", {"oneOf": [
             obj({"goals": array(ref("AgentGoal")), "next_before": nullable(ID), "assignable_agents": array(STRING)},
@@ -255,7 +279,7 @@ PATHS = {
                  "last_submission": nullable(ref("AgentGoalEvent")), "last_approval": nullable(ref("AgentGoalEvent"))},
                 ("goal", "events", "next_before")),
         ]}, params=(param("id", ID, description="Goal ID for a detail view."), BEFORE,
-                    param("work", enum("ready"), description="AI accounts can list claimable and in-progress work.")),
+                    param("work", enum("ready", "attention"), description="Ready work for AI accounts or the requester review inbox.")),
             description="The requester and allowlisted AI accounts with access to the sources can read a goal. "
                         "The agent and agent_role fields identify the claimant and are null before a claim. "
                         "With id, before pages through older events by revision. Otherwise it pages through goals by ID. "
@@ -274,7 +298,8 @@ PATHS = {
                     ("action", "request_id", "objective")),
                  "oneOf": [{"required": ["agents"]}, {"required": ["agent"]}]},
                 obj({"action": AGENT_GOAL_ACTION, "request_id": AGENT_GOAL_REQUEST_ID, "id": ID, "revision": ID,
-                     "note": STRING, "evidence": AGENT_GOAL_REFERENCES}, ("action", "request_id", "id", "revision")),
+                     "note": STRING, "evidence": AGENT_GOAL_REFERENCES, "research": AGENT_RESEARCH},
+                    ("action", "request_id", "id", "revision")),
             ]},
             description="The requester must own or have goal posting access for every selected AI account. "
                         "Use agents to create an unclaimed goal for an allowlist. The legacy agent field assigns it immediately. "
@@ -283,7 +308,8 @@ PATHS = {
                         "Continuous goals stay open until the requester finishes or cancels them. "
                         "When require_approval is true, the requester must approve the first and each subsequent round. "
                         "Retry an identical update with the same request_id. "
-                        "A stale revision returns 409. Progress, block, submit, and request_changes require a note.",
+                        "A stale revision returns 409. Progress, block, request_changes and retry require a note. "
+                        "Submit a note or a structured research record with evidence.",
             security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
     },
     "/api/human-key/challenge": {"post": operation("Request a one-time human sign-in or enrollment challenge",

@@ -51,8 +51,9 @@
   other shared skills.
 - For continuous goals, use `last_submission` and recent progress to pick up
   the next research question. Read the current approval note when available.
-  Do one bounded round per check and submit findings, evidence, uncertainty,
-  and a specific follow-up question. Record progress before yielding an
+  Do one bounded round per check. Submit evidence references and put the findings,
+  uncertainty, and follow-up question in `research.findings`,
+  `research.uncertainty`, and `research.next_step`. Record progress before yielding an
   unfinished round so another session can resume it.
 - Start only when `start` appears in the goal's `actions`. The first
   allowlisted agent to start claims the goal. Follow its objective and
@@ -60,7 +61,7 @@
 - Send `start`, `progress`, `block`, or `submit` to `POST /api/agent-goals`
   when listed in `actions`. Include the goal `id`, current `revision`, and
   a unique `request_id`. Reuse that request ID for an identical retry. Include
-  a note and cite shared evidence as objects with `kind` and `id`.
+  a note or structured submission and cite shared evidence as objects with `kind` and `id`.
   After submitting, check the current actions before starting another round.
   If `require_approval` is true, stop work after submission and wait for the
   requester to approve the next round. For a continuous goal, each submission

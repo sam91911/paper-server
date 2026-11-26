@@ -366,3 +366,16 @@ ssh -N -L 18765:127.0.0.1:8765 user@library-host
 Keep the tunnel running. Use `http://127.0.0.1:18765` as the origin on the agent's machine and append the original `registration_path` when enrolling. The client saves the forwarded address for future requests.
 
 請維持通道連線。代理端使用 `http://127.0.0.1:18765`，註冊時接上原本的 `registration_path`。用戶端會儲存轉送後的位址供後續請求使用。
+
+### Schedule research checks · 排程研究檢查
+
+In **Agent goals → Agent schedules**, an operator can configure an interval or queue **Run now**, and inspect the latest ten executions. The agent polls every 30 seconds. Configure and supervise one runner per enrolled identity in the agent's execution environment:
+
+```sh
+python3 -m paper_client.agent run-schedule --identity /absolute/path/to/agent.json \
+  -- /absolute/path/to/research-check
+```
+
+Use the **One-time check** prompt from **Account** in your local research command. The command receives the identity file path in `PAPER_AGENT_IDENTITY` and the execution ID in `PAPER_AGENT_RUN_ID`. It should complete one check and exit with a nonzero status on failure. Use `--once` before `--` if an external scheduler invokes the runner. The server grants one active run per identity, with a 30-minute deadline. The command is configured locally and its output stays in that environment. An overdue run is recorded as failed when a runner next polls. Start the runner before relying on a queued execution.
+
+指派者可在 **Review inbox** 集中查看待驗收、待核准及卡關的目標。使用 `submit` 時，可在 `research` 物件分別提供 `findings`、`uncertainty`、`next_step`，並在原有的 `evidence` 欄位引用證據。持續型目標若連續三次回報同一阻礙，或在一輪提交後連續兩輪未引用該輪之外的證據，會暫停並等待人工指示。建立者可在 **Retry stalled research** 留下新方向並重新開放工作。

@@ -6,6 +6,7 @@ import getpass
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -156,6 +157,71 @@ def send_heartbeats(client, *, once=False):
         time.sleep(interval)
 
 
+def run_scheduled_command(command, identity, run_id, timeout):
+    if timeout <= 0:
+        return False, "The run lease expired before the command started."
+    try:
+        with subprocess.Popen(command, stdin=subprocess.DEVNULL, start_new_session=os.name == "posix",
+                              env={**os.environ, "PAPER_AGENT_IDENTITY": str(identity.resolve()),
+                                   "PAPER_AGENT_RUN_ID": run_id}) as process:
+            try:
+                code = process.wait(timeout=timeout)
+            except (KeyboardInterrupt, subprocess.TimeoutExpired) as error:
+                if os.name == "posix":
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                else:
+                    process.kill()
+                process.wait()
+                if isinstance(error, KeyboardInterrupt):
+                    raise
+                return False, "The research command timed out."
+    except OSError:
+        return False, "Could not start the configured research command."
+    return code == 0, f"Research command exited with status {code}."
+
+
+def run_schedule(client, identity, command, *, once=False):
+    route = "/api/agent-schedules"
+    completion = None
+    while True:
+        try:
+            if completion is not None:
+                client.request(route, completion)
+                completion = None
+                if once:
+                    return
+            client.request("/api/ai/heartbeat", {})
+            started = time.monotonic()
+            run = json.loads(client.request(route, {"action": "claim"}))["run"]
+            if run is not None:
+                timeout = run["timeout_seconds"] - (time.monotonic() - started) - 5
+                try:
+                    success, detail = run_scheduled_command(command, identity, run["id"], timeout)
+                except KeyboardInterrupt:
+                    try:
+                        client.request(route, {"action": "finish", "id": run["id"], "success": False,
+                                               "detail": "Runner interrupted."})
+                    except (OSError, LibraryError):
+                        print("Could not report the interrupted run.", file=sys.stderr)
+                    raise
+                completion = {"action": "finish", "id": run["id"], "success": success, "detail": detail}
+                continue
+            if once:
+                return
+        except (OSError, LibraryError) as error:
+            if completion and isinstance(error, LibraryError) and error.status == 409:
+                completion = None
+                if once:
+                    raise
+            elif once or (isinstance(error, LibraryError) and error.status < 500 and error.status != 429):
+                raise
+            print("Schedule check failed. Retrying in 30 seconds.", file=sys.stderr)
+        time.sleep(30)
+
+
 def register(identity, username, url):
     parsed = urlsplit(url)
     route = parsed.path
@@ -224,6 +290,10 @@ def main():
     heartbeat = commands.add_parser("heartbeat", help="Report presence to your enrolled library")
     heartbeat.add_argument("--identity", type=Path, required=True)
     heartbeat.add_argument("--once", action="store_true", help="Send one heartbeat and exit")
+    runner = commands.add_parser("run-schedule", help="Execute due research using a locally configured command")
+    runner.add_argument("--identity", type=Path, required=True)
+    runner.add_argument("--once", action="store_true", help="Check for and execute at most one due run")
+    runner.add_argument("runner_command", nargs=argparse.REMAINDER, help="Local command and arguments after --")
     git_header = commands.add_parser("git-header", help="Generate a short-lived Git authorization header")
     git_header.add_argument("--identity", type=Path, required=True)
     git_header.add_argument("--server-url", required=True, help="Confirm the destination library origin")
@@ -243,6 +313,17 @@ def main():
             client = AgentClient.from_identity(args.identity.expanduser())
             try:
                 send_heartbeats(client, once=args.once)
+            except KeyboardInterrupt:
+                return
+        elif args.command == "run-schedule":
+            command = args.runner_command
+            if command[:1] == ["--"]:
+                command = command[1:]
+            if not command:
+                raise ValueError("Provide a local research command after --.")
+            identity = args.identity.expanduser()
+            try:
+                run_schedule(AgentClient.from_identity(identity), identity, command, once=args.once)
             except KeyboardInterrupt:
                 return
         elif args.command == "git-header":

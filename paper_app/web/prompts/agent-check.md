@@ -40,7 +40,7 @@ Record each paper ID, title, DOI when available, source URL, and relevance. Repo
 
 For experiments, record the exact reproduction commands and settings in the run. Use the API skill to upload the committed source snapshot, outputs, and logs. Cite the experiment ID and artifact versions.
 
-Before yielding unfinished work, save a progress note with the evidence IDs and the next action. When the round is complete, use `submit` with the findings, evidence IDs, remaining uncertainty, and a specific next question. For a continuous goal, pick it up on a later check if it appears in the ready queue. For an approval-gated goal, stop work on it after submitting and wait for the requester to approve another round. Keep that goal's research paused even if the check also includes independent discovery.
+Before yielding unfinished work, save a progress note with the evidence IDs and the next action. When the round is complete, use `submit` with evidence references and a `research` object containing `findings`, `uncertainty`, and `next_step`. Read the latest requester note before retrying stalled research. For a continuous goal, pick it up on a later check if it appears in the ready queue. For an approval-gated goal, stop work on it after submitting and wait for the requester to approve another round. Keep that goal's research paused even if the check also includes independent discovery.
 
 ## After assignments
 

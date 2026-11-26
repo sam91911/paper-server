@@ -171,6 +171,39 @@ class AgentGoalTests(unittest.TestCase):
         self.assertEqual(self.api(f"{ROUTE}?work=ready", user="worker")["goals"][0]["id"], goal["id"])
         self.assertEqual(self.api(f"{ROUTE}?id={goal['id']}", user="worker")["last_submission"]["note"], "Round complete")
 
+    def test_inbox_distinguishes_manual_pause_and_stalled_research(self):
+        inbox = f"{ROUTE}?work=attention"
+        goal = self.api(data=self.assignment(continuous=True, require_approval=True))["goal"]
+        self.assertEqual(self.api(inbox)["goals"][0]["attention"], "approval")
+        goal = self.action(goal, "approve", user="owner")["goal"]
+        goal = self.action(goal, "pause", user="owner")["goal"]
+        self.assertEqual(self.api(inbox)["goals"], [])
+        self.assertEqual(goal["actions"], ["resume", "finish", "cancel"])
+        goal = self.action(goal, "resume", user="owner")["goal"]
+        research = {"findings": "No new evidence", "uncertainty": "Limited sample", "next_step": "Check another baseline"}
+        for round_number in range(3):
+            goal = self.action(goal, "start")["goal"]
+            result = self.action(goal, "submit", research=research)
+            self.assertEqual(result["last_submission"]["research"], research)
+            goal = result["goal"]
+            if round_number < 2:
+                goal = self.action(goal, "approve", user="owner")["goal"]
+        self.assertEqual(goal["attention"], "stalled")
+        self.assertEqual(self.api(inbox)["goals"][0]["id"], goal["id"])
+        self.action(goal, "start", expected=409)
+        goal = self.action(goal, "retry", user="owner", note="Use the expanded dataset")["goal"]
+        self.assertEqual(goal["status"], "assigned")
+        self.assertEqual(self.api(inbox)["goals"], [])
+
+    def test_repeated_blocker_requires_human_direction(self):
+        goal = self.api(data=self.assignment(continuous=True))["goal"]
+        for note in ("Missing source", "missing SOURCE", "Missing  source"):
+            goal = self.action(goal, "start")["goal"]
+            goal = self.action(goal, "block", note=note)["goal"]
+        self.assertEqual(goal["attention"], "stalled")
+        self.action(goal, "start", expected=409)
+        self.action(goal, "retry", user="owner", expected=400)
+
     def test_lifecycle_permissions_and_idempotency(self):
         shared = self.document("Report", recipients=["worker"])
         private = self.document("Private")

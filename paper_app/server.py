@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 from . import database as storage
 from . import git_repos, supervisor
 from . import passkeys
-from . import compute_tasks
+from . import agent_schedules, compute_tasks
 from . import account_routes, accounts, admin_console, agent_goals, ai_accounts, client_distribution, comment_routes, crossref, document_context, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tasks, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
@@ -287,6 +287,18 @@ class Handler(BaseHTTPRequestHandler):
             self.read_ai_invitations(url)
         elif route == "/api/agent-goals":
             self.read_agent_goals(url)
+        elif route == "/api/agent-schedules":
+            try:
+                with library.connect(self.server.database) as db:
+                    storage.begin(db)
+                    result = agent_schedules.dashboard(db, self.require_human(db))
+                self.send_json(200, result)
+            except accounts.SignInRequired:
+                self.send_json(401, {"error": "Sign in to view agent schedules."})
+            except sharing.AccessDenied:
+                self.send_json(403, {"error": "Only agent operators can view schedules."})
+            except storage.ERRORS:
+                self.send_json(500, {"error": "Could not read agent schedules."})
         elif route == "/api/account/avatar":
             self.read_account_avatar()
         elif route in ("/api/reviews", "/api/review-agents"):
@@ -576,12 +588,13 @@ class Handler(BaseHTTPRequestHandler):
             params = parse_qs(url.query, keep_blank_values=True)
             goal_id = skills.query_id(params["id"][0]) if "id" in params else None
             before = skills.query_id(params["before"][0]) if "before" in params else None
-            ready_only = "work" in params
-            if ready_only and (goal_id is not None or params["work"] != ["ready"]):
-                raise ValueError("Use work=ready on the goal list.")
+            work = params.get("work")
+            if work is not None and (goal_id is not None or work not in (["ready"], ["attention"])):
+                raise ValueError("Use work=ready or work=attention on the goal list.")
             with library.connect(self.server.database) as db:
                 storage.begin(db)
-                result = agent_goals.read(db, self.require_account(db), goal_id=goal_id, before=before, ready_only=ready_only)
+                result = agent_goals.read(db, self.require_account(db), goal_id=goal_id, before=before,
+                                          ready_only=work == ["ready"], attention_only=work == ["attention"])
             self.send_json(200, result)
         except accounts.SignInRequired:
             self.send_json(401, {"error": "Sign in to continue."})
@@ -786,7 +799,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(502, {"error": str(error)})
         except LookupError:
             errors = {"/api/skills": "Skill unavailable.", "/api/reviews": "Review unavailable.",
-                      "/api/agent-goals": "Agent goal unavailable.", "/api/ai/invitations": "AI invitation or account unavailable.",
+                      "/api/agent-goals": "Agent goal unavailable.", "/api/agent-schedules": "Agent or run unavailable.", "/api/ai/invitations": "AI invitation or account unavailable.",
                       "/api/ai/deactivate": "AI account unavailable.", "/api/ai/goal-delegates": "AI account unavailable.",
                       "/api/human-invitations": "Human invitation unavailable.",
                       "/api/human-key/revoke": "Sign-in key unavailable."}
@@ -913,6 +926,8 @@ class Handler(BaseHTTPRequestHandler):
             origin = getattr(self.server, "public_url", None) or self.request_origin()
             return {"invitation_url": accounts.invite_url(origin, token), "invite_id": invite_id, "role": role,
                     "expires_in": accounts.HUMAN_INVITE_SECONDS}
+        if self.path == "/api/agent-schedules":
+            return agent_schedules.update(db, self.require_account(db), data)
         if self.path == "/api/agent-goals":
             return agent_goals.update(db, self.require_account(db), data)
         if self.path == "/api/ai/invitations":
