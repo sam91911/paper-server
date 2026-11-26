@@ -18,7 +18,7 @@ from urllib.parse import quote
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from paper_app import accounts, agent_goals, database, experiments, library, pdf
+from paper_app import accounts, agent_goals, ai_accounts, database, experiments, library, pdf
 from paper_app.server import Handler
 from scripts.research_pilot import methods_pdf
 
@@ -44,8 +44,9 @@ def disposable_target(root, postgres_url):
 
 def seed(target, args):
     library.initialize(target)
+    owner_name = "researcher"
     with library.connect(target) as db:
-        owner = {"id": accounts.create_account(db, "researcher", uuid4().hex, "user"), "role": "user"}
+        owner = {"id": accounts.create_account(db, owner_name, uuid4().hex, "user"), "role": "user"}
         cookie = accounts.start_session(db, owner["id"], None)
     paper_id = pdf.import_pdf(target, "methods.pdf", methods_pdf(), owner, "local")["paper_id"]
     archive = BytesIO()
@@ -65,6 +66,7 @@ def seed(target, args):
         for index in range(args.agents):
             name = f"agent-{index}"
             actor = {"id": accounts.create_account(db, name, uuid4().hex, "local"), "role": "local"}
+            ai_accounts.assign_operator(db, name, owner_name)
             key = accounts.create_key(db, actor["id"], "Benchmark")
             agent_goals.update(db, owner, {
                 "action": "create", "agents": [name], "objective": "Reproduce the score",
