@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
 from . import git_repos, supervisor
+from . import passkeys
 from . import account_routes, accounts, admin_console, agent_goals, ai_accounts, client_distribution, comment_routes, crossref, document_context, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tasks, tools_catalog
 from .pdf import import_pdf, spreadsheet_text
 
@@ -51,6 +52,7 @@ ASSETS = {
     "/assets/goals.js": ("goals.js", "text/javascript; charset=utf-8"),
     "/assets/api.js": ("api.js", "text/javascript; charset=utf-8"),
     "/assets/human-keys.js": ("human-keys.js", "text/javascript; charset=utf-8"),
+    "/assets/passkeys.js": ("passkeys.js", "text/javascript; charset=utf-8"),
     "/assets/documents.js": ("documents.js", "text/javascript; charset=utf-8"),
     "/assets/boot.js": ("boot.js", "text/javascript; charset=utf-8"),
     "/assets/library.js": ("library.js", "text/javascript; charset=utf-8"),
@@ -466,6 +468,7 @@ class Handler(BaseHTTPRequestHandler):
                             data["keys"] = accounts.list_keys(db, account["id"])
                             if account["role"] in ("user", "member"):
                                 data["sign_in_keys"] = human_keys.list_keys(db, account["id"])
+                                data["passkeys"] = passkeys.list_passkeys(db, account["id"])
                     elif route in ("/api/documents", "/api/news", "/api/discussions"):
                         data = library.snapshot(db, view=route.rsplit("/", 1)[-1], account=account,
                                                 include_comments=parse_qs(url.query).get("comments") != ["none"],

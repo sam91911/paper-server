@@ -313,6 +313,9 @@
 <section id="account-page" hidden>
   <h2 id="account-summary">Sign in</h2>
   <div id="human-key-entry">
+    <form id="passkey-login" hidden>
+      <button>Sign in with a passkey</button>
+    </form>
     <form id="human-key-login">
       <label>Paper Library private key file <input name="key_file" type="file" accept=".json,application/json" required></label>
       <button>Sign in with private key</button>
@@ -359,6 +362,14 @@
   <p id="account-username" hidden></p>
   <p id="account-email" hidden></p>
   <div class="account-options">
+  <details id="passkey-panel" name="account-panel" hidden>
+    <summary>Passkeys</summary>
+    <div id="passkey-list"></div>
+    <form id="passkey-register">
+      <label>Passkey label <input name="label" value="My passkey" required maxlength="100"></label>
+      <button>Add a passkey</button>
+    </form>
+  </details>
   <details id="attach-human-key-panel" name="account-panel" hidden>
     <summary>Private sign-in keys</summary>
     <div id="human-key-list"></div>
@@ -686,6 +697,7 @@
 <script src="/assets/metrics.js"></script>
 <script src="/assets/library.js"></script>
 <script src="/assets/human-keys.js"></script>
+<script src="/assets/passkeys.js"></script>
 <script src="/assets/documents.js"></script>
 <script src="/assets/findings.js"></script>
 <script src="/assets/goals.js"></script>

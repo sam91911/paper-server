@@ -799,6 +799,7 @@ async function loadLibrary(paperId) {
     showAccount();
     showKeys();
     showHumanKeys();
+    showPasskeys();
     return;
   }
   if (documentsPage) {

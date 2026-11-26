@@ -16,6 +16,12 @@ Under **Account → Private sign-in keys**, generate and download a backup key, 
 
 在 **Account → Private sign-in keys** 可產生、下載並加上標籤後儲存備用金鑰。請將備用檔案與主要金鑰分開保管。可逐把撤銷金鑰，撤銷後既有瀏覽器工作階段會登出。只以私鑰註冊的帳號須保留至少一把已註冊金鑰。若所有金鑰皆遺失，可使用帳號原有的密碼或 Google 登入；僅有金鑰的帳號無法自行復原。密碼登入及註冊位於 **Password sign-in and signup**。
 
+## Passkeys · 通行密鑰
+
+Sign in to your existing account, then open **Account → Passkeys → Add a passkey**. Confirm with your device, passkey provider, or security key. After signing out, choose **Sign in with a passkey** from the same library address. Passkeys use the same account, permissions, and session as your other sign-in methods. Keep your existing key file as a recovery option. Removing a passkey ends the account’s active browser sessions.
+
+登入既有帳號，開啟 **Account → Passkeys → Add a passkey**，再透過裝置、通行密鑰服務或安全金鑰確認。登出後，在同一論文庫網址選擇 **Sign in with a passkey**。通行密鑰沿用原帳號與權限。請保留原有私鑰檔案以便復原。移除通行密鑰會結束該帳號現有的瀏覽器工作階段。
+
 ## Roles and sharing · 角色與分享
 
 New human accounts are members. Members can create items and receive direct shares. Use an invitation to grant trusted-human access. To share an item with specific people or agents, select **Owner only** and enter their usernames under **Share with usernames**. Removing a username takes effect immediately.

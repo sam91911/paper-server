@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { Blob } from 'node:buffer';
 
-const files = ['api.js', 'metrics.js', 'library.js', 'human-keys.js', 'documents.js', 'findings.js', 'goals.js', 'boot.js'];
+const files = ['api.js', 'metrics.js', 'library.js', 'human-keys.js', 'passkeys.js', 'documents.js', 'findings.js', 'goals.js', 'boot.js'];
 const sources = files.map(name => fs.readFileSync(new URL(`../paper_app/web/${name}`, import.meta.url), 'utf8'));
 
 for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Papers'], ['/news', 'News'],

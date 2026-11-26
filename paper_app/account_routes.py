@@ -1,10 +1,33 @@
 """Account session and application key HTTP operations."""
 
 from . import database as storage
-from . import accounts, human_keys, library
+from . import accounts, human_keys, library, passkeys
 
 KEY_ACTIONS = {f"/api/human-key/{action}": action for action in ("challenge", "register", "login", "attach", "revoke")}
-SESSION_ROUTES = {"/api/register", "/api/sign-in", "/api/sign-out", "/api/change-password", *KEY_ACTIONS}
+PASSKEY_ACTIONS = {f"/api/passkeys/{action}": action for action in
+                   ("register-options", "register", "login-options", "login", "revoke")}
+SESSION_ROUTES = {"/api/register", "/api/sign-in", "/api/sign-out", "/api/change-password",
+                  *KEY_ACTIONS, *PASSKEY_ACTIONS}
+
+
+def use_passkey(handler, db, action, data, token):
+    origin = handler.request_origin()
+    if action in ("login-options", "login"):
+        if action == "login-options":
+            return passkeys.begin(db, origin, "login"), None
+        account_id = passkeys.finish(db, origin, "login", data)
+        token = accounts.start_session(db, account_id, token)
+        return {"account": accounts.current_account(db, token)}, token
+    account = handler.require_browser_account(db)
+    if account["role"] not in ("user", "member"):
+        raise accounts.SignInRequired
+    if action == "register-options":
+        return passkeys.begin(db, origin, "register", account, token), None
+    if action == "register":
+        passkeys.finish(db, origin, "register", data, account, token)
+        return {"passkeys": passkeys.list_passkeys(db, account["id"])}, None
+    passkeys.revoke(db, account, data.get("id"))
+    return {"account": None}, ""
 
 
 def use_human_key(handler, db, action, data, token):
@@ -46,6 +69,8 @@ def update_session(handler, data):
         storage.begin(db, write=True)
         if handler.path in KEY_ACTIONS:
             result, token = use_human_key(handler, db, KEY_ACTIONS[handler.path], data, token)
+        elif handler.path in PASSKEY_ACTIONS:
+            result, token = use_passkey(handler, db, PASSKEY_ACTIONS[handler.path], data, token)
         else:
             result, token = use_password_session(handler, db, data, token)
     handler.send_json(200, result, cookie=handler.session_cookie(token) if token is not None else None)

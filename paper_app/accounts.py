@@ -283,6 +283,8 @@ def set_role(db, username, role):
     other_keys = "ai_public_keys" if role in ("user", "member") else "human_public_keys"
     for table in ("sessions", "application_keys", other_keys):
         db.execute(f"DELETE FROM {table} WHERE account_id=?", (row["id"],))
+    if role not in ("user", "member"):
+        db.execute("DELETE FROM passkeys WHERE account_id=?", (row["id"],))
     if role != "user":
         db.execute("DELETE FROM human_invites WHERE issuer_id=?", (row["id"],))
 
