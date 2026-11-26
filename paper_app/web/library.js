@@ -240,6 +240,11 @@ function showPaper() {
   if (!selected) return;
   element("paper-detail-title").textContent = selected.title || paperFilename(selected);
   element("paper-detail-byline").textContent = [selected.authors, selected.venue, selected.year].filter(Boolean).join(" · ");
+  const webSource = element("paper-web-source");
+  const sourceURL = paperWebSource(selected);
+  webSource.hidden = !sourceURL;
+  if (sourceURL) webSource.href = sourceURL;
+  else webSource.removeAttribute("href");
   element("paper-file-name").textContent = selected.has_pdf
     ? paperFilename(selected)
     : selected.pdf_restricted ? "PDF access is restricted." : "No PDF attached.";
@@ -1166,7 +1171,7 @@ ${schedule} If authentication is denied, stop and report it.`;
   }
 }
 
-async function showAIInvitations(before) {
+async function showAIInvitations(before, openGoalAccess) {
   const accountId = libraryData.account?.id;
   const request = ++aiInvitationRequest;
   const route = before ? `ai/invitations?before=${encodeURIComponent(before)}` : "ai/invitations";
@@ -1198,6 +1203,29 @@ async function showAIInvitations(before) {
         const button = add(actions, "button", label, "secondary");
         button.type = "button";
         button.addEventListener("click", () => copyHeartbeatPrompt(agent.username, mode));
+      }
+      const delegates = add(row, "details");
+      delegates.open = openGoalAccess === agent.username;
+      add(delegates, "summary", "Goal posting access");
+      const grant = add(delegates, "form");
+      const label = add(grant, "label", "Human username ");
+      const username = add(label, "input");
+      username.required = true;
+      username.maxLength = 32;
+      add(grant, "button", "Grant access", "secondary");
+      async function changeGoalAccess(action, username) {
+        await api("ai/goal-delegates", {action, agent: agent.username, username});
+        if (libraryData.account?.id !== accountId) return;
+        await showAIInvitations(undefined, agent.username);
+        accountStatus.textContent = action === "grant" ? "Goal posting access granted." : "Goal posting access revoked.";
+      }
+      submit(grant, () => changeGoalAccess("grant", username.value.trim()), accountStatus);
+      for (const delegate of agent.goal_delegates) {
+        const revoke = add(delegates, "form");
+        add(revoke, "span", delegate);
+        const button = add(revoke, "button", "Revoke access", "secondary");
+        button.setAttribute("aria-label", `Revoke goal posting access for ${delegate}`);
+        submit(revoke, () => changeGoalAccess("revoke", delegate), accountStatus);
       }
       const rotate = add(actions, "form");
       add(rotate, "button", "Rotate key", "secondary");
@@ -1339,6 +1367,19 @@ function doiLines(value) {
 
 function doiURL(doi) {
   return `https://doi.org/${doi.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function paperWebSource(paper) {
+  if (paper.source_url) {
+    try {
+      const url = new URL(paper.source_url);
+      if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) return url.href;
+    } catch {
+      // Fall back to the DOI when the saved URL is unusable.
+    }
+  }
+  const doi = paper.doi?.trim().replace(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:\s*)/i, "");
+  return /^10\.\d{4,9}\/\S+$/i.test(doi || "") ? doiURL(doi) : "";
 }
 
 function showReplyTarget(parentId) {
@@ -1546,7 +1587,7 @@ async function findMetadata(query) {
     const button = add(item, "button", label || "Untitled result");
     button.type = "button";
     button.addEventListener("click", () => {
-      setMetadata({...match, source_url: metadataForm.elements.source_url.value});
+      setMetadata({...match, source_url: metadataForm.elements.source_url.value || paperWebSource(match)});
       libraryStatus.textContent = "Result selected. Save metadata to update this paper.";
     });
   });

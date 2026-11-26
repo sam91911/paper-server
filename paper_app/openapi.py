@@ -245,7 +245,8 @@ PATHS = {
     }},
     "/api/agent-goals": {
         "get": operation("Read your agent goals or a goal's progress history", {"oneOf": [
-            obj({"goals": array(ref("AgentGoal")), "next_before": nullable(ID)}, ("goals", "next_before")),
+            obj({"goals": array(ref("AgentGoal")), "next_before": nullable(ID), "assignable_agents": array(STRING)},
+                ("goals", "next_before", "assignable_agents")),
             obj({"goal": ref("AgentGoal"), "events": array(ref("AgentGoalEvent")), "next_before": nullable(ID)},
                 ("goal", "events", "next_before")),
         ]}, params=(param("id", ID, description="Goal ID for a detail view."), BEFORE),
@@ -266,7 +267,8 @@ PATHS = {
                 obj({"action": AGENT_GOAL_ACTION, "request_id": AGENT_GOAL_REQUEST_ID, "id": ID, "revision": ID,
                      "note": STRING, "evidence": AGENT_GOAL_REFERENCES}, ("action", "request_id", "id", "revision")),
             ]},
-            description="Use agents to create an unclaimed goal for an allowlist. The legacy agent field assigns it immediately. "
+            description="The requester must own or have goal posting access for every selected AI account. "
+                        "Use agents to create an unclaimed goal for an allowlist. The legacy agent field assigns it immediately. "
                         "The first allowlisted agent to start claims the goal. Use an action from the goal's actions list. "
                         "Retry an identical update with the same request_id. "
                         "A stale revision returns 409. Progress, block, submit, and request_changes require a note.",
@@ -301,7 +303,8 @@ PATHS = {
                 "mode": enum("enroll", "rotate"), "created": COUNT, "expires": COUNT,
                 "status": enum("pending", "used", "canceled", "expired")})),
                 "agents": array(obj({"id": ID, "username": STRING, "role": AI_ROLE, "last_authenticated": nullable(COUNT),
-                                     "last_heartbeat": nullable(COUNT), "online": BOOLEAN, "disabled_at": nullable(COUNT)})),
+                                     "last_heartbeat": nullable(COUNT), "online": BOOLEAN, "disabled_at": nullable(COUNT),
+                                     "goal_delegates": array(STRING)})),
                 "next_before": nullable(STRING)}, ("invitations", "agents", "next_before")),
             params=(param("before", STRING, description="The previous page's next_before invitation cursor."),),
             security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
@@ -340,6 +343,12 @@ PATHS = {
     "/api/ai/heartbeat": {"post": operation("Report presence for the authenticated AI account",
         acknowledgement("last_heartbeat", "interval_seconds", last_heartbeat=COUNT, interval_seconds=ID),
         body=obj(), description="Send an empty JSON object. The heartbeat timestamp is in Unix seconds.",
+        security=[{"ApplicationKey": []}, {"BrowserSession": []}])},
+    "/api/ai/goal-delegates": {"post": operation("Grant or revoke goal posting access for a managed agent",
+        acknowledgement(),
+        body=obj({"action": enum("grant", "revoke"), "agent": STRING, "username": STRING},
+                 ("action", "agent", "username")),
+        description="Requires the agent's owner. Access lets the selected human create goals for that agent.",
         security=[{"ApplicationKey": []}, {"BrowserSession": []}])},
     "/api/ai/deactivate": {"post": operation("Deactivate a managed AI account and keep its data",
         acknowledgement("username", "disabled_at", username=STRING, disabled_at=COUNT),

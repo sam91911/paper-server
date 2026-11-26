@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from paper_app import accounts, database, integrity, library, migrate
+from paper_app import accounts, ai_accounts, database, integrity, library, migrate
 from paper_client import agent
 from scripts import research_pilot
 from test_skill_api import request
@@ -127,6 +127,7 @@ class PostgreSQLTests(unittest.TestCase):
             worker = accounts.create_account(db, "worker", "sample password", "local")
             owner = accounts.create_key(db, human, "test")
             client = accounts.create_key(db, worker, "test")
+            ai_accounts.assign_operator(db, "worker", "owner")
         route = "/api/agent-goals"
         skill = self.api("/api/skills", key=owner, data={
             "title": "Inspect results", "markdown": "Compare against the baseline.", "recipients": ["worker"],

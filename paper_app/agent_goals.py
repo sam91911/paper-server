@@ -5,7 +5,7 @@ import json
 import re
 import time
 
-from . import accounts, experiments, findings, goals, reviews, sharing, skills
+from . import accounts, ai_accounts, experiments, findings, goals, reviews, sharing, skills
 
 GOAL_TABLE = """CREATE TABLE IF NOT EXISTS {table} (
         id INTEGER PRIMARY KEY, requester_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -215,7 +215,9 @@ def read(db, account, *, goal_id=None, before=None):
                 continue
             if len(visible) > PAGE_SIZE:
                 break
-        return {"goals": visible[:PAGE_SIZE], "next_before": visible[PAGE_SIZE - 1]["id"] if len(visible) > PAGE_SIZE else None}
+        return {"goals": visible[:PAGE_SIZE], "next_before": visible[PAGE_SIZE - 1]["id"] if len(visible) > PAGE_SIZE else None,
+                "assignable_agents": [agent["username"] for agent in ai_accounts.assignable_goal_agents(db, account)
+                                      if agent["disabled_at"] is None]}
     row = scoped_rows(db, account, goal_id=goal_id).fetchone()
     if row is None:
         raise LookupError("Agent goal unavailable.")
@@ -247,12 +249,13 @@ def create(db, account, data, now):
     names = [data.get("agent")] if legacy else data["agents"]
     if not isinstance(names, list) or not 1 <= len(names) <= 50 or (not legacy and "agent" in data):
         raise ValueError("Enter between 1 and 50 AI usernames for the goal's allowlist.")
+    assignable = {agent["username"].lower(): agent for agent in ai_accounts.assignable_goal_agents(db, account)}
     agents = {}
     for name in names:
-        username = accounts.identity(name)
-        agent = db.execute(f"SELECT {reviews.ACCOUNT_FIELDS} FROM accounts a WHERE a.username=? AND a.disabled_at IS NULL",
-                           (username,)).fetchone()
-        if not agent or agent["role"] not in reviews.AI_ROLES:
+        agent = assignable.get(accounts.identity(name).lower())
+        if agent is None:
+            raise sharing.AccessDenied
+        if agent["disabled_at"] is not None:
             raise ValueError("Choose active Local AI or Cloud AI accounts.")
         agents[agent["id"]] = agent
     sources = references(data.get("sources", []))

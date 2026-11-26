@@ -6,6 +6,11 @@ import vm from 'node:vm';
 const source = fs.readFileSync(new URL('../paper_app/web/library.js', import.meta.url), 'utf8');
 const papers = Array.from({length: 105}, (_, index) => ({
   id: index + 1, path: `paper-${index + 1}.pdf`, title: `Paper ${index + 1}`,
+  ...[
+    {source_url: 'https://publisher.example/paper', doi: '10.1234/with-link'},
+    {doi: '10.1234/doi#suffix'},
+    {source_url: 'javascript:alert(1)'},
+  ][index],
 }));
 
 function makeElement(tag) {
@@ -223,4 +228,19 @@ test('lazy archive and comment targets preserve a draft across selection and ref
   assert.equal(calls.filter(route => route === 'paper-comment-targets').length, 2);
   assert.equal(calls.filter(route => route === 'paper-archive').length, 2);
   assert.equal(form.elements.target.value, 'document:5');
+});
+
+test('paper detail links to a publication even when the library has no PDF', async () => {
+  const {element, load, select} = setup();
+  await load();
+  const link = element('paper-web-source');
+  await select(1);
+  assert.equal(link.hidden, false);
+  assert.equal(link.href, 'https://publisher.example/paper');
+  assert.equal(element('paper-file-links').hidden, true);
+  await select(2);
+  assert.equal(link.href, 'https://doi.org/10.1234/doi%23suffix');
+  await select(3);
+  assert.equal(link.hidden, true);
+  assert.equal(link.href, undefined);
 });

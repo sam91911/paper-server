@@ -769,7 +769,7 @@ class Handler(BaseHTTPRequestHandler):
         except LookupError:
             errors = {"/api/skills": "Skill unavailable.", "/api/reviews": "Review unavailable.",
                       "/api/agent-goals": "Agent goal unavailable.", "/api/ai/invitations": "AI invitation or account unavailable.",
-                      "/api/ai/deactivate": "AI account unavailable.",
+                      "/api/ai/deactivate": "AI account unavailable.", "/api/ai/goal-delegates": "AI account unavailable.",
                       "/api/human-invitations": "Human invitation unavailable.",
                       "/api/human-key/revoke": "Sign-in key unavailable."}
             self.send_json(404, {"error": errors.get(self.path, "Unknown route")})
@@ -890,6 +890,8 @@ class Handler(BaseHTTPRequestHandler):
             return ai_accounts.challenge(db, data)
         if self.path == "/api/ai/login":
             return ai_accounts.login(db, data)
+        if self.path == "/api/ai/goal-delegates":
+            return ai_accounts.update_goal_delegate(db, self.require_human(db), data)
         if self.path == "/api/ai/deactivate":
             return ai_accounts.deactivate(db, self.require_human(db), data.get("username"))
         if self.path == "/api/ai/heartbeat":

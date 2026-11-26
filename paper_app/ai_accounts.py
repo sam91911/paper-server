@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS ai_operators (
     agent_id INTEGER PRIMARY KEY REFERENCES accounts(id),
     operator_id INTEGER NOT NULL REFERENCES accounts(id)
 );
+CREATE TABLE IF NOT EXISTS ai_goal_delegates (
+    agent_id INTEGER NOT NULL REFERENCES ai_operators(agent_id),
+    delegate_id INTEGER NOT NULL REFERENCES accounts(id),
+    PRIMARY KEY (agent_id, delegate_id)
+);
+CREATE INDEX IF NOT EXISTS ai_goal_delegates_account ON ai_goal_delegates(delegate_id, agent_id);
 """
 
 
@@ -63,6 +69,10 @@ def assign_operator(db, username, operator):
     agent, owner = find_account(db, username), find_account(db, operator)
     if not agent or agent["role"] not in ("local", "cloud") or not owner or owner["role"] != "user":
         raise ValueError("Choose an AI account and a trusted human operator.")
+    db.execute(
+        "DELETE FROM ai_goal_delegates WHERE agent_id IN (SELECT agent_id FROM ai_operators WHERE agent_id=? AND operator_id<>?)",
+        (agent["id"], owner["id"]),
+    )
     db.execute("INSERT INTO ai_operators VALUES (?,?) ON CONFLICT (agent_id) DO UPDATE SET operator_id=excluded.operator_id",
                (agent["id"], owner["id"]))
     now = int(time.time())
@@ -83,6 +93,36 @@ def managed_agent(db, operator, username):
     ).fetchone():
         raise LookupError("AI account unavailable.")
     return agent
+
+
+def assignable_goal_agents(db, account):
+    if account["role"] not in ("user", "member"):
+        return []
+    return db.execute(
+        f"SELECT {ACCOUNT_FIELDS},a.disabled_at FROM ai_operators o JOIN accounts a ON a.id=o.agent_id "
+        "JOIN accounts owner ON owner.id=o.operator_id "
+        "LEFT JOIN ai_goal_delegates d ON d.agent_id=a.id AND d.delegate_id=? "
+        "WHERE a.role='ai' AND owner.role='user' AND owner.trusted=1 AND owner.disabled_at IS NULL "
+        "AND (o.operator_id=? OR d.delegate_id IS NOT NULL) ORDER BY a.username",
+        (account["id"], account["id"]),
+    ).fetchall()
+
+
+def update_goal_delegate(db, operator, data):
+    action = data.get("action")
+    if action not in ("grant", "revoke"):
+        raise ValueError("Choose grant or revoke.")
+    agent = managed_agent(db, operator, data.get("agent"))
+    delegate = find_account(db, data.get("username"))
+    if not delegate or delegate["role"] not in ("user", "member") or delegate["id"] == operator["id"]:
+        raise ValueError("Choose another human account.")
+    ids = (agent["id"], delegate["id"])
+    if action == "grant":
+        if agent["disabled_at"] is not None or delegate["disabled_at"] is not None:
+            raise ValueError("Choose an active agent and human account.")
+        db.execute("INSERT INTO ai_goal_delegates(agent_id,delegate_id) VALUES (?,?) ON CONFLICT DO NOTHING", ids)
+    else:
+        db.execute("DELETE FROM ai_goal_delegates WHERE agent_id=? AND delegate_id=?", ids)
 
 
 def deactivate(db, operator, username):
@@ -126,7 +166,14 @@ def dashboard(db, operator, before=None):
         "LEFT JOIN ai_public_keys k ON k.account_id=a.id WHERE o.operator_id=? AND a.role='ai' ORDER BY a.username",
         (operator["id"],),
     )]
+    delegates = {}
+    for row in db.execute(
+        "SELECT d.agent_id,a.username FROM ai_goal_delegates d JOIN accounts a ON a.id=d.delegate_id "
+        "JOIN ai_operators o ON o.agent_id=d.agent_id WHERE o.operator_id=? ORDER BY a.username", (operator["id"],),
+    ):
+        delegates.setdefault(row["agent_id"], []).append(row["username"])
     for agent in agents:
+        agent["goal_delegates"] = delegates.get(agent["id"], [])
         last = agent["last_heartbeat"]
         agent["online"] = agent["disabled_at"] is None and last is not None and last > now - ONLINE_SECONDS
     return {"invitations": invitations[:PAGE_SIZE], "agents": agents,

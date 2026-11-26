@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import uuid4
 
-from paper_app import accounts, agent_goals, backup, library
+from paper_app import accounts, agent_goals, ai_accounts, backup, library
 from test_skill_api import request
 
 
@@ -20,9 +20,54 @@ class AgentGoalTests(unittest.TestCase):
         self.keys = {}
         with library.connect(self.database) as db:
             for username, role in (("owner", "user"), ("writer", "member"), ("worker", "local"), ("other", "cloud"),
-                                   ("outsider", "local")):
+                                   ("outsider", "local"), ("another-owner", "user"), ("unmanaged", "cloud")):
                 account = accounts.create_account(db, username, "sample password", role)
                 self.keys[username] = accounts.create_key(db, account, "test")
+
+            ai_accounts.assign_operator(db, "worker", "owner")
+            ai_accounts.assign_operator(db, "other", "owner")
+            ai_accounts.assign_operator(db, "outsider", "another-owner")
+
+    def test_goal_creation_requires_the_operator_of_every_agent(self):
+        self.api(user=None, data=self.assignment(), expected=401)
+        for user in ("writer", "worker", "another-owner"):
+            self.api(user=user, data=self.assignment(), expected=403)
+        self.api(data=self.assignment(agent="unmanaged"), expected=403)
+        payload = self.assignment(agents=["worker", "outsider"])
+        del payload["agent"]
+        self.api(data=payload, expected=403)
+        self.assertEqual(self.api()["goals"], [])
+        self.assertEqual(self.api(user="another-owner", data=self.assignment(agent="outsider"))["goal"]["agent"],
+                         "outsider")
+
+    def test_owner_can_delegate_and_revoke_goal_posting(self):
+        route = "/api/ai/goal-delegates"
+        payload = {"action": "grant", "agent": "worker", "username": "writer"}
+        self.api(route, user="another-owner", data=payload, expected=404)
+        self.api(route, data={**payload, "username": "other"}, expected=400)
+        self.api(route, data=payload)
+        self.api(route, data=payload)
+        self.assertEqual(self.api(user="writer")["assignable_agents"], ["worker"])
+        managed = self.api("/api/ai/invitations")["agents"]
+        self.assertEqual(next(agent for agent in managed if agent["username"] == "worker")["goal_delegates"],
+                         ["writer"])
+        goal = self.api(user="writer", data=self.assignment())["goal"]
+        self.assertEqual(goal["requester"], "writer")
+        self.assertEqual(self.action(goal, "start")["goal"]["status"], "in_progress")
+        self.api(user="writer", data=self.assignment(agent="other"), expected=403)
+        self.api(route, user="writer", data={**payload, "username": "another-owner"}, expected=403)
+        self.api("/api/ai/deactivate", user="writer", data={"username": "worker"}, expected=403)
+        self.api(route, data={**payload, "action": "revoke"})
+        self.api(user="writer", data=self.assignment(), expected=403)
+        self.assertEqual(self.api(user="writer")["assignable_agents"], [])
+        self.assertEqual(self.api(f"{ROUTE}?id={goal['id']}", user="writer")["goal"]["id"], goal["id"])
+
+        self.api(route, data=payload)
+        with library.connect(self.database) as db:
+            ai_accounts.assign_operator(db, "worker", "another-owner")
+        self.assertNotIn("worker", self.api()["assignable_agents"])
+        self.assertEqual(self.api(user="writer")["assignable_agents"], [])
+        self.api(user="writer", data=self.assignment(), expected=403)
 
     def api(self, route=ROUTE, *, user="owner", data=None, expected=200):
         code, result = request(self.database, route, key=self.keys.get(user), data=data)

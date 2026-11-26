@@ -10,6 +10,7 @@ const moreGoals = element("more-agent-goals");
 const moreEvents = element("more-agent-goal-events");
 const agentSearch = element("find-goal-agent");
 const agentMatches = element("goal-agent-matches");
+const setGoalPanel = element("set-goal-panel");
 const labels = {
   assigned: "Assigned", in_progress: "In progress", blocked: "Blocked", paused: "Paused",
   submitted: "Submitted", completed: "Completed", canceled: "Canceled",
@@ -19,34 +20,10 @@ const labels = {
 };
 
 let activeGoal, goalCursor, eventCursor, pending, busy;
-let agentSearchTimer;
 
 function agentNames(value) {
   return value.split(/[\n,]+/).map(name => name.trim()).filter(Boolean);
 }
-
-agentSearch.addEventListener("input", () => {
-  clearTimeout(agentSearchTimer);
-  const query = agentSearch.value.trim();
-  if (query.length < 2) {
-    agentMatches.replaceChildren();
-    return;
-  }
-  agentSearchTimer = setTimeout(async () => {
-    try {
-      const matches = await api(`usernames?role=ai&q=${encodeURIComponent(query)}`);
-      if (agentSearch.value.trim() !== query) return;
-      agentMatches.replaceChildren();
-      for (const match of matches) {
-        const option = add(agentMatches, "option");
-        option.value = match.username;
-        option.label = match.display_name;
-      }
-    } catch {
-      if (agentSearch.value.trim() === query) agentMatches.replaceChildren();
-    }
-  }, 200);
-});
 
 function addSearchedAgent() {
   const value = agentSearch.value.trim();
@@ -55,7 +32,6 @@ function addSearchedAgent() {
   const names = agentNames(allowlist.value);
   if (!names.some(name => name.toLowerCase() === value.toLowerCase())) allowlist.value = [...names, value].join("\n");
   agentSearch.value = "";
-  agentMatches.replaceChildren();
 }
 
 element("add-goal-agent").addEventListener("click", addSearchedAgent);
@@ -133,8 +109,13 @@ async function post(payload) {
 }
 
 async function loadList(before) {
-  const {goals, next_before} = await api(before ? `agent-goals?before=${before}` : "agent-goals");
-  if (!before) list.replaceChildren();
+  const {goals, next_before, assignable_agents} = await api(before ? `agent-goals?before=${before}` : "agent-goals");
+  if (!before) {
+    list.replaceChildren();
+    agentMatches.replaceChildren();
+    for (const username of assignable_agents) add(agentMatches, "option").value = username;
+    setGoalPanel.hidden = assignable_agents.length === 0;
+  }
   if (!goals.length && !before) add(list, "li", "No goals yet.");
   for (const goal of goals) {
     const row = add(list, "li");
@@ -263,15 +244,13 @@ run(async () => {
     return;
   }
   const params = new URLSearchParams(location.search);
-  const panel = element("set-goal-panel");
-  panel.hidden = !["user", "member"].includes(account.role);
   element("agent-goal-workspace").hidden = false;
+  await loadList();
   const researchGoal = Number(params.get("research_goal"));
-  if (!panel.hidden && Number.isSafeInteger(researchGoal) && researchGoal > 0) {
-    panel.open = true;
+  if (!setGoalPanel.hidden && Number.isSafeInteger(researchGoal) && researchGoal > 0) {
+    setGoalPanel.open = true;
     createForm.elements.sources.value = `research_goal:${researchGoal}`;
   }
-  await loadList();
   const id = Number(params.get("id"));
   if (Number.isSafeInteger(id) && id > 0) await openGoal(id);
 });
