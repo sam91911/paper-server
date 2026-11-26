@@ -167,6 +167,12 @@
         <label class="inline-check"><input name="allow_title" type="checkbox"> Allow automatic title or filename lookup on Crossref</label>
         <button>Save access</button>
       </form>
+      <form id="paper-publication" class="account-actions" hidden>
+        <label>Public summary <textarea name="summary" maxlength="4000" rows="3"></textarea></label>
+        <p>Publishing shares the title, DOI, publication link, and summary with anyone.</p>
+        <button>Publish to public catalog</button>
+        <button id="unpublish-paper" type="button" hidden>Unpublish</button>
+      </form>
       <form id="archive-paper"><button class="secondary">Archive paper</button></form>
       </details>
     </details>

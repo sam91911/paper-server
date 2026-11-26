@@ -68,6 +68,10 @@ CREATE TABLE IF NOT EXISTS paper_metadata_checks (
 CREATE TABLE IF NOT EXISTS archived_papers (
     paper_id INTEGER PRIMARY KEY REFERENCES papers(id)
 );
+CREATE TABLE IF NOT EXISTS public_papers (
+    paper_id INTEGER PRIMARY KEY REFERENCES papers(id),
+    title TEXT NOT NULL, doi TEXT NOT NULL, source_url TEXT NOT NULL, summary TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS paper_paths (
     path TEXT PRIMARY KEY, paper_id INTEGER NOT NULL REFERENCES papers(id)
 );
@@ -399,6 +403,9 @@ def paper_detail(db, account, paper_id):
     else:
         paper["path"] = _paper_filename(paper["path"])
     sharing.attach_recipients(db, "paper", [paper], account)
+    if paper.get("can_manage") or paper["owner_id"] is None:
+        publication = db.execute("SELECT summary FROM public_papers WHERE paper_id=?", (paper_id,)).fetchone()
+        paper["publication"] = dict(publication) if publication else None
     return {"paper": paper, "group_ids": memberships}
 
 

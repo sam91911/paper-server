@@ -393,6 +393,34 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request("/api/paper-access", True, {**access, "metadata_audience": None})[0], 200)
         self.assertEqual(self.request(f"/api/paper-detail?paper_id={paper}", False, headers=headers[0])[0], 404)
 
+    def test_public_catalog_exposes_only_owner_published_snapshots(self):
+        paper = self.papers[0]
+        with library.connect(self.db) as db:
+            library.save_metadata(db, paper, {"title": "Public title", "doi": "10.1234/public",
+                                             "source_url": "https://example.org/article", "authors": "Private field"})
+            db.execute("UPDATE papers SET sha256='private-digest' WHERE id=?", (paper,))
+            db.execute("INSERT INTO accounts(username,password_hash,salt) VALUES ('reader',X'00',X'00')")
+            reader = {"Cookie": "paper_session=" + accounts.start_session(db, 2, None)}
+        catalog = "/api/public-papers"
+        update = "/api/paper-publication"
+        publish = {"paper_id": paper, "action": "publish", "summary": "Public abstract"}
+        self.assertEqual(json.loads(self.get(catalog, False)[1])["papers"], [])
+        self.assertEqual(self.request(update, False, publish, headers=reader)[0], 403)
+        self.assertEqual(self.request(update, True, publish)[0], 200)
+        status, body = self.get(catalog, False)
+        self.assertEqual(status, 200)
+        self.assertEqual(self.response_headers["Access-Control-Allow-Origin"], "*")
+        self.assertEqual(json.loads(body)["papers"], [{
+            "id": paper, "title": "Public title", "doi": "10.1234/public",
+            "source_url": "https://example.org/article", "summary": "Public abstract",
+        }])
+        self.assertEqual(self.get(f"/papers/{paper}/source.pdf", False)[0], 404)
+        self.assertEqual(json.loads(self.get(f"/api/paper-comments?paper_id={paper}", False)[1])["comments"], [])
+        self.assertEqual(self.request("/api/metadata", True, {"paper_id": paper, "title": "Private revision"})[0], 200)
+        self.assertEqual(json.loads(self.get(f"{catalog}?paper_id={paper}", False)[1])["papers"][0]["title"], "Public title")
+        self.assertEqual(self.request(update, True, {**publish, "action": "unpublish"})[0], 200)
+        self.assertEqual(json.loads(self.get(catalog, False)[1])["papers"], [])
+
     def test_doi_preview_and_zotero_reuse_only_visible_matches(self):
         doi = "10.1234/shared"
         csl = {"type": "article-journal", "DOI": doi.upper(), "title": "One article",

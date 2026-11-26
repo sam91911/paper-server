@@ -49,6 +49,7 @@ const commentForm = element("add-comment");
 const accountForm = element("account-form");
 const accountStatus = element("account-status");
 const paperAccessForm = element("paper-access");
+const publicationForm = element("paper-publication");
 const paperReferenceForm = element("paper-reference");
 const zoteroForm = element("zotero-import");
 const attachPdfForm = element("attach-paper-pdf");
@@ -262,6 +263,9 @@ function showPaper() {
     ? audienceLabels[selected.audience]
     : "Trusted human accounts (uploaded before access controls).";
   paperAccessForm.hidden = !ownsPaper;
+  publicationForm.hidden = !ownsPaper;
+  publicationForm.elements.summary.value = selected.publication?.summary || "";
+  element("unpublish-paper").hidden = !selected.publication;
   if (ownsPaper) {
     selectAudience(paperAccessForm.elements.audience, selected.audience);
     selectMetadataAudience(paperAccessForm.elements.metadata_audience, selected.metadata_audience, true);
@@ -1398,6 +1402,17 @@ submit(paperAccessForm, () => updateLibrary("paper-access", {
   allow_title: paperAccessForm.elements.allow_title.checked,
   recipients: recipientNames(paperAccessForm.elements.recipients.value),
 }, "Paper sharing updated."));
+submit(publicationForm, () => updateLibrary("paper-publication", {
+  paper_id: selectedPaper().id, action: "publish", summary: publicationForm.elements.summary.value,
+}, "Paper published to the public catalog."));
+element("unpublish-paper").addEventListener("click", async () => {
+  try {
+    await updateLibrary("paper-publication", {paper_id: selectedPaper().id, action: "unpublish"},
+      "Paper removed from the public catalog.");
+  } catch (error) {
+    libraryStatus.textContent = error.message;
+  }
+});
 let referenceSource = "Manual";
 let referenceLookupSequence = 0;
 const referencePreview = element("reference-preview");

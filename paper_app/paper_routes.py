@@ -12,6 +12,39 @@ def _positive_number(value, label):
     return int(value)
 
 
+def public_catalog(db, query):
+    params = parse_qs(query, keep_blank_values=True)
+    paper = _positive_number(params["paper_id"][0], "paper") if "paper_id" in params else None
+    after = _positive_number(params["after"][0], "cursor") if "after" in params else 0
+    condition, value = ("paper_id=?", paper) if paper is not None else ("paper_id>?", after)
+    rows = [dict(row) for row in db.execute(
+        "SELECT paper_id AS id,title,doi,source_url,summary FROM public_papers "
+        f"WHERE {condition} AND paper_id NOT IN (SELECT paper_id FROM archived_papers) ORDER BY paper_id LIMIT 51",
+        (value,),
+    )]
+    return {"papers": rows[:50], "next_after": rows[49]["id"] if len(rows) > 50 else None}
+
+
+def publish_paper(db, account, paper_id, data):
+    paper = sharing.paper_for(db, paper_id, account, owner_only=True)
+    if paper["owner_id"] is None or db.execute("SELECT 1 FROM archived_papers WHERE paper_id=?", (paper_id,)).fetchone():
+        raise sharing.AccessDenied
+    if data.get("action") == "unpublish":
+        db.execute("DELETE FROM public_papers WHERE paper_id=?", (paper_id,))
+    elif data.get("action") == "publish":
+        summary = data.get("summary", "")
+        if not isinstance(summary, str) or len(summary) > 4000:
+            raise ValueError("Use a public summary of up to 4,000 characters.")
+        db.execute(
+            "INSERT INTO public_papers(paper_id,title,doi,source_url,summary) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(paper_id) DO UPDATE SET title=excluded.title,doi=excluded.doi,"
+            "source_url=excluded.source_url,summary=excluded.summary",
+            (paper_id, paper["title"], paper["doi"], paper["source_url"], summary.strip()),
+        )
+    else:
+        raise ValueError("Choose publish or unpublish.")
+
+
 def read_papers(handler, db, url, account):
     if url.path == "/api/paper-archive":
         return library.paper_archive(db, account)
@@ -82,6 +115,8 @@ def update_paper(handler, db, data):
     paper_id = data.get("paper_id")
     if type(paper_id) is not int:
         raise ValueError("Select a paper")
+    if handler.path == "/api/paper-publication":
+        return publish_paper(db, handler.require_browser_account(db), paper_id, data)
     if handler.path == "/api/paper-access":
         sharing.set_paper_audience(db, paper_id, handler.require_account(db), data.get("audience"),
                                    data.get("recipients"))

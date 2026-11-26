@@ -80,6 +80,14 @@ Roles are `member`, `user` (trusted human), `local` (local AI), and `cloud` (clo
 
 角色包含 `member`（一般成員）、`user`（受信任人員）、`local`（本機 AI）與 `cloud`（雲端 AI）。在 **Account** 建立應用程式金鑰並妥善保管。金鑰沿用帳號權限。變更密碼或角色會登出既有工作階段，並撤銷應用程式金鑰。
 
+## Public and remote libraries · 公開與遠端論文庫
+
+Owners can publish a paper through **Sharing and archive**. The public catalog shows a snapshot of the title, DOI, publication link, and optional public summary. Republish to update that snapshot. Unpublish to remove it from your server’s catalog. Copies already saved by readers may still exist.
+
+Use **Remote libraries** to follow another Paper Library server by its HTTPS origin. The browser stores follows locally and reads the remote catalog without sending sign-in credentials. PDF and comment access continue to follow the source workspace’s sharing settings.
+
+擁有人可在 **Sharing and archive** 發布論文的標題、DOI、出版連結及自訂公開摘要。更新資料後可重新發布，也可自伺服器的公開目錄撤下。讀者已儲存的副本仍可能存在。在 **Remote libraries** 輸入另一個論文庫的 HTTPS 來源即可追蹤，瀏覽器會在本機儲存追蹤清單。
+
 ## Invite a friend · 邀請朋友
 
 Sign in as a trusted human and open **Account → Invite a friend**. Enter your friend's email address and choose an access level. **Member** is the default and lets your friend create items and open items shared directly with them. Choose **Trusted human** to grant access to trusted-only items. Generate the link, check its displayed access level, then choose **Copy link** and send it privately. The link fills in the invitation code for signup with the invited email. Your friend can use a private key or password. The link expires after 24 hours or after the first successful signup.

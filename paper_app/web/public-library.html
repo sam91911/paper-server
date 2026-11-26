@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Remote libraries</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <!-- workspace-shell -->
+  <main id="workspace-content">
+    <h1>Remote libraries</h1>
+    <form id="follow-library">
+      <label>Library HTTPS address <input name="origin" type="url" maxlength="2048" required></label>
+      <button>Follow library</button>
+    </form>
+    <label>Library <select id="library-origin"></select></label>
+    <button id="unfollow-library" type="button" hidden>Unfollow</button>
+    <p id="public-status" role="status"></p>
+    <ul id="public-papers"></ul>
+    <button id="more-public-papers" type="button" hidden>Load more</button>
+  </main>
+  <script src="/assets/public-library.js"></script>
+</body>
+</html>

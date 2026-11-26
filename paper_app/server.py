@@ -33,6 +33,8 @@ PAGE = ("index.html", "text/html; charset=utf-8")
 ASSETS = {
     "/": PAGE,
     "/papers": PAGE,
+    "/public-library": ("public-library.html", "text/html; charset=utf-8"),
+    "/assets/public-library.js": ("public-library.js", "text/javascript; charset=utf-8"),
     "/account": PAGE,
     "/documents": PAGE,
     "/news": PAGE,
@@ -116,7 +118,8 @@ class Handler(BaseHTTPRequestHandler):
                     "completed": finished and self.response_status is not None,
                 }))
 
-    def send_data(self, status, data, content_type="application/json; charset=utf-8", *, filename=None, pdf_download=None, cookie=None):
+    def send_data(self, status, data, content_type="application/json; charset=utf-8", *, filename=None, pdf_download=None,
+                  cookie=None, public_cors=False, remote_catalog=False):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         if filename:
@@ -128,11 +131,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        if public_cors:
+            self.send_header("Access-Control-Allow-Origin", "*")
         if content_type == "application/pdf":
             policy = "frame-ancestors 'self'"
         else:
+            connections = "'self' https:" if remote_catalog else "'self'"
             policy = ("default-src 'none'; script-src 'self'; style-src 'self'; "
-                      "connect-src 'self'; frame-src 'self'; frame-ancestors 'none'")
+                      f"connect-src {connections}; frame-src 'self'; frame-ancestors 'none'")
         self.send_header("Content-Security-Policy", policy)
         self.end_headers()
         self.wfile.write(data)
@@ -288,7 +294,16 @@ class Handler(BaseHTTPRequestHandler):
                 bar, nav = shell.split(b"<nav", 1)
                 shell = bar + b"<nav" + nav.replace(nav_path, nav_path + b' aria-current="page"', 1)
                 payload = payload.replace(b"<!-- workspace-shell -->", shell)
-            self.send_data(200, payload, content_type)
+            self.send_data(200, payload, content_type, remote_catalog=route == "/public-library")
+        elif route == "/api/public-papers":
+            try:
+                with library.connect(self.server.database) as db:
+                    data = paper_routes.public_catalog(db, url.query)
+                self.send_data(200, json.dumps(data).encode("utf-8"), public_cors=True)
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+            except storage.ERRORS:
+                self.send_json(503, {"error": "Public catalog unavailable."})
         elif match := re.fullmatch(r"/papers/([1-9][0-9]{0,18})/source\.pdf", route):
             self.serve_pdf(int(match[1]), download=url.query == "download=1")
         elif route == "/exports/metrics.csv":
@@ -897,7 +912,7 @@ class Handler(BaseHTTPRequestHandler):
             return document_routes.save(self, db, data)
         if self.path in ("/api/comments", "/api/delete-comment", "/api/thread-votes"):
             return comment_routes.update_comment(self, db, data)
-        if self.path not in ("/api/paper-reference", "/api/zotero-import", "/api/paper-access", "/api/metadata", "/api/memberships", "/api/archive-paper",
+        if self.path not in ("/api/paper-reference", "/api/zotero-import", "/api/paper-access", "/api/paper-publication", "/api/metadata", "/api/memberships", "/api/archive-paper",
                              "/api/paper-metrics", "/api/metric-editors", "/api/claim-paper"):
             raise LookupError
         return paper_routes.update_paper(self, db, data)
