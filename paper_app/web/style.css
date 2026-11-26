@@ -666,6 +666,77 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
 }
 .utility-link:hover { background: var(--accent-soft); }
 
+.remote-layout {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+  align-items: start;
+}
+.remote-sidebar { display: grid; gap: .8rem; min-width: 0; }
+.remote-panel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: .8rem;
+  background: var(--surface);
+  box-shadow: 0 2px 4px var(--shade);
+}
+.remote-picker, .remote-follow-panel { padding: 1rem; }
+.remote-picker, .remote-follow {
+  display: grid;
+  gap: .75rem;
+  margin: 0;
+}
+.remote-picker button, .remote-follow button { justify-self: start; }
+.remote-follow p { margin: 0; color: var(--muted); font-size: .875rem; }
+.remote-catalog { margin: 0; padding: 0; overflow-wrap: anywhere; }
+.remote-catalog-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: 1.15rem clamp(1rem, 3vw, 1.75rem);
+  border-bottom: 1px solid var(--line);
+  border-radius: .8rem .8rem 0 0;
+  background: color-mix(in srgb, var(--surface) 70%, var(--accent-soft));
+}
+.remote-catalog-header h2 { margin: 0; }
+.remote-catalog-origin { margin: .18rem 0 0; color: var(--muted); font-size: .85rem; }
+.remote-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+  padding: .8rem clamp(1rem, 3vw, 1.75rem);
+}
+.remote-feedback p { margin: 0; color: var(--muted); font-size: .88rem; }
+.remote-feedback:has(+ .remote-results:empty) { min-height: 7rem; align-content: center; }
+.remote-results { margin: 0; padding: 0; list-style: none; }
+.remote-results > li {
+  padding: 1rem clamp(1rem, 3vw, 1.75rem) 1.15rem;
+  border-top: 1px solid var(--line);
+}
+.remote-results h3 { margin: 0; font-size: 1.1rem; line-height: 1.35; }
+.remote-results h3 a { text-decoration: none; }
+.remote-results h3 a:hover { text-decoration: underline; }
+.remote-results p { max-width: 74ch; margin: .65rem 0 0; white-space: pre-wrap; }
+.remote-paper-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem 1rem;
+  align-items: baseline;
+  margin-top: .45rem;
+  font-size: .85rem;
+}
+.remote-doi { color: var(--muted); }
+.remote-pagination {
+  padding: .8rem clamp(1rem, 3vw, 1.75rem);
+  border-top: 1px solid var(--line);
+}
+@media (min-width: 46rem) {
+  .remote-layout { grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr); }
+}
+
 #library, #agent-goal-workspace {
   padding: 0;
   margin-top: .5rem;

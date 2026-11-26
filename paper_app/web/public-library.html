@@ -6,19 +6,48 @@
   <title>Remote libraries</title>
   <link rel="stylesheet" href="/assets/style.css">
 </head>
-<body>
+<body class="workspace-shell">
   <!-- workspace-shell -->
-  <main id="workspace-content">
+  <header class="page-header">
     <h1>Remote libraries</h1>
-    <form id="follow-library">
-      <label>Library HTTPS address <input name="origin" type="url" maxlength="2048" required></label>
-      <button>Follow library</button>
-    </form>
-    <label>Library <select id="library-origin"></select></label>
-    <button id="unfollow-library" type="button" hidden>Unfollow</button>
-    <p id="public-status" role="status"></p>
-    <ul id="public-papers"></ul>
-    <button id="more-public-papers" type="button" hidden>Load more</button>
+    <p class="page-description">Browse published papers from this workspace and the libraries you follow.</p>
+  </header>
+  <main class="page-content remote-layout" id="workspace-content" tabindex="-1">
+    <aside class="remote-sidebar" aria-label="Library settings">
+      <div class="remote-panel remote-picker">
+        <label>Browse a library <select id="library-origin"></select></label>
+        <button id="unfollow-library" class="secondary" type="button" hidden>Unfollow library</button>
+      </div>
+      <details id="follow-library-panel" class="remote-panel remote-follow-panel">
+        <summary>Follow a library</summary>
+        <form id="follow-library" class="remote-follow">
+          <label>Library HTTPS address
+            <input name="origin" type="url" placeholder="https://papers.example.org" maxlength="2048"
+                   autocomplete="off" spellcheck="false" required>
+          </label>
+          <button>Follow library</button>
+          <p id="follow-status" role="status"></p>
+        </form>
+      </details>
+    </aside>
+    <section class="remote-panel remote-catalog" aria-labelledby="remote-catalog-title">
+      <header class="remote-catalog-header">
+        <div>
+          <h2 id="remote-catalog-title">This library</h2>
+          <p class="remote-catalog-origin" id="remote-catalog-origin"></p>
+        </div>
+        <a class="utility-link" id="remote-catalog-link" hidden>Visit library</a>
+        <button class="secondary" id="show-full-catalog" type="button" hidden>Browse all papers</button>
+      </header>
+      <div class="remote-feedback">
+        <p id="public-status" role="status"></p>
+        <button class="secondary" id="retry-public-papers" type="button" hidden>Retry</button>
+      </div>
+      <ul id="public-papers" class="remote-results" role="list"></ul>
+      <footer class="remote-pagination" id="remote-pagination" hidden>
+        <button class="secondary" id="more-public-papers" type="button">Load more papers</button>
+      </footer>
+    </section>
   </main>
   <script src="/assets/public-library.js"></script>
 </body>
