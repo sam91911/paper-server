@@ -1,0 +1,23 @@
+name: Paper Library availability
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  public-health:
+    if: vars.PAPER_LIBRARY_PUBLIC_URL != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    env:
+      PAPER_LIBRARY_PUBLIC_URL: ${{ vars.PAPER_LIBRARY_PUBLIC_URL }}
+    steps:
+      - name: Check public HTTPS and database health
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --proto '=https' --max-time 10 --retry 2 \
+            "${PAPER_LIBRARY_PUBLIC_URL%/}/api/health" |
+            jq -e '.status == "ok"' >/dev/null

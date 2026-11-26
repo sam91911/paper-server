@@ -13,10 +13,12 @@ Usage: paper-libraryctl COMMAND [ARGUMENTS]
   logs [JOURNALCTL_OPTIONS]      Show recent service logs (use -f to follow)
   releases                      List installed releases and the active target
   upgrade [--restart] SOURCE    Install a checkout and activate it
+  upgrade-release [--restart] TAG
+                               Verify and install a published release wheel
   rollback [--restart] RELEASE  Activate an existing release directory
 
 Set PAPER_LIBRARY_EXTRAS=postgres,google to install optional dependencies.
-Use upgrade or rollback with sudo. Without --restart, activation reloads
+Use upgrade, upgrade-release, or rollback with sudo. Without --restart, activation reloads
 the worker and waits for it to become ready.
 HELP
 }
@@ -24,6 +26,22 @@ HELP
 fail() {
   printf '%s\n' "$*" >&2
   exit 1
+}
+
+install_published_release() {
+  local release=$1 tag=$2 extras=$3
+  local wheel="local_paper_library-${tag#v}-py3-none-any.whl"
+  local base="https://github.com/sam91911/paper-server/releases/download/$tag"
+  local digest
+  local -a curl_options=(--fail --silent --show-error --location
+                         --proto '=https' --proto-redir '=https' --retry 2 --max-time 120)
+  curl -q "${curl_options[@]}" --output "$release/SHA256SUMS.txt" "$base/SHA256SUMS.txt" &&
+    curl -q "${curl_options[@]}" --output "$release/$wheel" "$base/$wheel" || return 1
+  digest=$(awk -v wheel="$wheel" '$2 == wheel || $2 == "*" wheel { print $1 }' "$release/SHA256SUMS.txt")
+  [[ "$digest" =~ ^[[:xdigit:]]{64}$ ]] || return 1
+  printf '%s  %s\n' "$digest" "$release/$wheel" | sha256sum --check --status || return 1
+  "$release/.venv/bin/python" -m pip install "$release/$wheel${extras:+[$extras]}" &&
+    printf '%s\n' "$tag" > "$release/release-tag"
 }
 
 switch_release() {
@@ -83,7 +101,14 @@ command=${1:-help}
 if (( $# )); then shift; fi
 case "$command" in
   help|-h|--help) usage ;;
-  start|stop|restart|reload|status|enable|disable)
+  status)
+    [[ $# -eq 0 ]] || fail "Usage: paper-libraryctl status"
+    if target=$(readlink -e -- "$active") && [[ -f "$target/release-tag" ]]; then
+      printf 'Configured release %s (%s)\n' "$(cat -- "$target/release-tag")" "$target"
+    fi
+    exec systemctl status "$unit"
+    ;;
+  start|stop|restart|reload|enable|disable)
     [[ $# -eq 0 ]] || fail "Usage: paper-libraryctl $command"
     exec systemctl "$command" "$unit"
     ;;
@@ -97,14 +122,19 @@ case "$command" in
       find "$releases" -mindepth 1 -maxdepth 1 -type d -print | sort
     fi
     ;;
-  upgrade|rollback)
+  upgrade|upgrade-release|rollback)
     mode=reload
     if [[ ${1:-} == --restart ]]; then mode=restart; shift; fi
-    [[ $# -eq 1 ]] || fail "Usage: paper-libraryctl $command [--restart] PATH"
+    if [[ $# -ne 1 ]]; then usage >&2; exit 2; fi
     [[ $EUID -eq 0 ]] || fail "Run $command with sudo."
     [[ -L "$active" ]] || fail "$active must be a symlink to an installed release."
-    target=$(realpath -e -- "$1") || fail "Directory does not exist."
-    [[ -d "$target" ]] || fail "Choose a directory."
+    if [[ "$command" == upgrade-release ]]; then
+      target=$1
+      [[ "$target" =~ ^v0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || fail "Choose a release tag in the form v0.x.y."
+    else
+      target=$(realpath -e -- "$1") || fail "Directory does not exist."
+      [[ -d "$target" ]] || fail "Choose a directory."
+    fi
     install -d -m 0755 -- "$releases"
     releases=$(realpath -e -- "$releases")
     exec 9>"$releases/.activation.lock"
@@ -115,21 +145,28 @@ case "$command" in
       systemctl is-active --quiet "$unit" || fail "The service is stopped. Use --restart to activate and start it."
       [[ $(systemctl show "$unit" --property=CanReload --value) == yes ]] || fail "Install the reloadable service unit or use --restart."
     fi
-    if [[ "$command" == upgrade ]]; then
-      [[ -f "$target/pyproject.toml" && -d "$target/paper_app" ]] || fail "Choose a Paper Library source checkout."
+    if [[ "$command" != rollback ]]; then
+      if [[ "$command" == upgrade ]]; then
+        [[ -f "$target/pyproject.toml" && -d "$target/paper_app" ]] || fail "Choose a Paper Library source checkout."
+      fi
       extras=${PAPER_LIBRARY_EXTRAS:-}
       if [[ -n "$extras" && ! "$extras" =~ ^(postgres|google)(,(postgres|google))*$ ]]; then
         fail "PAPER_LIBRARY_EXTRAS accepts postgres and google, separated by a comma."
       fi
       release=$(mktemp -d -- "$releases/release.XXXXXXXX")
       chmod 0755 -- "$release"
-      if ! python3 -m venv "$release/.venv" ||
-          ! "$release/.venv/bin/python" -m pip install "${target}${extras:+[$extras]}" ||
-          ! "$release/.venv/bin/python" -P -m paper_app.server --help >/dev/null; then
+      if python3 -m venv "$release/.venv" &&
+          { if [[ "$command" == upgrade-release ]]; then
+              install_published_release "$release" "$target" "$extras"
+            else
+              "$release/.venv/bin/python" -m pip install "${target}${extras:+[$extras]}"
+            fi; } &&
+          "$release/.venv/bin/python" -P -m paper_app.server --help >/dev/null; then
+        target=$release
+      else
         rm -rf -- "$release"
         fail "Release installation failed. The active release link is unchanged."
       fi
-      target=$release
     else
       [[ $(dirname -- "$target") == "$releases" && -x "$target/.venv/bin/python" ]] ||
         fail "Choose an installed release directory under $releases."

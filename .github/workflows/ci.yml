@@ -83,6 +83,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -107,6 +109,20 @@ jobs:
                   raise SystemExit(f"{package} declares {version}, which differs from {tag}.")
           PY
       - run: bash scripts/check-install.sh "$RUNNER_TEMP/paper-release"
+      - name: Rehearse an upgrade from the previous release
+        run: |
+          set -euo pipefail
+          previous_tag=$(git describe --tags --match 'v0.*' --abbrev=0 HEAD^)
+          work=$(mktemp -d "$RUNNER_TEMP/paper-upgrade.XXXXXXXX")
+          trap 'rm -rf -- "$work"' EXIT
+          mkdir "$work/previous"
+          git archive "$previous_tag" | tar -x -C "$work/previous"
+          python -m venv "$work/previous-env"
+          python -m venv "$work/current-env"
+          "$work/previous-env/bin/python" -m pip install "$work/previous"
+          "$work/current-env/bin/python" -m pip install "$RUNNER_TEMP"/paper-release/*.whl
+          "$work/previous-env/bin/python" -I scripts/check_release_upgrade.py seed "$work/library.sqlite3" "$work/fixture.json"
+          "$work/current-env/bin/python" -I scripts/check_release_upgrade.py check "$work/library.sqlite3" "$work/fixture.json"
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v0.')
         with:

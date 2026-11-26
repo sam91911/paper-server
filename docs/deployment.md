@@ -66,9 +66,9 @@ sudo systemctl enable --now paper-library.service
 curl -fsS https://papers.example.org/api/health
 ```
 
-`GET /api/health` returns HTTP 200 when the app can read its configured database and HTTP 503 otherwise. It requires no credential. Use the public URL to monitor the Nginx and HTTPS path too.
+`GET /api/health` returns HTTP 200 when the app can read its configured database and HTTP 503 otherwise. It requires no credential. To check from outside the server, set the GitHub Actions repository variable `PAPER_LIBRARY_PUBLIC_URL` to your public HTTPS origin and run **Paper Library availability** once. GitHub then schedules the same check twice an hour. Failed checks appear in the workflow history and can notify users according to their GitHub Actions notification settings.
 
-`GET /api/health` 在可讀取設定的資料庫時回傳 HTTP 200，失敗時回傳 HTTP 503，無須憑證。使用公開網址檢查也會驗證 Nginx 與 HTTPS 路徑。
+`GET /api/health` 在可讀取設定的資料庫時回傳 HTTP 200，失敗時回傳 HTTP 503，無須憑證。若要從伺服器外部檢查，請將 GitHub Actions 儲存庫變數 `PAPER_LIBRARY_PUBLIC_URL` 設為公開 HTTPS 來源，並手動執行一次 **Paper Library availability**。GitHub 之後每小時排程檢查兩次。失敗會記錄於工作流程歷史，並依使用者的 GitHub Actions 通知設定發送通知。
 
 To offer Git over SSH, run the [Git-only OpenSSH listener](git-ssh.md#enable-the-git-only-ssh-listener--啟用-git-專用-ssh-服務) alongside the web service.
 
@@ -78,20 +78,20 @@ To offer Git over SSH, run the [Git-only OpenSSH listener](git-ssh.md#enable-the
 
 Use the supplied reloadable unit and make `/opt/paper-library` a symlink to a release directory containing its own `.venv`. If you already run an older unit or use a real directory at that path, switch to this layout and start the updated unit once during a maintenance window. Keep database and PDF paths outside the release directory.
 
-Install the management command from a trusted checkout, then use it to install and activate later releases.
+Install the management command from a trusted checkout, then pass a published release tag to install and activate the wheel tested by CI. The command downloads the wheel and its SHA-256 manifest from the project's GitHub Releases and verifies the wheel before installation. Replace `v0.x.y` with the release you intend to deploy.
 
 ```sh
 sudo install -m 0755 scripts/paper-libraryctl.sh /usr/local/bin/paper-libraryctl
-sudo paper-libraryctl upgrade .
+sudo paper-libraryctl upgrade-release v0.x.y
 sudo paper-libraryctl status
 sudo paper-libraryctl logs -f
 ```
 
-The command builds a separate virtual environment, atomically switches the release link, and waits for systemd's journal to report that the replacement worker is ready. If activation fails, it restores the previous link and prints recent logs. For installations using optional dependencies, run `sudo PAPER_LIBRARY_EXTRAS=postgres,google paper-libraryctl upgrade .` with the extras that apply.
+The command creates a separate virtual environment, atomically switches the release link, and waits for systemd's journal to report that the replacement worker is ready. The `status` command shows the configured tag. If activation fails, the upgrade restores the previous link and prints recent logs. For installations using optional dependencies, run `sudo PAPER_LIBRARY_EXTRAS=postgres,google paper-libraryctl upgrade-release v0.x.y` with the extras that apply. Use `sudo paper-libraryctl upgrade .` to install from a source checkout.
 
 Use `paper-libraryctl releases` to find an earlier release, then `sudo paper-libraryctl rollback /opt/paper-library-releases/RELEASE` to activate it if it can start against the current schema. PostgreSQL releases reject migrations newer than they recognize, so a rollback across those migrations requires a compatible build or a coordinated database restore. Keep the previous release until the journal reports that its worker has drained. Use `upgrade --restart` or `rollback --restart` to restart the service during a maintenance window.
 
-Use live upgrades for releases whose database schema works with both worker versions during the handoff. Schedule maintenance for incompatible schema changes, supervisor changes, and changes to the unit or its environment. For local development, start with `./run_paper_server.sh ./papers.sqlite3 --reloadable` and send `SIGHUP` to that process.
+Use live upgrades for releases whose database schema works with both worker versions during the handoff. Schedule maintenance for incompatible schema changes, supervisor changes, and changes to the unit or its environment. The package CI job rehearses an SQLite upgrade from the previous tagged source, installs the candidate wheel, and checks that existing metadata, comments, and PDF permissions survive. For local development, start with `./run_paper_server.sh ./papers.sqlite3 --reloadable` and send `SIGHUP` to that process.
 
 將 `/opt/paper-library` 設為指向版本目錄的符號連結，每個版本使用獨立的 `.venv`。若原本使用舊版服務單元或實體目錄，請在維護時段切換並啟動更新後的單元一次。升級時先安裝新版本，再原子切換連結並執行 `systemctl reload paper-library.service`。監督程序會保留監聽連接埠，待新程序完成資料庫初始化後，讓舊程序處理完進行中的請求。請在日誌確認新的 `HTTP worker … ready` 訊息。若啟動失敗，舊程序會繼續服務。資料庫結構必須同時支援兩個版本，才能使用不中斷升級。
 
