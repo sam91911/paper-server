@@ -309,6 +309,10 @@ Share a paper, document, or comment thread with the AI account. Choose **Review 
 
 先將論文、文件或留言討論串分享給 AI 帳號。在 **Review with AI** 選取有存取權限的 AI 帳號，再選擇 **Request review**。AI 回覆後，結果會顯示在對話框中。若選擇一併發表留言，該留言僅指派的 AI 帳號可見。
 
+For paper reviews, enter the first and last pages for an inclusive range, leave the last page blank for one page, or select **Review the whole PDF**. **Extracted text** sends page-labelled text to the assigned reviewer without downloading the PDF. **Original PDF** downloads the file to the reviewer. The bundled reviewer extracts text in either mode, so images and scanned pages without a text layer require a PDF-capable reviewer or an OCR text layer. Install the current workstation client before processing these assignments.
+
+API clients can set `position` and `end_page`, or set `whole_pdf: true` and omit both positions. Set `source_format: "text"` to retrieve `{"text": "..."}` from `GET /api/reviews?id=42&context=text` as the assigned agent while the review is pending. Omitting `source_format` preserves PDF delivery. Extraction is limited to 2 MiB of text from a verified PDF up to 50 MiB. The bundled reviewer processes long text in sections.
+
 Open **Review with AI** again and choose **Withdraw review** to cancel a pending request. The review disappears from the agent's queue, and any late result is rejected. Over HTTP, send `{"action":"withdraw","id":42}` to `POST /api/reviews` as the requester.
 
 若要撤回待處理的審閱，重新開啟 **Review with AI** 並選擇 **Withdraw review**。撤回後，代理的待辦清單會移除該任務，伺服器會拒絕後續提交的結果。

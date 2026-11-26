@@ -26,6 +26,7 @@ function element() {
 function result(id) {
   return {
     experiment: {id, title: `Experiment ${id}`, revision: 1, description: ''},
+    can_edit: true,
     runs: [{id: id * 10, title: `Run ${id}`, status: 'planned'}],
     items: [],
   };
@@ -50,7 +51,7 @@ async function setup(search = '') {
     if (id === 'item-form') fields.set('run_id', get('run-select'));
     form.elements = new Proxy({}, {
       get(_target, key) {
-        if (!fields.has(key)) fields.set(key, {value: '', files: []});
+        if (!fields.has(key)) fields.set(key, {...element(), files: []});
         return fields.get(key);
       },
     });
@@ -183,6 +184,7 @@ for (const staleError of [false, true]) {
     assert.equal(get('status').textContent, '');
     assert.equal(get('detail').hidden, false);
 
+    get('edit-experiment').fire('click');
     const refreshed = next('experiment-detail?id=2');
     itemForm.elements.run_id.value = '20';
     itemForm.elements.file.files = [{name: 'upload.txt'}];
@@ -223,6 +225,7 @@ test('failed saves retain input and successful saves can retry only the reload',
   initial.resolve(result(2));
   await selecting;
 
+  get('edit-experiment').fire('click');
   const form = get('run-form');
   form.elements.title.value = 'My run';
   const failed = next('experiment-runs');
@@ -255,4 +258,35 @@ test('failed saves retain input and successful saves can retry only the reload',
   const writes = calls.filter(call => call.route === 'experiment-runs');
   assert.equal(writes.length, 2);
   assert.ok(writes.every(call => call.data.experiment_id === 2 && call.data.title === 'My run'));
+});
+
+
+test('experiments open in read mode, offer editing by permission, and discard cancelled changes', async () => {
+  const {get, next, select} = await setup();
+  const editable = next('experiment-detail?id=1');
+  const opening = select(1);
+  editable.resolve(result(1));
+  await opening;
+  assert.equal(get('edit-experiment').hidden, false);
+  const form = get('experiment-workspace-form');
+  assert.equal(form.hidden, true);
+  assert.equal(get('run-form').hidden, true);
+  assert.equal(get('item-form').hidden, true);
+  assert.equal(get('new-compute-task').hidden, true);
+  get('edit-experiment').fire('click');
+  assert.equal(form.hidden, false);
+  assert.equal(form.elements.title.value, 'Experiment 1');
+  assert.equal(get('run-form').hidden, false);
+  form.elements.title.value = 'Unsaved title';
+  get('cancel-experiment-edit').fire('click');
+  assert.equal(form.hidden, true);
+  get('edit-experiment').fire('click');
+  assert.equal(form.elements.title.value, 'Experiment 1');
+  const readonly = next('experiment-detail?id=2');
+  const switching = select(2);
+  readonly.resolve({...result(2), can_edit: false});
+  await switching;
+  assert.equal(get('edit-experiment').hidden, true);
+  assert.equal(form.hidden, true);
+  assert.equal(get('grant-form').hidden, true);
 });

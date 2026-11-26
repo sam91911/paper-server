@@ -627,7 +627,12 @@ class Handler(BaseHTTPRequestHandler):
                     data = reviews.eligible_agents(db, account, kind, target_id)
                 else:
                     review_id = skills.query_id(params["id"][0]) if "id" in params else None
-                    data = reviews.read(db, account, review_id=review_id, kind=kind, target_id=target_id)
+                    if "context" in params:
+                        if params["context"] != ["text"] or review_id is None or kind is not None or target_id is not None:
+                            raise ValueError("Choose one review ID and context=text.")
+                        data = reviews.read_pdf_text(db, account, review_id)
+                    else:
+                        data = reviews.read(db, account, review_id=review_id, kind=kind, target_id=target_id)
             self.send_json(200, data)
         except accounts.SignInRequired:
             self.send_json(401, {"error": "Sign in to continue."})

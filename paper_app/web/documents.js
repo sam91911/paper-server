@@ -283,18 +283,23 @@ async function openRequestedDocument() {
   if (!discussionWorkspace && requested.has("goal")) await globalThis.showRequestedGoal?.(requested.get("goal"));
 }
 
+function canEditDocument(item) {
+  const account = libraryData.account;
+  return Boolean(account && item && (item.can_manage || item.owner_id === account.id));
+}
+
 function openDocument(item, { create = false, edit = false } = {}) {
-  editingDocument = item?.id ?? (create ? "new" : undefined);
-  editingRevision = item?.revision;
+  const owns = canEditDocument(item);
+  const canEdit = create || (owns && edit);
+  editingDocument = create ? "new" : canEdit ? item.id : undefined;
+  editingRevision = canEdit ? item?.revision : undefined;
   documentCommentForm.reset();
   setDocumentReply(null);
   globalThis.selectResearchDocument?.(discussionWorkspace ? null : item);
   globalThis.selectGoalDocument?.(discussionWorkspace ? null : item);
   element("review-document").hidden = !item || discussionWorkspace;
   renderDocumentComments(item);
-  const owns = item && (item.can_manage || item.owner_id === libraryData.account?.id);
-  const canEdit = create || (owns && (!discussionWorkspace || edit));
-  element("edit-discussion").hidden = !(discussionWorkspace && owns && !edit);
+  element("edit-document").hidden = !owns || canEdit;
   documentEditor.hidden = !canEdit;
   element("document-layout").classList.toggle("is-editing", Boolean(canEdit));
   element("document-preview-panel").hidden = !item && !create;
@@ -314,13 +319,14 @@ function openDocument(item, { create = false, edit = false } = {}) {
   const sourceLink = element("news-source-link");
   element("news-source").hidden = !item?.source_url;
   sourceLink.href = item?.source_url || "";
-  element("preview-title").textContent = (item?.source_url || discussionWorkspace) && item ? item.title : "Preview";
+  element("preview-title").textContent = canEdit ? "Preview" : item?.title || "";
   element("news-source-field").hidden = !isNews;
   documentEditor.elements.source_url.required = isNews;
   documentEditor.elements.source_url.value = item?.source_url || "";
   element("save-document").textContent = isNews ? "Save news entry" : discussionWorkspace ? "Save discussion" : "Save document";
+  const kind = discussionWorkspace ? "discussion" : isNews ? "news entry" : "document";
+  element("document-editor-heading").textContent = `${create ? "New" : "Edit"} ${kind}`;
   if (discussionWorkspace) {
-    element("document-editor-heading").textContent = create ? "New discussion" : "Edit discussion";
     element("discussion-schedule-field").hidden = false;
     documentEditor.elements.scheduled_at.value = localSchedule(item?.scheduled_at);
     renderDiscussionMeta(item);
@@ -367,8 +373,10 @@ async function showDocuments(accountChanged) {
   const requested = selectedDocument();
   const current = await ensureSelectedDocument();
   if (requested && !current) return;
-  if (accountChanged || (!current && editingDocument !== "new")) openDocument(current);
+  if (accountChanged || (!current && editingDocument !== "new")
+      || (current && editingDocument && !canEditDocument(current))) openDocument(current);
   else {
+    element("edit-document").hidden = !canEditDocument(current) || Boolean(editingDocument);
     if (feedWorkspace) renderDocumentFeed(current);
     if (discussionWorkspace) renderDiscussionMeta(current);
     renderDocumentComments(current);
@@ -391,6 +399,7 @@ function insertMarkdown(text) {
 
 documentPicker.addEventListener("change", () => {
   element("document-preview-panel").hidden = true;
+  element("edit-document").hidden = true;
   documentEditor.hidden = true;
   ensureSelectedDocument().then(item => {
     if (item === undefined) return;
@@ -407,12 +416,17 @@ element("clone-document").addEventListener("click", () => {
   const item = selectedDocument();
   if (item) copyCloneCommand("documents", item.id, documentStatus);
 });
-element("edit-discussion").addEventListener("click", () => {
+element("edit-document").addEventListener("click", () => {
   const item = selectedDocument();
-  if (item) {
+  if (canEditDocument(item)) {
     openDocument(item, {edit: true});
     documentEditor.elements.title.focus();
   }
+});
+element("cancel-document-edit").addEventListener("click", () => {
+  const item = selectedDocument();
+  openDocument(item);
+  element(item ? "edit-document" : "new-document").focus();
 });
 element("new-document").addEventListener("click", () => {
   documentLoadSequence++;
@@ -462,6 +476,7 @@ element("download-document").addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 submit(documentEditor, async () => {
+  if (!editingDocument) return;
   try {
     const fields = documentEditor.elements;
     const linkedGoal = fields.linked_goal.value;

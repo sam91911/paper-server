@@ -20,7 +20,9 @@ from urllib.request import (
     HTTPRedirectHandler, HTTPCookieProcessor, ProxyHandler, Request, build_opener,
 )
 
-PDF_LIMIT = 50 * 1024 * 1024
+from . import pdf_text
+
+PDF_LIMIT = pdf_text.PDF_LIMIT
 CONTEXT_LIMIT = 12_000
 INSTRUCTIONS = (
     "Write one concise research comment. Identify a concrete methodological observation or question. "
@@ -93,19 +95,6 @@ class LibraryClient:
             raise ValueError(f"Use credentials for a {role.title()} AI account.")
 
 
-def page_text(pdf, page):
-    if b"%PDF-" not in pdf[:1024]:
-        raise ValueError("The library did not return a PDF.")
-    result = subprocess.run(
-        ["pdftotext", "-f", str(page), "-l", str(page), "-layout", "-enc", "UTF-8", "-", "-"],
-        input=pdf, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True, timeout=30,
-    )
-    text = result.stdout.decode("utf-8").strip()
-    if not text:
-        raise ValueError("This page has no extractable text.")
-    return text[:CONTEXT_LIMIT]
-
-
 def review_instructions(skill=None):
     if skill is None:
         return INSTRUCTIONS
@@ -175,9 +164,9 @@ def thread_context(client, comment_id):
     return context[:CONTEXT_LIMIT], {**host, "parent_id": comment_id}
 
 
-def pdf_context(client, paper_id, page):
+def pdf_context(client, paper_id, page, end_page=None):
     pdf = client.request(f"/papers/{paper_id}/source.pdf", limit=PDF_LIMIT)
-    return f"PDF page {page}\n\n{page_text(pdf, page)}"
+    return pdf_text.extract(pdf, page, end_page)
 
 
 def review_context(client, args):
@@ -185,7 +174,7 @@ def review_context(client, args):
         return thread_context(client, args.thread)
     if args.document:
         return document_context(client, args.document, args.line)
-    return pdf_context(client, args.paper_id, args.page), {
+    return pdf_context(client, args.paper_id, args.page)[:CONTEXT_LIMIT], {
         "paper_id": args.paper_id,
         "location": {"kind": "pdf", "id": args.paper_id, "position": args.page},
     }
@@ -238,7 +227,24 @@ def assignment_context(client, assignment):
         return "\n\n".join(excerpts)[:CONTEXT_LIMIT]
     if assignment["kind"] == "document":
         return document_context(client, source_id, position)[0]
-    return pdf_context(client, source_id, position)
+    if assignment.get("source_format") == "text":
+        return client.get_json(f"/api/reviews?id={assignment['id']}&context=text")["text"]
+    return pdf_context(client, source_id, position, assignment.get("end_page"))
+
+
+def review_in_sections(context, run_model):
+    while len(context) > CONTEXT_LIMIT:
+        notes = []
+        while context:
+            end = len(context)
+            if end > CONTEXT_LIMIT:
+                end = context.rfind("\n", CONTEXT_LIMIT // 2, CONTEXT_LIMIT)
+                if end < 0:
+                    end = CONTEXT_LIMIT
+            notes.append(run_model(context[:end])[:800])
+            context = context[end:].lstrip()
+        context = "Review notes covering the selected source:\n\n" + "\n\n".join(notes)
+    return run_model(context)
 
 
 def complete_assignment(client, review_id, args, selection):
@@ -248,7 +254,10 @@ def complete_assignment(client, review_id, args, selection):
         return
     try:
         context = assignment_context(client, assignment)
-        response = cloud_review(context, **selection) if args.cloud else review(args.model, context, **selection)
+        def run_model(excerpt):
+            return cloud_review(excerpt, **selection) if args.cloud else review(args.model, excerpt, **selection)
+
+        response = review_in_sections(context, run_model)
         status = "complete"
     except (OSError, ValueError, subprocess.SubprocessError, EOFError) as error:
         print(f"Review #{review_id}: {error}")

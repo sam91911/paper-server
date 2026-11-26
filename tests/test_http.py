@@ -77,7 +77,7 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(set(bundle.namelist()), {
                 "paper-client/pyproject.toml", "paper-client/__init__.py", "paper-client/__main__.py",
                 "paper-client/agent.py", "paper-client/artifacts.py", "paper-client/mcp_server.py",
-                "paper-client/paper_source.py", "paper-client/review.py",
+                "paper-client/paper_source.py", "paper-client/pdf_text.py", "paper-client/review.py",
                 "paper-client/ssh_key.py",
             })
 

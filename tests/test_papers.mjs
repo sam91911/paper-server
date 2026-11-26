@@ -244,3 +244,21 @@ test('paper detail links to a publication even when the library has no PDF', asy
   assert.equal(link.hidden, true);
   assert.equal(link.href, undefined);
 });
+
+test('paper metadata editing opens on request and closes when switching papers', async () => {
+  const {element, load, select} = setup();
+  await load();
+  await select(1);
+  assert.equal(element('edit-paper').hidden, false);
+  assert.equal(element('paper-metadata-editor').hidden, true);
+  element('edit-paper').fire('click');
+  assert.equal(element('paper-metadata-editor').hidden, false);
+  assert.equal(element('metadata').elements.title.value, 'Paper 1');
+  element('metadata').elements.title.value = 'Unsaved change';
+  element('cancel-paper-edit').fire('click');
+  assert.equal(element('paper-metadata-editor').hidden, true);
+  element('edit-paper').fire('click');
+  assert.equal(element('metadata').elements.title.value, 'Paper 1');
+  await select(2);
+  assert.equal(element('paper-metadata-editor').hidden, true);
+});

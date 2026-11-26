@@ -212,10 +212,11 @@ COMMENTS_PAGE = obj({"comments": array(ref("Comment")), "next_before": nullable(
 SKILL_DETAIL = obj({"skill": ref("Skill")}, ("skill",))
 REVIEW_KIND = enum("paper", "document", "thread")
 AI_ROLE = enum("local", "cloud")
+PDF_REVIEW_OPTIONS = {"end_page": nullable(ID), "whole_pdf": BOOLEAN, "source_format": enum("pdf", "text")}
 REVIEW = obj({
     "id": ID, "kind": REVIEW_KIND, "target_id": ID, "position": nullable(ID), "post": BOOLEAN,
     "status": enum("pending", "complete", "failed", "withdrawn"), "response": STRING, "comment_id": nullable(ID),
-    "agent": STRING, "agent_role": AI_ROLE,
+    "agent": STRING, "agent_role": AI_ROLE, **PDF_REVIEW_OPTIONS,
     "thread": array(obj({"id": ID, "body": STRING}, ("id", "body"))),
 }, ("id", "kind", "target_id", "position", "post", "status", "response", "comment_id", "agent", "agent_role"))
 REVIEW_DETAIL = obj({"review": REVIEW}, ("review",))
@@ -604,19 +605,22 @@ PATHS = {
         description="Requires a human account with access to the target. Eligibility follows source sharing.")},
     "/api/reviews": {
         "get": operation("Read your review requests or pending AI assignments",
-            {"oneOf": [REVIEW_DETAIL, REVIEW_LIST]},
+            {"oneOf": [REVIEW_DETAIL, REVIEW_LIST, obj({"text": STRING}, ("text",))]},
             params=(param("id", ID, description="Return one request, including thread context for the assigned AI."),
-                    param("kind", REVIEW_KIND), param("target_id", ID)),
+                    param("kind", REVIEW_KIND), param("target_id", ID),
+                    param("context", enum("text"), description="Fetch page-labelled text for an assigned pending paper review.")),
             description="AI accounts receive up to 30 pending assignments in creation order. Human accounts receive up to 30 of their own requests, newest first. Supply kind and target_id together to filter by source."),
         "post": operation("Request or withdraw a review or return an assigned result",
             acknowledgement("review", review=REVIEW), body={"oneOf": [
                 obj({"action": enum("create"), "kind": REVIEW_KIND, "target_id": ID, "position": nullable(ID),
-                     "agent": STRING, "agent_role": AI_ROLE, "post": BOOLEAN},
+                     "agent": STRING, "agent_role": AI_ROLE, "post": BOOLEAN, **PDF_REVIEW_OPTIONS},
                     ("action", "kind", "target_id", "agent", "agent_role")),
                 obj({"action": enum("complete"), "id": ID, "status": enum("complete", "failed"), "response": STRING},
                     ("action", "id", "status", "response")),
                 obj({"action": enum("withdraw"), "id": ID}, ("action", "id")),
-            ]}, description="The requester can withdraw a pending review. A withdrawn review is removed from the agent queue and cannot accept a result."),
+            ]}, description="The requester can withdraw a pending review. A withdrawn review is removed from the agent queue and cannot accept a result. "
+                            "Paper reviews accept an inclusive position–end_page range or whole_pdf with no positions. "
+                            "Set source_format to text to let the assigned agent fetch extracted text."),
     },
     "/api/skills/default": {"get": operation("Fetch the built-in guide to using the library API",
         obj({"skill": obj({"id": enum("default"), "title": STRING, "description": STRING, "markdown": STRING,

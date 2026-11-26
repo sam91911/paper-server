@@ -1,5 +1,11 @@
 """Account-scoped API requests for workstation AI reviewers."""
 
+import hashlib
+import subprocess
+from pathlib import Path
+
+from paper_client import pdf_text
+
 from . import accounts, library, sharing
 
 REVIEW_TABLE = """
@@ -14,7 +20,10 @@ CREATE TABLE IF NOT EXISTS {table} (
     post INTEGER NOT NULL CHECK (post IN (0,1)),
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','complete','failed','withdrawn')),
     response TEXT NOT NULL DEFAULT '',
-    comment_id INTEGER REFERENCES comments(id)
+    comment_id INTEGER REFERENCES comments(id),
+    end_page INTEGER,
+    whole_pdf INTEGER NOT NULL DEFAULT 0 CHECK (whole_pdf IN (0,1)),
+    source_format TEXT NOT NULL DEFAULT 'pdf' CHECK (source_format IN ('pdf','text'))
 );
 """
 SCHEMA = REVIEW_TABLE.format(table="review_requests") + """
@@ -28,14 +37,19 @@ ACCOUNT_FIELDS = f"a.id,a.username,{accounts.ROLE_SQL.format(alias='a')} AS role
 
 
 def initialize(db):
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(review_requests)")}
+    for name, definition in (
+        ("end_page", "INTEGER"),
+        ("whole_pdf", "INTEGER NOT NULL DEFAULT 0 CHECK (whole_pdf IN (0,1))"),
+        ("source_format", "TEXT NOT NULL DEFAULT 'pdf' CHECK (source_format IN ('pdf','text'))"),
+    ):
+        if name not in columns:
+            db.execute(f"ALTER TABLE review_requests ADD COLUMN {name} {definition}")
     sql, = db.execute("SELECT sql FROM sqlite_schema WHERE name='review_requests'").fetchone()
     if "'withdrawn'" in sql:
         return
     db.execute(REVIEW_TABLE.format(table="new_review_requests"))
-    db.execute(
-        "INSERT INTO new_review_requests SELECT id,requester_id,agent_id,agent_role,kind,target_id,position,post,"
-        "status,response,comment_id FROM review_requests"
-    )
+    db.execute("INSERT INTO new_review_requests SELECT * FROM review_requests")
     db.execute("DROP TABLE review_requests")
     db.execute("ALTER TABLE new_review_requests RENAME TO review_requests")
     db.execute("CREATE INDEX reviews_requester ON review_requests(requester_id,kind,target_id,id)")
@@ -69,7 +83,10 @@ def target(db, account, kind, target_id, position):
     if kind == "paper":
         if not sharing.paper_for(db, target_id, account, file_access=True)["sha256"]:
             raise sharing.AccessDenied
-        return {"paper_id": target_id, "location": {"kind": "pdf", "id": target_id, "position": position}}
+        result = {"paper_id": target_id}
+        if position is not None:
+            result["location"] = {"kind": "pdf", "id": target_id, "position": position}
+        return result
     if kind == "document":
         if sharing.document_for(db, account, target_id) is None:
             raise sharing.AccessDenied
@@ -110,6 +127,8 @@ def summary(row):
         "position": row["position"], "post": bool(row["post"]), "status": row["status"],
         "response": row["response"], "comment_id": row["comment_id"],
         "agent": row["agent"], "agent_role": row["agent_role"],
+        **({"end_page": row["end_page"], "whole_pdf": bool(row["whole_pdf"]), "source_format": row["source_format"]}
+           if row["kind"] == "paper" else {}),
     }
 
 
@@ -175,6 +194,33 @@ def read(db, account, *, review_id=None, kind=None, target_id=None):
     return {"reviews": results}
 
 
+def verified_pdf(db, account, paper_id):
+    paper = sharing.paper_for(db, paper_id, account, file_access=True)
+    try:
+        with Path(paper["path"]).open("rb") as source:
+            payload = source.read(pdf_text.PDF_LIMIT + 1)
+    except OSError:
+        raise ValueError("The local PDF is unavailable. Re-import it to restore access.") from None
+    if (len(payload) > pdf_text.PDF_LIMIT or b"%PDF-" not in payload[:1024]
+        or hashlib.sha256(payload).hexdigest() != paper["sha256"]):
+        raise ValueError("Re-import the verified PDF before reviewing it.")
+    return payload
+
+
+def read_pdf_text(db, account, review_id):
+    row = query_rows(db, "r.id=? AND r.agent_id=? AND r.agent_role=? AND r.kind='paper' "
+                     "AND r.status='pending' AND r.source_format='text'",
+                     (review_id, account["id"], account["role"])).fetchone()
+    if row is None:
+        raise LookupError("Review unavailable.")
+    check_access(db, row)
+    payload = verified_pdf(db, account, row["target_id"])
+    try:
+        return {"text": pdf_text.extract(payload, row["position"], row["end_page"])}
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError("Could not extract text from the verified PDF with Poppler.") from None
+
+
 def create(db, account, data):
     if account["role"] in AI_ROLES:
         raise sharing.AccessDenied
@@ -184,8 +230,22 @@ def create(db, account, data):
         raise ValueError("Choose a review target.")
     if position is not None and (kind == "thread" or type(position) is not int or not 0 < position <= 1_000_000):
         raise ValueError("Choose a positive PDF page or document line.")
-    if kind == "paper" and position is None:
-        position = 1
+    end_page = data.get("end_page")
+    whole_pdf = data.get("whole_pdf", False)
+    source_format = data.get("source_format", "pdf")
+    if type(whole_pdf) is not bool or source_format not in ("pdf", "text"):
+        raise ValueError("Choose a valid PDF scope and source format.")
+    if kind != "paper" and (end_page is not None or whole_pdf or source_format != "pdf"):
+        raise ValueError("PDF options apply only to paper reviews.")
+    if whole_pdf and (position is not None or end_page is not None):
+        raise ValueError("Choose either the whole PDF or specific pages.")
+    if kind == "paper" and not whole_pdf:
+        position = position or 1
+        if end_page is not None:
+            if type(end_page) is not int or not position <= end_page <= 1_000_000:
+                raise ValueError("The last PDF page must be at or after the first page.")
+            if end_page == position:
+                end_page = None
     username = accounts.identity(data.get("agent"))
     agent = db.execute(f"SELECT {ACCOUNT_FIELDS} FROM accounts a WHERE username=? AND a.disabled_at IS NULL",
                        (username,)).fetchone()
@@ -198,18 +258,27 @@ def create(db, account, data):
         target(db, agent, kind, target_id, position)
     except sharing.AccessDenied:
         raise ValueError("Share the review target and its sources with the assigned AI account first.") from None
+    if kind == "paper" and not whole_pdf and (end_page is not None or source_format == "text"):
+        payload = verified_pdf(db, account, target_id)
+        try:
+            count = pdf_text.page_count(payload)
+        except (OSError, subprocess.SubprocessError):
+            raise ValueError("Could not read the PDF page count with Poppler.") from None
+        if (end_page or position) > count:
+            raise ValueError(f"This PDF has {count} page(s).")
     pending = db.execute(
         "SELECT id FROM review_requests WHERE requester_id=? AND agent_id=? AND agent_role=? "
         "AND kind=? AND target_id=? AND position IS NOT DISTINCT FROM ? AND post=? AND status='pending' "
+        "AND end_page IS NOT DISTINCT FROM ? AND whole_pdf=? AND source_format=? "
         "ORDER BY id DESC LIMIT 1",
-        (account["id"], agent["id"], agent["role"], kind, target_id, position, int(post)),
+        (account["id"], agent["id"], agent["role"], kind, target_id, position, int(post), end_page, int(whole_pdf), source_format),
     ).fetchone()
     if pending:
         return read(db, account, review_id=pending["id"])
     review_id = db.execute(
-        "INSERT INTO review_requests(requester_id,agent_id,agent_role,kind,target_id,position,post)"
-        " VALUES (?,?,?,?,?,?,?) RETURNING id",
-        (account["id"], agent["id"], agent["role"], kind, target_id, position, int(post)),
+        "INSERT INTO review_requests(requester_id,agent_id,agent_role,kind,target_id,position,post,end_page,whole_pdf,source_format)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING id",
+        (account["id"], agent["id"], agent["role"], kind, target_id, position, int(post), end_page, int(whole_pdf), source_format),
     ).fetchone()[0]
     return read(db, account, review_id=review_id)
 

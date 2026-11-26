@@ -36,15 +36,20 @@
     <section id="detail" class="focus-detail" aria-labelledby="experiment-title" hidden>
       <h2 id="experiment-title"></h2>
       <div class="account-actions">
+        <button type="button" id="edit-experiment" class="secondary" hidden>Edit</button>
+        <button type="button" id="cancel-experiment-edit" class="secondary" hidden>Cancel editing</button>
         <button type="button" id="clone-experiment-source" class="secondary">Copy source branch clone command</button>
         <button type="button" id="clone-experiment" class="secondary">Copy artifact checkout command</button>
       </div>
       <p id="experiment-source-commit" hidden></p>
       <p id="experiment-description"></p>
       <p id="experiment-workspace"></p>
-      <form id="experiment-workspace-form" class="filters" hidden>
-        <label>Research document ID <input name="research_document_id" type="number" min="1"></label>
-        <button>Update research document link</button>
+      <form id="experiment-workspace-form" class="experiment-form" hidden>
+        <h3>Edit experiment</h3>
+        <label>Title <input name="title" maxlength="160" required></label>
+        <label>Description <textarea name="description" rows="3" maxlength="20000"></textarea></label>
+        <label id="edit-experiment-workspace">Research document ID <input name="research_document_id" type="number" min="1"></label>
+        <div><button>Save experiment</button></div>
       </form>
 
       <div class="experiment-group">
@@ -76,7 +81,7 @@
       <div class="experiment-group">
         <h3>Runs</h3>
         <div id="runs" class="experiment-records"></div>
-        <form id="run-form" class="experiment-form">
+        <form id="run-form" class="experiment-form" hidden>
           <h4 id="run-form-heading">New run</h4>
           <label>Title <input name="title" required></label>
           <label>Description <textarea name="description" rows="3"></textarea></label>
@@ -116,7 +121,7 @@
       <div class="experiment-group">
         <h3>Source files, results, and versions</h3>
         <div id="items" class="experiment-records"></div>
-        <form id="item-form" class="experiment-form">
+        <form id="item-form" class="experiment-form" hidden>
           <h4>New artifact or version</h4>
           <label>Title <input name="title" required></label>
           <label>Description <textarea name="description" rows="3"></textarea></label>
@@ -147,7 +152,7 @@
         </form>
       </div>
 
-      <form id="grant-form" class="experiment-form experiment-group">
+      <form id="grant-form" class="experiment-form experiment-group" hidden>
         <h3>Share</h3>
         <div class="metadata-fields">
           <label>Type

@@ -11,7 +11,7 @@ const itemForm = $("item-form");
 const grantForm = $("grant-form");
 const workspaceForm = $("experiment-workspace-form");
 const computeForm = $("compute-task-form");
-const detailForms = [runForm, itemForm, grantForm, computeForm, ...(workspaceForm ? [workspaceForm] : [])];
+const detailForms = [runForm, itemForm, grantForm, computeForm, workspaceForm];
 const requested = globalThis.location ? new URLSearchParams(location.search) : null;
 const submitButton = form => form.querySelector("button");
 
@@ -22,7 +22,8 @@ let saving = false;
 let displayedExperimentId = null;
 let detailRequest = 0;
 let retryLoad = null;
-let experimentRevision = null;
+let experimentDetail = null;
+let experimentEditing = false;
 let editingRun = null;
 let runBrief = null;
 
@@ -57,8 +58,10 @@ function updateControls() {
   picker.disabled = saving || listLoading || !listReady;
   submitButton(experimentForm).disabled = saving || listLoading || detailLoading;
   for (const form of detailForms) {
-    submitButton(form).disabled = saving || displayedExperimentId === null;
+    submitButton(form).disabled = saving || displayedExperimentId === null || form.hidden;
   }
+  $("edit-experiment").disabled = saving;
+  $("cancel-experiment-edit").disabled = saving;
   retryButton.disabled = saving || listLoading;
 }
 
@@ -364,7 +367,6 @@ function changeComputeTask(task, action, payload = {}) {
 function renderComputeTasks(result) {
   const list = $("compute-tasks");
   list.replaceChildren();
-  $("new-compute-task").hidden = !result.can_edit;
   for (const task of result.compute_tasks || []) {
     const card = text("article", "", list);
     text("h4", task.title, card);
@@ -376,10 +378,15 @@ function renderComputeTasks(result) {
       text("p", task.result, card).className = "task-description";
     }
     for (const action of task.actions) {
-      const form = text("form", "", card);
-      if (action === "complete") form.className = "experiment-form";
+      let container = card;
+      if (action === "complete") {
+        container = text("details", "", card);
+        text("summary", "Record result", container);
+      }
+      const form = text("form", "", container);
       const labels = {claim: "Claim task", release: "Release claim", cancel: "Cancel task", complete: "Record result"};
       if (action === "complete") {
+        form.className = "experiment-form";
         const label = text("label", "Result summary", form);
         const field = text("textarea", "", label);
         field.name = "result";
@@ -395,30 +402,49 @@ function renderComputeTasks(result) {
   if (!list.children.length) text("p", "No compute tasks for this experiment.", list);
 }
 
+function setExperimentEditing(edit) {
+  const result = experimentDetail;
+  experimentEditing = Boolean(edit && result?.can_edit);
+  $("edit-experiment").hidden = !result?.can_edit || experimentEditing;
+  $("cancel-experiment-edit").hidden = !experimentEditing;
+  for (const form of [workspaceForm, runForm, itemForm]) form.hidden = !experimentEditing;
+  const canShare = result && [result.experiment, ...result.runs, ...result.items].some(record => Array.isArray(record.editors));
+  grantForm.hidden = !experimentEditing || !canShare;
+  $("new-compute-task").hidden = !experimentEditing;
+  if (!experimentEditing) $("new-compute-task").open = false;
+  updateControls();
+}
+
+function startExperimentEdit(run = null) {
+  if (!experimentDetail?.can_edit || saving) return;
+  setExperimentEditing(true);
+  if (run) editRun(run);
+  (run ? runForm : workspaceForm).elements.title.focus();
+}
+
 function renderExperiment(result) {
   const {experiment, runs, items, brief} = result;
-  if (runBrief?.id !== brief?.id) {
-    runBrief = brief;
-    editRun();
-  }
+  experimentDetail = result;
+  runBrief = brief;
+  editRun();
   $("experiment-title").textContent = `${experiment.title} (#${experiment.id}, revision ${experiment.revision})`;
   const sourceCommit = $("experiment-source-commit");
   sourceCommit.hidden = !experiment.source_commit;
   sourceCommit.textContent = experiment.source_commit ? `Git source commit ${experiment.source_commit.slice(0, 12)}` : "";
   sourceCommit.title = experiment.source_commit || "";
   $("experiment-description").textContent = experiment.description;
-  experimentRevision = experiment.revision;
   const workspace = $("experiment-workspace");
   workspace.replaceChildren();
   if (experiment.research_document_id) {
     const link = text("a", brief ? `Open ${brief.stage} goal and brief #${brief.id}` : "Open research document", workspace);
     link.href = `/documents?document=${experiment.research_document_id}${brief ? `&goal=${brief.goal_id}` : "&research=1"}`;
   }
-  if (workspaceForm) {
-    workspaceForm.hidden = !result.can_edit || Boolean(brief);
-    workspaceForm.elements.research_document_id.value = experiment.research_document_id ?? "";
-  }
-  runForm.hidden = !result.can_edit;
+  workspaceForm.elements.title.value = experiment.title;
+  workspaceForm.elements.description.value = experiment.description;
+  workspaceForm.elements.research_document_id.value = experiment.research_document_id ?? "";
+  workspaceForm.elements.research_document_id.disabled = Boolean(brief);
+  $("edit-experiment-workspace").hidden = Boolean(brief);
+  setExperimentEditing(false);
   renderComputeTasks(result);
   const runList = $("runs");
   const runSelect = $("run-select");
@@ -443,10 +469,7 @@ function renderExperiment(result) {
     if (run.can_edit) {
       const edit = text("button", "Edit run", box);
       edit.type = "button";
-      edit.addEventListener("click", () => {
-        editRun(run);
-        runForm.elements.title.focus();
-      });
+      edit.addEventListener("click", () => startExperimentEdit(run));
     }
     addOption(runSelect, run.id, run.title);
   }
@@ -475,8 +498,9 @@ function renderExperiment(result) {
 
 function hideExperiment() {
   displayedExperimentId = null;
+  experimentDetail = null;
+  setExperimentEditing(false);
   detail.hidden = true;
-  updateControls();
 }
 
 async function showExperiment(id, saved = false) {
@@ -543,7 +567,9 @@ function submit(form, save, reload, {reloadOnConflict = false} = {}) {
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const id = displayedExperimentId;
-    if (saving || listLoading || detailLoading || (form !== experimentForm && (id === null || id !== selectedExperimentId()))) {
+    if (saving || listLoading || detailLoading
+        || (detailForms.includes(form) && (!experimentEditing || form.hidden))
+        || (form !== experimentForm && (id === null || id !== selectedExperimentId()))) {
       return;
     }
     saving = true;
@@ -570,6 +596,14 @@ picker.addEventListener("change", () => {
   editRun();
   $("run-select").replaceChildren();
   return showExperiment(selectedExperimentId());
+});
+
+$("edit-experiment").addEventListener("click", () => startExperimentEdit());
+$("cancel-experiment-edit").addEventListener("click", () => {
+  if (saving || !experimentDetail) return;
+  for (const form of detailForms) form.reset();
+  renderExperiment(experimentDetail);
+  $("edit-experiment").focus();
 });
 
 retryButton.addEventListener("click", () => retryLoad?.());
@@ -602,12 +636,14 @@ submit(experimentForm, fields => api("experiments", {
   return refreshExperiments(result.id, true);
 });
 
-if (workspaceForm) {
-  submit(workspaceForm, (fields, id) => api("experiments", {
-    id, revision: experimentRevision,
-    research_document_id: fields.research_document_id.value ? Number(fields.research_document_id.value) : null,
-  }), (_result, id) => showExperiment(id, true));
-}
+submit(workspaceForm, (fields, id) => {
+  const {experiment, brief} = experimentDetail;
+  const documentId = fields.research_document_id.value ? Number(fields.research_document_id.value) : null;
+  return api("experiments", {
+    id, revision: experiment.revision, title: fields.title.value, description: fields.description.value,
+    ...(!brief && documentId !== (experiment.research_document_id ?? null) ? {research_document_id: documentId} : {}),
+  });
+}, (_result, id) => refreshExperiments(id, true));
 
 submit(runForm, (fields, id) => api("experiment-runs", {
   experiment_id: id,

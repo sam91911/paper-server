@@ -134,7 +134,11 @@
   <div id="paper-detail" class="focus-detail" hidden>
     <h2 id="paper-detail-title" tabindex="-1"></h2>
     <p id="paper-detail-byline" class="record-byline"></p>
-    <a id="paper-web-source" target="_blank" rel="noopener noreferrer" hidden>Open publication source</a>
+    <div class="account-actions">
+      <a id="paper-web-source" target="_blank" rel="noopener noreferrer" hidden>Open publication source</a>
+      <button id="edit-paper" type="button" class="secondary" hidden>Edit</button>
+      <button id="cancel-paper-edit" type="button" class="secondary" hidden>Cancel editing</button>
+    </div>
     <details open>
       <summary>Paper file</summary>
       <p id="paper-file-name"></p>
@@ -238,6 +242,8 @@
       </div>
       <div id="metric-correction-detail" hidden>
         <p id="metric-current" class="comment-body"></p>
+        <button id="edit-metric" type="button" class="secondary" hidden>Edit metric</button>
+        <button id="cancel-metric-edit" type="button" class="secondary" hidden>Cancel editing</button>
         <form id="metric-correction-form" class="metric-form" hidden>
           <fieldset id="metric-correction-fields">
             <div class="metadata-fields">
@@ -261,16 +267,18 @@
           <div id="metric-revisions"></div>
           <button id="older-metric-revisions" class="secondary" type="button" hidden>Load older corrections</button>
         </details>
-        <form id="metric-editors-form" class="metric-form" hidden>
-          <h3>Editors for this metric</h3>
-          <p id="metric-editor-names"></p>
-          <p>Each editor also needs access to this paper.</p>
-          <div class="metadata-fields">
-            <label>Account username <input name="username" maxlength="32" required></label>
-            <label>Access <select name="action"><option value="grant">Grant edit access</option><option value="revoke">Revoke edit access</option></select></label>
-          </div>
-          <div><button>Update editor access</button></div>
-        </form>
+        <details id="metric-editors-panel" hidden>
+          <summary>Manage metric editors</summary>
+          <form id="metric-editors-form" class="metric-form" hidden>
+            <p id="metric-editor-names"></p>
+            <p>Each editor also needs access to this paper.</p>
+            <div class="metadata-fields">
+              <label>Account username <input name="username" maxlength="32" required></label>
+              <label>Access <select name="action"><option value="grant">Grant edit access</option><option value="revoke">Revoke edit access</option></select></label>
+            </div>
+            <div><button>Update editor access</button></div>
+          </form>
+        </details>
       </div>
     </details>
     <details id="paper-comments">
@@ -481,7 +489,7 @@
       <div class="account-actions document-actions">
         <button type="button" id="download-document" class="secondary" hidden>Download Markdown</button>
         <button type="button" id="clone-document" class="secondary" hidden>Copy Git clone command</button>
-        <button type="button" id="edit-discussion" class="secondary" hidden>Edit discussion</button>
+        <button type="button" id="edit-document" class="secondary" hidden>Edit</button>
         <button type="button" id="review-document" class="secondary" hidden>Review with AI</button>
       </div>
       <p id="document-owner"></p>
@@ -516,7 +524,10 @@
               <button type="button" id="view-document-pdf" class="secondary">View PDF here</button>
             </div>
           </div>
-          <button id="save-document">Save document</button>
+          <div class="account-actions">
+            <button id="save-document">Save document</button>
+            <button type="button" id="cancel-document-edit" class="secondary">Cancel</button>
+          </div>
         </form>
         <section id="document-preview-panel" class="document-preview-panel focus-detail" aria-labelledby="preview-title" hidden>
           <h2 id="preview-title">Preview</h2>
@@ -680,10 +691,21 @@
   <form id="request-agent-review">
     <div class="document-fields">
       <label>AI account <select id="agent-username" required><option value="">Choose an AI account</option></select></label>
-      <label id="agent-position-field"><span id="agent-position-label">PDF page</span>
+      <label id="agent-position-field"><span id="agent-position-label">First PDF page</span>
         <input id="agent-position" type="number" min="1" max="1000000">
       </label>
+      <label id="agent-end-page-field" hidden>Last PDF page (optional)
+        <input id="agent-end-page" type="number" min="1" max="1000000">
+      </label>
+      <label id="agent-source-field" hidden>Source transfer
+        <select id="agent-source-format">
+          <option value="text">Extracted text</option>
+          <option value="pdf">Original PDF</option>
+        </select>
+      </label>
     </div>
+    <label id="agent-whole-field" class="inline-check" hidden><input id="agent-whole-pdf" type="checkbox"> Review the whole PDF</label>
+    <p id="agent-pdf-help" hidden>Leave the last page blank for a single page. Extracted text usually uses less bandwidth and omits images and page layout.</p>
     <p id="agent-availability" role="status"></p>
     <p id="agent-cloud-note" hidden>The assigned account must confirm before sending review context to its cloud provider.</p>
     <label class="inline-check"><input id="agent-post" type="checkbox"> Also post a comment visible only to the AI account</label>

@@ -1,3 +1,5 @@
+import hashlib
+import shutil
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -7,6 +9,7 @@ from unittest.mock import Mock, patch
 
 from paper_app import accounts, library, reviews
 from paper_client import review
+from test_pdf_integration import fixture_pdf
 from test_skill_api import request
 
 
@@ -117,6 +120,8 @@ class ReviewAPITests(unittest.TestCase):
             db.execute("INSERT INTO legacy_review_requests SELECT * FROM review_requests")
             db.execute("DROP TABLE review_requests")
             db.execute("ALTER TABLE legacy_review_requests RENAME TO review_requests")
+            for column in ("end_page", "whole_pdf", "source_format"):
+                db.execute(f"ALTER TABLE review_requests DROP COLUMN {column}")
         library.initialize(self.database)
         self.assertEqual(self.api("/api/reviews", key=self.reviewer)["reviews"], [job])
         result = self.api("/api/reviews", cookie=self.cookie, data={"action": "withdraw", "id": job["id"]})
@@ -170,6 +175,42 @@ class ReviewAPITests(unittest.TestCase):
         self.assertIsNone(failed["comment_id"])
         self.assertEqual(self.api(f"/api/paper-comments?paper_id={paper}", key=self.reviewer)["comments"], [])
 
+    @unittest.skipUnless(shutil.which("pdfinfo") and shutil.which("pdftotext"), "Poppler is not installed")
+    def test_pdf_ranges_and_whole_document_text_require_assignment_access(self):
+        payload = fixture_pdf(b"Page one", b"Page two", b"Page three")
+        path = self.database.parent / "source.pdf"
+        path.write_bytes(payload)
+        with library.connect(self.database) as db:
+            paper = library.store(db, path, (), hashlib.sha256(payload).hexdigest())
+            db.execute("INSERT INTO paper_access VALUES (?,1,'owner')", (paper,))
+            db.execute("INSERT INTO item_grants VALUES ('paper',?,2)", (paper,))
+        options = {"kind": "paper", "target_id": paper, "source_format": "text"}
+        range_review = self.create(**options, position=2, end_page=3)
+        self.assertEqual(self.create(**options, position=2, end_page=3)["id"], range_review["id"])
+        whole = self.create(**options, position=None, whole_pdf=True)
+        self.assertNotEqual(range_review["id"], whole["id"])
+        self.assertIsNone(whole["position"])
+        query = f"/api/reviews?id={range_review['id']}&context=text"
+        self.api(query, cookie=self.cookie, status=404)
+        self.api(query, key=self.other_agent, status=404)
+        text = self.api(query, key=self.reviewer)["text"]
+        self.assertEqual(text, "PDF page 2\n\nPage two\n\nPDF page 3\n\nPage three")
+        whole_path = f"/api/reviews?id={whole['id']}&context=text"
+        self.assertIn("PDF page 1\n\nPage one", self.api(whole_path, key=self.reviewer)["text"])
+        self.api("/api/reviews", cookie=self.cookie, status=400, data={
+            **options, "action": "create", "agent": "reviewer", "agent_role": "local", "position": 2, "end_page": 4,
+        })
+        completed = self.api("/api/reviews", key=self.reviewer, data={
+            "action": "complete", "id": whole["id"], "status": "complete", "response": "Check the baseline.",
+        })["review"]
+        comments = self.api(f"/api/paper-comments?paper_id={paper}", key=self.reviewer)["comments"]
+        self.assertEqual([(item["id"], item["target_position"]) for item in comments],
+                         [(completed["comment_id"], None)])
+        self.api(whole_path, key=self.reviewer, status=404)
+        with library.connect(self.database) as db:
+            db.execute("DELETE FROM item_grants WHERE kind='paper' AND item_id=? AND account_id=2", (paper,))
+        self.api(query, key=self.reviewer, status=403)
+
     def test_default_skill_describes_review_api(self):
         skill = self.api("/api/skills/default", key=self.reviewer)["skill"]
         self.assertIn("GET /api/reviews", skill["markdown"])
@@ -192,6 +233,28 @@ class ReviewWorkerTests(unittest.TestCase):
         model.assert_called_once_with(Path("test.gguf"), "Document: Methods\n\nOne\nTwo")
         self.assertEqual([call.args[0] for call in client.get_json.call_args_list],
                          ["/api/reviews?id=7", "/api/document?id=3"])
+        client.request.assert_called_once_with("/api/reviews", {
+            "action": "complete", "id": 7, "status": "complete", "response": "Check the baseline.",
+        })
+
+
+    def test_worker_fetches_text_without_downloading_the_pdf_and_reviews_every_section(self):
+        client = Mock()
+        context = "First section " * 1000 + "\n" + "Last section " * 1000
+        client.get_json.side_effect = [
+            {"review": {"id": 7, "status": "pending", "kind": "paper", "target_id": 3, "position": None,
+                        "whole_pdf": True, "source_format": "text"}},
+            {"text": context},
+        ]
+        with patch.object(review, "review", return_value="Check the baseline.") as model:
+            review.complete_assignment(client, 7, SimpleNamespace(cloud=False, model=Path("test.gguf")), {})
+        self.assertEqual([call.args[0] for call in client.get_json.call_args_list],
+                         ["/api/reviews?id=7", "/api/reviews?id=7&context=text"])
+        excerpts = [call.args[1] for call in model.call_args_list]
+        self.assertTrue(all(len(excerpt) <= review.CONTEXT_LIMIT for excerpt in excerpts))
+        self.assertIn("First section", excerpts[0])
+        self.assertIn("Last section", excerpts[-2])
+        self.assertIn("Review notes covering the selected source", excerpts[-1])
         client.request.assert_called_once_with("/api/reviews", {
             "action": "complete", "id": 7, "status": "complete", "response": "Check the baseline.",
         })

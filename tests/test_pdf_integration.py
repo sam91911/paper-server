@@ -16,13 +16,19 @@ from paper_client import agent, mcp_server
 from test_skill_api import request
 
 
-def fixture_pdf(text=b'Measured power was 12.5 mW.'):
-    stream = b'BT /F1 18 Tf 72 720 Td (' + text + b') Tj ET'
+def fixture_pdf(text=b'Measured power was 12.5 mW.', *more_pages):
+    texts = (text, *more_pages)
+    children = b" ".join(b"%d 0 R" % (4 + 2 * index) for index in range(len(texts)))
     objects = [b'<< /Type /Catalog /Pages 2 0 R >>',
-               b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-               b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
-               b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-               b'<< /Length %d >>\nstream\n' % len(stream) + stream + b'\nendstream']
+               b'<< /Type /Pages /Kids [%s] /Count %d >>' % (children, len(texts)),
+               b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>']
+    for index, page in enumerate(texts):
+        stream = b'BT /F1 18 Tf 72 720 Td (' + page + b') Tj ET'
+        objects.extend((
+            b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources '
+            b'<< /Font << /F1 3 0 R >> >> /Contents %d 0 R >>' % (5 + 2 * index),
+            b'<< /Length %d >>\nstream\n' % len(stream) + stream + b'\nendstream',
+        ))
     output = bytearray(b'%PDF-1.4\n')
     offsets = [0]
     for index, obj in enumerate(objects, 1):

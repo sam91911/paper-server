@@ -252,31 +252,10 @@ function showPaper() {
   const pdfURL = paperPDFURL(selected.id);
   element("open-paper-pdf").href = pdfURL;
   element("download-paper-pdf").href = `${pdfURL}?download=1`;
-  const ownsPaper = selected.can_manage || selected.owner_id === libraryData.account?.id;
-  attachPdfForm.reset();
-  attachPdfForm.hidden = !ownsPaper || Boolean(selected.path || selected.has_pdf);
-  const canManage = selected.owner_id === null || ownsPaper;
-  element("paper-management").hidden = !canManage;
-  element("paper-metadata-editor").hidden = !canManage;
-  element("detect-paper-metrics").hidden = !canManage || !selected.has_pdf;
-  element("archive-paper").hidden = !canManage;
-  element("membership").closest("details").hidden = !canManage || libraryData.account?.role !== "user";
-  lookupPaperForm.hidden = !canManage || libraryData.account?.role !== "user";
-  lookupForm.closest("details").hidden = !canManage;
-  metadataForm.hidden = !canManage;
+  setPaperEditing(false);
   element("paper-audience").textContent = selected.audience
     ? audienceLabels[selected.audience]
     : "Trusted human accounts (uploaded before access controls).";
-  paperAccessForm.hidden = !ownsPaper;
-  publicationForm.hidden = !ownsPaper;
-  publicationForm.elements.summary.value = selected.publication?.summary || "";
-  element("unpublish-paper").hidden = !selected.publication;
-  if (ownsPaper) {
-    selectAudience(paperAccessForm.elements.audience, selected.audience);
-    selectMetadataAudience(paperAccessForm.elements.metadata_audience, selected.metadata_audience, true);
-    paperAccessForm.elements.allow_title.checked = Boolean(selected.allow_title);
-    paperAccessForm.elements.recipients.value = (selected.recipients || []).join(", ");
-  }
 
   const draft = commentDrafts.get(selected.id);
   newComment.value = draft?.body || "";
@@ -293,8 +272,48 @@ function showPaper() {
   showPositionField();
   showReplyTarget(draft?.parentId);
   showSavedMetadata(selected);
+  renderPaperComments(selected);
+  if (paperComments.open) loadPaperTargets();
+}
+
+function setPaperEditing(edit) {
+  const selected = selectedPaper();
+  if (!selected) return;
+  const account = libraryData.account;
+  const ownsPaper = Boolean(account && (selected.can_manage || selected.owner_id === account.id));
+  const canEdit = ownsPaper || (selected.owner_id === null && account?.role === "user");
+  const editing = Boolean(edit && canEdit);
+  element("edit-paper").hidden = !canEdit || editing;
+  element("cancel-paper-edit").hidden = !editing;
+  element("paper-management").hidden = !editing;
+  element("paper-metadata-editor").hidden = !editing;
+  element("detect-paper-metrics").hidden = !editing || !selected.has_pdf;
+  element("archive-paper").hidden = !editing;
+  element("membership").closest("details").hidden = !editing || account?.role !== "user";
+  lookupPaperForm.hidden = !editing || account?.role !== "user";
+  lookupForm.closest("details").hidden = !editing;
+  metadataForm.hidden = !editing;
+  attachPdfForm.hidden = !editing || !ownsPaper || Boolean(selected.path || selected.has_pdf);
+  paperAccessForm.hidden = !editing || !ownsPaper;
+  publicationForm.hidden = !editing || !ownsPaper;
+  for (const id of ["paper-management", "paper-metadata-editor"]) element(id).open = editing && id === "paper-metadata-editor";
+  if (!editing) {
+    ++lookupSequence;
+    lookupResults.replaceChildren();
+    return;
+  }
+
+  attachPdfForm.reset();
+  publicationForm.elements.summary.value = selected.publication?.summary || "";
+  element("unpublish-paper").hidden = !selected.publication;
+  if (ownsPaper) {
+    selectAudience(paperAccessForm.elements.audience, selected.audience);
+    selectMetadataAudience(paperAccessForm.elements.metadata_audience, selected.metadata_audience, true);
+    paperAccessForm.elements.allow_title.checked = Boolean(selected.allow_title);
+    paperAccessForm.elements.recipients.value = (selected.recipients || []).join(", ");
+  }
   setMetadata(selected);
-  lookupForm.elements.query.value = selected.doi;
+  lookupForm.elements.query.value = selected.doi ?? "";
   const memberships = new Set(paperDetails.group_ids);
   const choices = element("group-options");
   choices.replaceChildren();
@@ -308,8 +327,6 @@ function showPaper() {
   }
   if (!libraryData.groups.length) add(choices, "p", "Create a group to assign this paper.");
 
-  renderPaperComments(selected);
-  if (paperComments.open) loadPaperTargets();
 }
 
 function renderPaperComments(selected) {
@@ -923,6 +940,14 @@ function selectCatalogPaper(focus) {
 }
 paperPicker.addEventListener("change", () => selectCatalogPaper(false));
 element("paper-catalog-retry").addEventListener("click", () => paperCatalog ? loadPaperCatalog() : loadPapersPage());
+element("edit-paper").addEventListener("click", () => {
+  setPaperEditing(true);
+  if (!metadataForm.hidden) metadataForm.elements.title.focus();
+});
+element("cancel-paper-edit").addEventListener("click", () => {
+  setPaperEditing(false);
+  element("edit-paper").focus();
+});
 element("paper-detail-retry").addEventListener("click", loadSelectedPaper);
 element("paper-comments-retry").addEventListener("click", loadPaperComments);
 element("paper-targets-retry").addEventListener("click", loadPaperTargets);
@@ -1729,6 +1754,9 @@ const agentDialog = element("agent-dialog");
 const agentAccount = element("agent-username");
 const agentAvailability = element("agent-availability");
 const agentPosition = element("agent-position");
+const agentEndPage = element("agent-end-page");
+const agentWholePDF = element("agent-whole-pdf");
+const agentSourceFormat = element("agent-source-format");
 const agentPost = element("agent-post");
 const agentSubmit = element("send-agent-review");
 const agentWithdraw = element("withdraw-agent-review");
@@ -1740,6 +1768,18 @@ let agentPoll;
 let agentPending = false;
 let agentReviewId;
 const eligibleAgents = new Map();
+
+function syncAgentPages() {
+  const paper = agentTarget?.kind === "paper";
+  const range = paper && !agentWholePDF.checked;
+  element("agent-position-field").hidden = !range && agentTarget?.kind !== "document";
+  element("agent-end-page-field").hidden = !range;
+  for (const id of ["agent-whole-field", "agent-source-field", "agent-pdf-help"]) element(id).hidden = !paper;
+  agentPosition.disabled = !range && agentTarget?.kind !== "document";
+  agentPosition.required = range;
+  agentEndPage.disabled = !range;
+  agentEndPage.min = agentPosition.value || "1";
+}
 
 function syncAgentChoice() {
   const selected = eligibleAgents.get(agentAccount.value);
@@ -1783,9 +1823,12 @@ async function openAgent(kind, id, label, position = "") {
   const view = ++agentView;
   agentTarget = {kind, target_id: id};
   element("agent-target").textContent = label;
-  element("agent-position-field").hidden = kind === "thread";
-  element("agent-position-label").textContent = kind === "document" ? "Source line (optional)" : "PDF page";
-  agentPosition.value = position || (kind === "paper" ? "1" : "");
+  element("agent-position-label").textContent = kind === "document" ? "Source line (optional)" : "First PDF page";
+  agentPosition.value = String(position || (kind === "paper" ? 1 : ""));
+  agentEndPage.value = "";
+  agentWholePDF.checked = false;
+  agentSourceFormat.value = "text";
+  syncAgentPages();
   agentPost.checked = false;
   agentResult.hidden = true;
   agentResult.textContent = "";
@@ -1822,6 +1865,8 @@ async function openAgent(kind, id, label, position = "") {
 }
 
 agentAccount.addEventListener("change", syncAgentChoice);
+agentWholePDF.addEventListener("change", syncAgentPages);
+agentPosition.addEventListener("input", syncAgentPages);
 agentWithdraw.addEventListener("click", async () => {
   const id = agentReviewId;
   if (!id || agentWithdraw.disabled) return;
@@ -1863,7 +1908,12 @@ element("request-agent-review").addEventListener("submit", async event => {
       action: "create", ...agentTarget,
       agent: agent.username,
       agent_role: agent.role,
-      position: agentPosition.value ? agentPosition.valueAsNumber : null,
+      position: !agentPosition.disabled && agentPosition.value ? agentPosition.valueAsNumber : null,
+      ...(agentTarget.kind === "paper" ? {
+        end_page: !agentEndPage.disabled && agentEndPage.value ? agentEndPage.valueAsNumber : null,
+        whole_pdf: agentWholePDF.checked,
+        source_format: agentSourceFormat.value,
+      } : {}),
       post: agentPost.checked,
     });
     if (view === agentView) showAgentReview(data.review, view);
@@ -1972,6 +2022,8 @@ async function loadMetricHistory(listing, metric, append = false) {
     if (!append) {
       metricHistory.replaceChildren();
       add(metricHistory, "p", `Original (revision 1)\n${metricDescription(data.original)}`, "comment-body");
+      element("metric-editors-panel").hidden = !data.editors;
+      element("metric-editors-panel").open = false;
       metricEditors.hidden = !data.editors;
       element("metric-editor-names").textContent = data.editors?.join(", ") || "No named editors.";
     }
@@ -1996,19 +2048,35 @@ function showPaperMetric() {
   element("metric-correction-detail").hidden = !metric;
   if (!metric) return;
   element("metric-current").textContent = `${metricDescription(metric)}\nRevision ${metric.revision}${metric.removed ? " (removed)" : ""}`;
-  metricForm.hidden = !metric.can_edit;
+  metricForm.hidden = true;
+  element("edit-metric").hidden = !metric.can_edit;
+  element("cancel-metric-edit").hidden = true;
   element("metric-correction-fields").hidden = Boolean(metric.removed);
   element("metric-correction-fields").disabled = Boolean(metric.removed);
   element("save-metric-correction").hidden = Boolean(metric.removed);
   element("remove-metric").hidden = Boolean(metric.removed);
   element("restore-metric").hidden = !metric.removed;
   metricEditors.hidden = true;
+  element("metric-editors-panel").hidden = true;
   metricOlder.hidden = true;
   metricHistory.replaceChildren();
   for (const field of metricFields) metricForm.elements[field].value = metric[field];
   metricForm.elements.reason.value = "";
   return loadMetricHistory(listing, metric);
 }
+
+element("edit-metric").addEventListener("click", () => {
+  const metric = metricListing?.records.get(metricPicker.value);
+  if (!metric?.can_edit) return;
+  metricForm.hidden = false;
+  element("edit-metric").hidden = true;
+  element("cancel-metric-edit").hidden = false;
+  metricForm.elements.reason.focus();
+});
+element("cancel-metric-edit").addEventListener("click", () => {
+  showPaperMetric();
+  element("edit-metric").focus();
+});
 
 metricPanel.addEventListener("toggle", () => {
   if (metricPanel.open && !metricListing) reloadPaperMetrics();
