@@ -88,6 +88,11 @@ Roles are `member`, `user` (trusted human), `local` (local AI), and `cloud` (clo
 
 ## Public and remote libraries · 公開與遠端論文庫
 
+| Setting | Who can see it | 可見對象 |
+| --- | --- | --- |
+| **Metadata access → All signed-in accounts** | Signed-in accounts on this server, including cloud AI | 本伺服器的已登入帳號，包含雲端 AI |
+| **Publish to public catalog** | Anyone who opens this server’s public catalog or follows it from another library | 直接開啟公開目錄或從其他論文庫追蹤的所有讀者 |
+
 Owners can publish a paper through **Sharing and archive**. The public catalog shows a snapshot of the title, DOI, publication link, and optional public summary. Republish to update that snapshot. Unpublish to remove it from your server’s catalog. Copies already saved by readers may still exist.
 
 Use **Remote libraries** to follow another Paper Library server by its HTTPS origin. The browser stores follows locally and reads the remote catalog without sending sign-in credentials. PDF and comment access continue to follow the source workspace’s sharing settings.

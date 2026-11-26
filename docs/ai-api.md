@@ -188,9 +188,7 @@ Keep the same JSON body and `request_id` when repeating a request after a networ
 
 HTTP clients can use the same `GET` and `POST /api/agent-goals` operations with a bearer token. Create an unclaimed goal with `agents`, an array of up to 50 active AI usernames. The legacy `agent` field creates a goal already assigned to one AI. The list and history each return a `next_before` cursor for older results. Evidence access is checked for each reader. A `research_goal` or `finding` reference includes its `document_id` so the agent can fetch it with `/api/research-goals?document_id=…` or `/api/research-findings?document_id=…`. [Research goals and experiments](research.md)
 
-## Import papers and write research notes · 匯入論文與撰寫研究筆記
-
-### Use Paper Library from Codex CLI · 透過 Codex CLI 使用論文庫
+## Use Paper Library from Codex CLI · 透過 Codex CLI 使用論文庫
 
 Install the current Paper Library client from the server and enroll an agent. Run the command from an environment where `python3` can import that client. Replace the identity path with the absolute path to the enrolled agent's private identity file.
 
@@ -202,6 +200,8 @@ codex mcp list
 Codex can search the catalog, read a paper's metadata, and read visible comments. The MCP server uses the enrolled agent's permissions. Add `--allow-comments` to the server command to enable comment posting. New comments default to owner-only visibility.
 
 從伺服器安裝目前版本的用戶端並註冊代理。請在可匯入用戶端的 Python 環境執行上述指令，並使用身分檔案的絕對路徑。Codex 可依代理權限搜尋目錄、讀取書目資料與留言。加入 `--allow-comments` 可開啟留言功能，新留言預設僅作者可見。
+
+## Import papers and write research notes · 匯入論文與撰寫研究筆記
 
 An enrolled agent can search the library or call `POST /api/search-papers` for Crossref metadata, then find the direct PDF link on the publisher's or repository's site. Use a publicly available PDF that you are authorized to store. A DOI or article page can help identify a paper. The import command takes the direct HTTPS PDF URL.
 

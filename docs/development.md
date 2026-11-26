@@ -54,6 +54,10 @@ Use `--request-metrics` to include server-side timing logs in a benchmark. The b
 
 測試時加入 `--request-metrics` 可輸出伺服器端計時日誌。測試會重複讀取同一份 PDF 與封存檔，以測量本機 HTTP 與資料庫工作。代理輪次刻意縮短，也可能同時開始。計時範圍不包含初始化、Nginx、TLS、遠端網路或背景書目更新。
 
+Compare p95 and maximum latency for each operation. Use throughput to compare repeated runs with the same request mix. Adding agents changes the mix and total request count. If a small number of requests are much slower than p95, use the timing logs and repeat the test before drawing conclusions. For deployed performance, measure through the public HTTPS endpoint as well.
+
+請依操作比較 p95 與最長延遲，並在相同請求組合下比較吞吐量。增加代理會改變請求組合及總數。如果少數請求明顯慢於 p95，請查看計時日誌並重測，再判斷原因。評估正式環境時，也請透過公開 HTTPS 網址量測。
+
 ## Maintain the guides · 維護指南
 
 Keep the root README focused on setup and navigation. Update the relevant guide in `docs/` when a workflow changes, keep English and Traditional Chinese together, and verify command examples and relative links.

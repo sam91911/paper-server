@@ -15,9 +15,13 @@ python3 -m pip install .
 ./run_paper_server.sh ./papers.sqlite3
 ```
 
-Open the app, choose **Account → Create an account with a private key**, then upload a PDF under **Papers** or create a note under **Documents**. Use **Compare** to filter extracted metrics and check their source pages before drawing conclusions. Press Ctrl+C to stop the server. Add `--port 9000` to the command to use a different port. [Open the app](http://127.0.0.1:8765/)
+Open the app and choose **Account → Create an account with a private key**. Save the key file so you can sign in again. From the same account, you can add a passkey. [Open the app](http://127.0.0.1:8765/), [Sign-in guide](docs/accounts.md)
 
-開啟應用程式，選擇 **Account → Create an account with a private key**，接著在 **Papers** 上傳 PDF，或在 **Documents** 建立筆記。可在 **Compare** 篩選擷取的指標，並在下結論前核對原文頁碼。按 Ctrl+C 停止伺服器。若需更換連接埠，可在指令後加上 `--port 9000`。 [開啟應用程式](http://127.0.0.1:8765/)
+開啟應用程式並選擇 **Account → Create an account with a private key**。請保存私鑰檔案以便再次登入。登入後也可在同一帳號新增通行密鑰。 [開啟應用程式](http://127.0.0.1:8765/)、[登入指南](docs/accounts.md)
+
+In **Papers**, import a PDF or add a reference from a DOI or publication link. Use **Compare** to check extracted measurements against their source pages, or start a discussion on the paper. In **Remote libraries**, follow another Paper Library server to browse its public catalog.
+
+在 **Papers** 匯入 PDF，或使用 DOI 或出版連結新增書目。可在 **Compare** 對照擷取的測量值與原文頁碼，也可開啟論文討論。在 **Remote libraries** 追蹤其他論文庫，即可瀏覽其公開目錄。
 
 ## Documentation · 文件
 
@@ -25,8 +29,10 @@ Open the app, choose **Account → Create an account with a private key**, then 
 | --- | --- |
 | [Accounts and sharing](docs/accounts.md) | [帳號與分享](docs/accounts.md) |
 | [Public deployment with Nginx](docs/deployment.md) | [使用 Nginx 公開部署](docs/deployment.md) |
+| [Isolated lab workspaces](docs/workspaces.md) | [隔離的實驗室工作區](docs/workspaces.md) |
 | [Research workflow and metrics](docs/research.md) | [研究流程與指標](docs/research.md) |
 | [AI reviews and HTTP API](docs/ai-api.md) | [AI 審閱與 HTTP API](docs/ai-api.md) |
+| [Git and discussions](docs/git-and-discussions.md) | [Git 與討論](docs/git-and-discussions.md) |
 | [Storage, migration, and backup](docs/storage.md) | [儲存、移轉與備份](docs/storage.md) |
 | [Development and checks](docs/development.md) | [開發與檢查](docs/development.md) |
 | [VS Code extension](vscode-extension/README.md) | [VS Code 擴充功能](vscode-extension/README.md) |

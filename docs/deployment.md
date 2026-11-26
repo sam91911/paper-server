@@ -42,7 +42,7 @@ Open the public URL to create or sign in to a human account with a private key. 
 
 1. Choose a host with a routable public IPv4 address and a global IPv6 address. Use one hostname and configure its DNS `A` record for IPv4 and its `AAAA` record for IPv6. The supplied Nginx configuration listens on both address families and forwards both to the same loopback service. Keep the app, database, and backup ports private. [Nginx listen documentation](https://nginx.org/en/docs/http/ngx_http_core_module.html#listen)
 2. Install a publicly trusted HTTPS certificate and enable automated renewal. Use the same hostname in Nginx, `PAPER_PUBLIC_URL`, and any OAuth callback. Test from a network outside the host. Publish the `AAAA` record when IPv6 routing, the firewall, and certificate validation work end to end. [Let's Encrypt IPv6 validation](https://letsencrypt.org/docs/ipv6-support/)
-3. Pilot with one member and one enrolled agent. Verify sign-in, invitations, PDF access, one artifact upload, and a database restore. A reachable server allows visitors to create member accounts. Papers, documents, goals, and artifacts still follow their sharing rules. Before advertising open signups, decide how to handle abusive accounts, upload capacity, and support. If you want anonymous reading, define a separate opt-in public catalog containing only records intended for publication.
+3. Pilot with one member and one enrolled agent. Verify sign-in, invitations, PDF access, one artifact upload, and a database restore. Check passkey sign-in at the public HTTPS address if you plan to use it. If members need anonymous readers to find selected papers, publish a test reference and open it through **Remote libraries** while signed out. [Accounts and sharing](accounts.md)
 
 ```sh
 curl -4 -fsS https://papers.example.org/api/health
@@ -51,7 +51,7 @@ curl -6 -fsS https://papers.example.org/api/health
 
 An IP-only deployment can use `https://192.0.2.10` or `https://[2001:db8::10]` as its configured origin. Replace the documentation addresses with your real address and use a certificate that covers that IP. Let's Encrypt offers IP certificates with shorter lifetimes, so automatic renewal is important. A hostname gives visitors on both networks one URL and lets you change addresses without changing existing links. [Let's Encrypt IP certificates](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability)
 
-請選擇具有公開 IPv4 及全域 IPv6 的主機，以同一網域的 `A` 與 `AAAA` 紀錄指向兩種位址。Nginx 會將兩者導向同一個只在本機監聽的服務。設定可信任的 HTTPS 憑證及自動更新後，從外部網路分別以 `curl -4` 和 `curl -6` 測試。先邀請少量使用者及代理驗證註冊、上傳及備份還原，再對外公告。研究項目仍依各自設定的權限分享。若要提供匿名瀏覽，可另行規劃僅包含明確選擇發布項目的公開目錄。
+請選擇具有公開 IPv4 及全域 IPv6 的主機，以同一網域的 `A` 與 `AAAA` 紀錄指向兩種位址。Nginx 會將兩者導向同一個只在本機監聽的服務。設定可信任的 HTTPS 憑證及自動更新後，從外部網路分別以 `curl -4` 和 `curl -6` 測試。先邀請一般成員與已註冊代理，驗證登入、邀請、PDF 權限、產出檔上傳及備份還原。若要使用通行密鑰，請在公開 HTTPS 網址測試。若要讓訪客瀏覽公開書目，請發布一筆測試書目，登出後從 **Remote libraries** 開啟。 [帳號與分享](accounts.md)
 
 ## Run under systemd · 使用 systemd 執行
 
@@ -93,7 +93,7 @@ Use `paper-libraryctl releases` to find an earlier release, then `sudo paper-lib
 
 Use live upgrades for releases whose database schema works with both worker versions during the handoff. Schedule maintenance for incompatible schema changes, supervisor changes, and changes to the unit or its environment. The package CI job rehearses an SQLite upgrade from the previous tagged source, installs the candidate wheel, and checks that existing metadata, comments, and PDF permissions survive. For local development, start with `./run_paper_server.sh ./papers.sqlite3 --reloadable` and send `SIGHUP` to that process.
 
-將 `/opt/paper-library` 設為指向版本目錄的符號連結，每個版本使用獨立的 `.venv`。若原本使用舊版服務單元或實體目錄，請在維護時段切換並啟動更新後的單元一次。升級時先安裝新版本，再原子切換連結並執行 `systemctl reload paper-library.service`。監督程序會保留監聽連接埠，待新程序完成資料庫初始化後，讓舊程序處理完進行中的請求。請在日誌確認新的 `HTTP worker … ready` 訊息。若啟動失敗，舊程序會繼續服務。資料庫結構必須同時支援兩個版本，才能使用不中斷升級。
+將 `/opt/paper-library` 設為指向版本目錄的符號連結，每個版本使用獨立的 `.venv`。若原本使用舊版服務單元或實體目錄，請在維護時段切換並啟動更新後的單元一次。使用 `paper-libraryctl upgrade-release v0.x.y` 下載已發布的 wheel、驗證 SHA-256 並啟用新版。若要從原始碼升級，請先更新工作副本，再執行 `paper-libraryctl upgrade .`。可透過 `status` 查看已設定的版本標籤，並在日誌確認 `HTTP worker … ready` 訊息。資料庫結構必須同時支援兩個版本，才能不中斷升級。
 
 ## Enable request timing logs · 啟用請求計時日誌
 
