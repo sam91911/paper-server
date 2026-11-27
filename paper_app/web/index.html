@@ -35,6 +35,7 @@
   <div class="paper-browser detail-layout">
     <details class="paper-catalog-panel browse-controls" id="paper-browse-controls" open>
       <summary>Browse papers</summary>
+      <label>Tag <select id="paper-tag-filter"><option value="">All tags</option></select></label>
       <label>Search papers <input type="search" id="paper-search" maxlength="500" placeholder="Title, author, DOI, venue, or filename"></label>
       <details>
         <summary>Filters and groups</summary>
@@ -140,6 +141,7 @@
   <div id="paper-detail" class="focus-detail" hidden>
     <h2 id="paper-detail-title" tabindex="-1"></h2>
     <p id="paper-detail-byline" class="record-byline"></p>
+    <div id="paper-detail-tags" class="record-tags" hidden></div>
     <div class="account-actions">
       <a id="paper-web-source" target="_blank" rel="noopener noreferrer" hidden>Open publication source</a>
       <button id="edit-paper" type="button" class="secondary" hidden>Edit</button>
@@ -220,6 +222,7 @@
           <label>Venue <input name="venue"></label>
           <label>Publisher <input name="publisher"></label>
         </div>
+        <label>Tags (comma-separated) <input name="tags" maxlength="1040"></label>
         <p id="metadata-source"></p>
         <button>Save metadata</button>
       </form>
@@ -491,6 +494,7 @@
       <details id="document-browse-controls" class="browse-controls" open>
         <summary id="document-browse-label">Browse documents</summary>
       <label>Topic <select id="document-topic-filter"></select></label>
+      <label>Tag <select id="document-tag-filter"><option value="">All tags</option></select></label>
       <section id="news-feed" aria-labelledby="news-feed-title" hidden>
         <h2 id="news-feed-title">Shared news</h2>
         <label id="discussion-sort-label" hidden>Sort threads
@@ -512,6 +516,7 @@
       </div>
       <p id="document-owner"></p>
       <p id="document-context" hidden></p>
+      <div id="document-tags" class="record-tags" hidden></div>
       <div id="discussion-meta" hidden></div>
       <p id="news-source" hidden><a id="news-source-link" target="_blank" rel="noopener noreferrer">Read the source</a></p>
       <div class="document-layout" id="document-layout">
@@ -522,6 +527,7 @@
             <label id="news-source-field" class="document-title-field" hidden>Source URL
               <input name="source_url" type="url" maxlength="2048" placeholder="https://">
             </label>
+            <label>Tags (comma-separated) <input name="tags" maxlength="1040"></label>
             <label>Topic (optional) <input name="topic" maxlength="120"></label>
             <label>Linked goal (optional) <select name="linked_goal"></select></label>
             <label>Document access <select name="audience" class="audience-options"></select></label>

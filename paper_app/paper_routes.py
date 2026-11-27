@@ -91,7 +91,7 @@ def read_papers(handler, db, url, account):
     facets = field("facets") == "1"
     result = library.paper_catalog(
         db, account, query=query, group=_positive_number(group, "group") if group else None,
-        publisher=publisher, from_year=from_year, through_year=through_year,
+        publisher=publisher, from_year=from_year, through_year=through_year, tag=field("tag"),
         page=_positive_number(field("page", "1"), "page"), facets=facets,
     )
     if facets:

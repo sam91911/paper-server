@@ -246,8 +246,8 @@ def document_for(db, account, document_id):
     ).fetchone()
 
 
-def documents_for(db, account, *, targets_only=False, summaries=False, news_only=False, discussion_only=False):
-    from . import document_context
+def documents_for(db, account, *, targets_only=False, summaries=False, news_only=False, discussion_only=False, tag=""):
+    from . import document_context, tags
 
     if targets_only:
         return [dict(row) for row in db.execute(
@@ -259,15 +259,17 @@ def documents_for(db, account, *, targets_only=False, summaries=False, news_only
     columns += "," + document_context.COLUMNS
     scope = " AND d.source_url<>''" if news_only else ""
     scope += " AND d.kind=:document_kind"
+    if tag:
+        scope += " AND EXISTS (SELECT 1 FROM document_tags t WHERE t.document_id=d.id AND t.tag=:tag)"
     if discussion_only:
         columns += "," + vote_columns("discussion", "d.id")
     items = [dict(row) for row in db.execute(
         f"SELECT {columns}, a.username AS owner_name, {accounts.ROLE_SQL.format(alias='a')} AS owner_role "
         f"FROM documents d JOIN accounts a ON a.id=d.owner_id{document_context.JOIN} WHERE "
         + access_sql("d.owner_id", "d.audience", "document", "d.id") + scope + " ORDER BY d.updated DESC, d.id DESC",
-        viewer_params(account, document_kind="discussion" if discussion_only else "document"),
+        viewer_params(account, document_kind="discussion" if discussion_only else "document", tag=tags.key(tag) if tag else ""),
     )]
-    return document_context.redact(db, account, attach_recipients(db, "document", items, account))
+    return tags.attach(db, "document", document_context.redact(db, account, attach_recipients(db, "document", items, account)))
 
 
 def validate_news_source(value):
@@ -314,7 +316,7 @@ def save_document(db, account, data, *, kind="document", allow_empty_source=Fals
         if kind != "discussion":
             raise ValueError("Choose a discussion to schedule.")
         scheduled = schedule_value(scheduled)
-    from . import document_context, mentions
+    from . import document_context, mentions, tags
 
     document_id = data.get("document_id")
     if document_id is None:
@@ -338,6 +340,8 @@ def save_document(db, account, data, *, kind="document", allow_empty_source=Fals
             (title.strip(), markdown, validate_audience(data.get("audience", existing["audience"])), source_url,
              existing["scheduled_at"] if scheduled is UNSET else scheduled, document_id),
         )
+    if "tags" in data:
+        tags.save(db, "document", document_id, data["tags"])
     document_context.save(db, account, document_id, data, kind=kind)
     author_id = db.execute("SELECT owner_id FROM documents WHERE id=?", (document_id,)).fetchone()[0]
     mentions.sync(db, "document", document_id, author_id, title + "\n" + markdown)

@@ -10,6 +10,7 @@ const libraryPanel = element("library");
 const libraryStatus = element("library-status");
 const paperPicker = element("library-paper");
 const paperSearch = element("paper-search");
+const paperTagFilter = element("paper-tag-filter");
 const paperGroupFilter = element("paper-group-filter");
 const paperPublisherFilter = element("paper-publisher-filter");
 const paperYearFrom = element("paper-year-from");
@@ -157,7 +158,22 @@ function setOptions(picker, items, emptyLabel) {
   if ([...picker.options].some(option => option.value === selected)) picker.value = selected;
 }
 
+function tagNames(value) {
+  return value.split(",").map(item => item.trim()).filter(Boolean);
+}
+
+function renderTags(host, labels, select) {
+  host.replaceChildren();
+  host.hidden = !labels?.length;
+  for (const label of labels || []) {
+    const button = add(host, "button", label, "secondary record-tag");
+    button.type = "button";
+    button.addEventListener("click", () => select(label));
+  }
+}
+
 function setMetadata(data) {
+  if (data.tags && metadataForm.elements.tags) metadataForm.elements.tags.value = data.tags.join(", ");
   for (const field of metadataFields) metadataForm.elements[field].value = data[field] || "";
   metadataSource = data.source || "";
   element("metadata-source").textContent = metadataSource ? `Source: ${metadataSource}` : "";
@@ -252,6 +268,15 @@ function showPaper() {
   if (!selected) return;
   element("paper-detail-title").textContent = selected.title || paperFilename(selected);
   element("paper-detail-byline").textContent = [selected.authors, selected.venue, selected.year].filter(Boolean).join(" · ");
+  renderTags(element("paper-detail-tags"), selected.tags, label => {
+    const options = Array.from(paperTagFilter.options);
+    const option = options.find(item => item.value.toLowerCase() === label.toLowerCase());
+    if (option) {
+      paperTagFilter.value = option.value;
+      element("paper-browse-controls").open = true;
+      refreshPaperFilters();
+    }
+  });
   const webSource = element("paper-web-source");
   const sourceURL = paperWebSource(selected);
   webSource.hidden = !sourceURL;
@@ -563,7 +588,7 @@ function readPaperFilters() {
   const throughYear = paperYearTo.value ? String(paperYearTo.valueAsNumber) : "";
   const invalidYears = !paperYearFrom.validity.valid || !paperYearTo.validity.valid
     || (fromYear && throughYear && Number(fromYear) > Number(throughYear));
-  return {query, group, publisher, fromYear, throughYear, invalidYears};
+  return {query, group, publisher, fromYear, throughYear, invalidYears, tag: paperTagFilter.value};
 }
 
 function renderPaperOptions() {
@@ -591,6 +616,7 @@ function renderPaperOptions() {
     const label = add(link, "span");
     add(label, "strong", title);
     if (title !== paperFilename(paper)) add(label, "small", paperFilename(paper));
+    if (paper.tags?.length) add(label, "small", paper.tags.join(" · "));
     link.addEventListener("click", event => {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       event.preventDefault();
@@ -608,9 +634,9 @@ function renderPaperPage(result, filters) {
   element("paper-page-status").textContent = `Page ${paperPage} of ${pages}`;
   element("paper-page-previous").disabled = paperPage === 1;
   element("paper-page-next").disabled = paperPage >= pages;
-  const {query, group, publisher, fromYear, throughYear, invalidYears} = filters;
+  const {query, group, publisher, fromYear, throughYear, invalidYears, tag} = filters;
   element("paper-search-status").textContent = invalidYears ? "Enter a valid publication year range."
-    : query || group || publisher || fromYear || throughYear
+    : query || group || publisher || fromYear || throughYear || tag
       ? `${result.count} of ${result.total} papers match.`
       : `${result.total} ${result.total === 1 ? "paper" : "papers"}`;
   renderPaperOptions();
@@ -626,7 +652,7 @@ function paperCatalogLoading() {
 async function loadPaperCatalog(facets = false) {
   const sequence = ++paperCatalogSequence;
   const filters = readPaperFilters();
-  const {query, group, publisher, fromYear, throughYear, invalidYears} = filters;
+  const {query, group, publisher, fromYear, throughYear, invalidYears, tag} = filters;
   paperCatalogLoading();
   if (invalidYears && !facets) {
     renderPaperPage({...paperCatalog, papers: [], count: 0, page: 1}, filters);
@@ -634,7 +660,7 @@ async function loadPaperCatalog(facets = false) {
   }
   const params = new URLSearchParams({page: String(paperPage)});
   for (const [key, value] of Object.entries({
-    q: query, group, publisher, from_year: invalidYears ? "" : fromYear,
+    q: query, group, publisher, tag, from_year: invalidYears ? "" : fromYear,
     through_year: invalidYears ? "" : throughYear, facets: facets ? "1" : "",
   })) {
     if (value) params.set(key, value);
@@ -646,9 +672,10 @@ async function loadPaperCatalog(facets = false) {
       if (libraryData?.account?.id !== result.account?.id) commentDrafts.clear();
       libraryData = {account: result.account, google_available: result.google_available, groups: result.groups, comments: []};
       showAccount();
+      setOptions(paperTagFilter, (result.tags || []).map(label => [label, label]), "All tags");
       setOptions(paperPublisherFilter, result.publishers.map(name => [name, name]), "All publishers");
       setOptions(paperGroupFilter, result.groups.map(item => [item.id, item.name]), "All groups");
-      if (publisher !== paperPublisherFilter.value || group !== paperGroupFilter.value) {
+      if (publisher !== paperPublisherFilter.value || group !== paperGroupFilter.value || (tag || "") !== paperTagFilter.value) {
         paperPage = 1;
         return loadPaperCatalog();
       }
@@ -962,7 +989,7 @@ function submit(form, action, status = libraryStatus) {
 }
 
 paperSearch.addEventListener("input", () => refreshPaperFilters(true));
-for (const field of [paperPublisherFilter, paperGroupFilter]) {
+for (const field of [paperPublisherFilter, paperGroupFilter, paperTagFilter]) {
   field.addEventListener("change", () => refreshPaperFilters());
 }
 for (const field of [paperYearFrom, paperYearTo]) {
@@ -1613,6 +1640,7 @@ submit(element("archive-paper"), async () => {
 submit(metadataForm, () => updateLibrary("metadata", {
   ...Object.fromEntries(metadataFields.map(key => [key, metadataForm.elements[key].value.trim()])),
   paper_id: selectedPaper().id,
+  tags: tagNames(metadataForm.elements.tags.value),
   source: metadataSource || "Manual",
 }, "Metadata saved."));
 function groupCrossrefResults(container, matches, renderItem) {

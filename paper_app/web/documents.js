@@ -2,6 +2,8 @@
 
 const documentPicker = element("document-picker");
 const documentTopicFilter = element("document-topic-filter");
+const documentTagFilter = element("document-tag-filter");
+let activeDocumentTag = new URLSearchParams(location.search).get("tag") || "";
 let activeDocumentTopic = new URLSearchParams(location.search).get("topic") || "";
 let documentGoalOptionsSequence = 0;
 const documentEditor = element("document-editor");
@@ -118,14 +120,16 @@ function selectedDocument() {
 }
 
 function documentsInTopic() {
-  return libraryData.documents.filter(item => !activeDocumentTopic ||
-    item.topic?.toLowerCase() === activeDocumentTopic.toLowerCase());
+  return libraryData.documents.filter(item =>
+    (!activeDocumentTopic || item.topic?.toLowerCase() === activeDocumentTopic.toLowerCase()) &&
+    (!activeDocumentTag || item.tags?.some(tag => tag.toLowerCase() === activeDocumentTag.toLowerCase())));
 }
 
-function documentPageUrl(id, topic = activeDocumentTopic) {
+function documentPageUrl(id, topic = activeDocumentTopic, tag = activeDocumentTag) {
   const params = new URLSearchParams();
   if (id) params.set("document", id);
   if (topic) params.set("topic", topic);
+  if (tag) params.set("tag", tag);
   return location.pathname + (params.toString() ? `?${params}` : "");
 }
 
@@ -170,7 +174,7 @@ function renderDocumentFeed(item) {
   const list = element("news-list");
   list.replaceChildren();
   const entries = documentsInTopic();
-  if (!entries.length) add(list, "li", activeDocumentTopic ? "No entries match this topic."
+  if (!entries.length) add(list, "li", activeDocumentTopic || activeDocumentTag ? "No entries match these filters."
     : discussionWorkspace ? "No discussions yet." : "No news has been shared with you yet.");
   if (discussionWorkspace && element("discussion-sort").value === "top") {
     entries.sort((a, b) => b.vote_score - a.vote_score || b.id - a.id);
@@ -181,6 +185,7 @@ function renderDocumentFeed(item) {
     link.href = documentPageUrl(entry.id);
     if (entry.id === item?.id) link.setAttribute("aria-current", "true");
     add(row, "p", `Shared by ${entry.owner_name} · ${entry.updated} UTC${discussionWorkspace ? ` · Score ${entry.vote_score}` : ""}`);
+    if (entry.tags?.length) add(row, "small", entry.tags.join(" · "));
     if (discussionWorkspace) showSchedule(row, entry.scheduled_at);
   }
 }
@@ -322,6 +327,9 @@ function openDocument(item, { create = false, edit = false } = {}) {
   documentEditor.reset();
   documentEditor.elements.topic.value = item?.topic || (create ? activeDocumentTopic : "");
   renderDocumentContext(item);
+  renderTags(element("document-tags"), item?.tags, tag => {
+    location.href = documentPageUrl(null, activeDocumentTopic, tag);
+  });
   void loadDocumentGoalOptions(item, canEdit);
   const isNews = Boolean(item?.source_url) || (newsWorkspace && create);
   const sourceLink = element("news-source-link");
@@ -342,6 +350,7 @@ function openDocument(item, { create = false, edit = false } = {}) {
   if (feedWorkspace) renderDocumentFeed(item);
   documentEditor.elements.title.value = item?.title || "";
   documentEditor.elements.markdown.value = item?.markdown || "";
+  if (documentEditor.elements.tags) documentEditor.elements.tags.value = (item?.tags || []).join(", ");
   selectAudience(documentEditor.elements.audience, item?.audience || "owner");
   documentEditor.elements.recipients.value = (item?.recipients || []).join(", ");
   renderMarkdown(item?.markdown || "");
@@ -375,7 +384,14 @@ async function showDocuments(accountChanged) {
   setOptions(documentTopicFilter, [...topics.values()].sort((a, b) => a.localeCompare(b))
     .map(topic => [topic, topic]), "All topics");
   documentTopicFilter.value = topics.get(activeDocumentTopic.toLowerCase()) || "";
-  setOptions(documentPicker, documentsInTopic().map(item => [item.id, item.title]), "Choose a document");
+  const tags = new Map();
+  for (const item of libraryData.documents) for (const tag of item.tags || []) tags.set(tag.toLowerCase(), tag);
+  setOptions(documentTagFilter, [...tags.values()].sort((a, b) => a.localeCompare(b)).map(tag => [tag, tag]), "All tags");
+  documentTagFilter.value = tags.get(activeDocumentTag.toLowerCase()) || "";
+  const filtered = documentsInTopic();
+  const linked = libraryData.documents.find(item => String(item.id) === new URLSearchParams(location.search).get("document"));
+  if (linked && !filtered.includes(linked)) filtered.unshift(linked);
+  setOptions(documentPicker, filtered.map(item => [item.id, item.title]), "Choose a document");
   setOptions(documentFile, libraryData.papers.filter(paper => paper.has_pdf)
     .map(paper => [paper.id, paper.title || paperFilename(paper)]), "Choose a PDF");
   const requested = selectedDocument();
@@ -412,12 +428,15 @@ documentPicker.addEventListener("change", () => {
   ensureSelectedDocument().then(item => {
     if (item === undefined) return;
     openDocument(item);
-    if (feedWorkspace || activeDocumentTopic) history.replaceState(null, "", documentPageUrl(item?.id));
+    if (feedWorkspace || activeDocumentTopic || activeDocumentTag) history.replaceState(null, "", documentPageUrl(item?.id));
     return loadDocumentComments();
   }).catch(error => { documentStatus.textContent = error.message; });
 });
 documentTopicFilter.addEventListener("change", () => {
   location.href = documentPageUrl(null, documentTopicFilter.value);
+});
+documentTagFilter.addEventListener("change", () => {
+  location.href = documentPageUrl(null, activeDocumentTopic, documentTagFilter.value);
 });
 element("discussion-sort").addEventListener("change", () => renderDocumentFeed(selectedDocument()));
 element("clone-document").addEventListener("click", () => {
@@ -495,7 +514,7 @@ submit(documentEditor, async () => {
     const result = await api(discussionWorkspace ? "discussions" : "documents", {
       document_id: selectedDocument()?.id, revision: editingRevision, title: fields.title.value,
       audience: fields.audience.value, markdown: fields.markdown.value,
-      recipients: recipientNames(fields.recipients.value), topic,
+      recipients: recipientNames(fields.recipients.value), topic, tags: tagNames(fields.tags.value),
       ...(!fields.linked_goal.disabled && linkedGoal !== priorLink ? {
         research_goal_id: goalKind === "research_goal" ? Number(goalId) : null,
         agent_goal_id: goalKind === "agent_goal" ? Number(goalId) : null,
@@ -504,13 +523,15 @@ submit(documentEditor, async () => {
       ...(discussionWorkspace ? {scheduled_at: scheduledTime(fields.scheduled_at)} : {}),
     });
     const topicChanged = activeDocumentTopic && activeDocumentTopic.toLowerCase() !== topic.toLowerCase();
+    const tagChanged = activeDocumentTag && !tagNames(fields.tags.value).some(tag => tag.toLowerCase() === activeDocumentTag.toLowerCase());
     if (topicChanged) activeDocumentTopic = "";
+    if (tagChanged) activeDocumentTag = "";
     await loadLibrary();
     documentPicker.value = String(result.document_id);
     const item = await ensureSelectedDocument();
     if (!item) return;
     openDocument(item);
-    if (feedWorkspace || topicChanged || activeDocumentTopic) history.replaceState(null, "", documentPageUrl(item.id));
+    if (feedWorkspace || topicChanged || activeDocumentTopic || tagChanged || activeDocumentTag) history.replaceState(null, "", documentPageUrl(item.id));
     await loadDocumentComments();
     documentStatus.textContent = item.source_url ? "News entry saved." : discussionWorkspace ? "Discussion saved." : "Document saved.";
   } catch (error) {

@@ -24,7 +24,7 @@ from time import perf_counter
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
-from . import git_repos, git_tokens, mentions, projects, supervisor
+from . import git_repos, git_tokens, mentions, projects, supervisor, tags
 from . import passkeys
 from . import agent_schedules, compute_tasks
 from . import account_routes, accounts, admin_console, agent_goals, ai_accounts, client_distribution, comment_routes, crossref, document_context, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tasks, tools_catalog
@@ -502,7 +502,7 @@ class Handler(BaseHTTPRequestHandler):
                         if document is None:
                             raise LookupError
                         items = sharing.attach_recipients(db, "document", [dict(document)], account)
-                        data = {"document": document_context.detail(db, account, items[0])}
+                        data = {"document": tags.attach(db, "document", [document_context.detail(db, account, items[0])])[0]}
                     elif route == "/api/mentions":
                         data = mentions.inbox(db, account)
                     elif route == "/api/usernames":
@@ -540,12 +540,15 @@ class Handler(BaseHTTPRequestHandler):
                     elif route in ("/api/documents", "/api/news", "/api/discussions"):
                         data = library.snapshot(db, view=route.rsplit("/", 1)[-1], account=account,
                                                 include_comments=parse_qs(url.query).get("comments") != ["none"],
-                                                document_summaries=parse_qs(url.query).get("content") == ["summary"])
+                                                document_summaries=parse_qs(url.query).get("content") == ["summary"],
+                                                tag=parse_qs(url.query).get("tag", [""])[0])
                     else:
                         include_comments = parse_qs(url.query).get("comments") != ["none"]
                         data = library.snapshot(db, view=route.rsplit("/", 1)[-1], account=account,
                                                 include_comments=include_comments)
                 self.send_json(200, data)
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
             except storage.ERRORS as error:
                 LOG.error("Database snapshot failed (%s)", type(error).__name__)
                 self.send_json(500, {"error": "Could not read the library database"})

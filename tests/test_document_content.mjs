@@ -40,7 +40,7 @@ for (const kind of ['document', 'news', 'discussion']) {
     element, documentEditor: editor, documentStatus: {}, documentCommentForm: {reset() {}},
     libraryData: {account: {id: 1}}, activeDocumentTopic: '', audienceLabels: {}, roleLabels: {},
     newsWorkspace: kind === 'news', discussionWorkspace: kind === 'discussion', feedWorkspace: kind !== 'document',
-    setDocumentReply() {}, renderDocumentComments() {}, closePdf() {}, renderDocumentContext() {},
+    setDocumentReply() {}, renderDocumentComments() {}, closePdf() {}, renderDocumentContext() {}, renderTags() {},
     loadDocumentGoalOptions() {}, renderDiscussionMeta() {}, renderDocumentFeed() {}, selectAudience() {},
     renderMarkdown() {}, localSchedule() {},
   });

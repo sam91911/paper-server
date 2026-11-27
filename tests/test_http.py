@@ -479,7 +479,7 @@ class HttpTests(unittest.TestCase):
         status, payload = self.get(catalog + urlencode(fields))
         self.assertEqual(status, 200)
         result = json.loads(payload)
-        self.assertEqual(result['papers'], [{'id': 1, 'path': 'one.pdf', 'title': 'Énergie 光學%'}])
+        self.assertEqual(result['papers'], [{'id': 1, 'path': 'one.pdf', 'title': 'Énergie 光學%', 'tags': []}])
         self.assertEqual((result['count'], result['total'], result['page']), (1, 106, 1))
         self.assertEqual(result['publishers'], ['Example'])
         self.assertEqual(result['groups'], [{'id': 1, 'name': 'Optics'}])

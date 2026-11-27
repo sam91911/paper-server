@@ -913,3 +913,6 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
 #mention-inbox-list small { display: block; color: var(--muted); }
 .mention-options { position: static; }
 .mention-options [aria-selected="true"] { outline: 2px solid var(--accent); }
+
+.record-tags { display: flex; flex-wrap: wrap; gap: .4rem; margin-block: .5rem; }
+.record-tag { padding: .2rem .55rem; font-size: .85rem; }

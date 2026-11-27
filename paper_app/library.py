@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import database as storage
-from . import accounts, document_context, experiments, findings, goals, google_signin, mentions, metrics, sharing, skills, tasks, tools_catalog
+from . import accounts, document_context, experiments, findings, goals, google_signin, mentions, metrics, sharing, skills, tags, tasks, tools_catalog
 
 FIELDS = ("paper", "page", "metric", "value", "unit", "conditions", "evidence")
 METADATA = ("doi", "title", "authors", "year", "venue", "publisher", "source")
@@ -149,7 +149,7 @@ def initialize(path):
         for statement in (*findings.SCHEMA, *goals.SCHEMA, *metrics.SCHEMA):
             db.execute(statement)
         agent_goals.initialize(db)
-        for statement in (*agent_schedules.SCHEMA, *projects.SCHEMA, *mentions.SCHEMA, git_tokens.SCHEMA):
+        for statement in (*agent_schedules.SCHEMA, *projects.SCHEMA, *mentions.SCHEMA, *tags.SCHEMA, git_tokens.SCHEMA):
             db.execute(statement)
         document_context.initialize(db)
         for table, name, definition in (
@@ -340,7 +340,7 @@ def _publication_year(value):
 
 
 def paper_catalog(db, account, *, query="", group=None, publisher="", from_year=None,
-                  through_year=None, page=1, facets=False):
+                  through_year=None, page=1, facets=False, tag=""):
     params = sharing.viewer_params(account, group=group, publisher=publisher,
                                    from_year=from_year, through_year=through_year)
     active = sharing.PAPER_SCOPE + " SELECT {} FROM visible_papers WHERE " + ACTIVE_PAPERS
@@ -360,6 +360,9 @@ def paper_catalog(db, account, *, query="", group=None, publisher="", from_year=
     if group is not None:
         filters.append(":role='user' AND can_read_file=1 AND EXISTS (SELECT 1 FROM memberships m "
                        "WHERE m.paper_id=visible_papers.id AND m.group_id=:group)")
+    if tag:
+        params["tag"] = tags.key(tag)
+        filters.append("EXISTS (SELECT 1 FROM paper_tags t WHERE t.paper_id=visible_papers.id AND t.tag=:tag)")
     if publisher:
         filters.append("publisher=:publisher")
     if not postgres and (from_year is not None or through_year is not None):
@@ -379,12 +382,15 @@ def paper_catalog(db, account, *, query="", group=None, publisher="", from_year=
         + " ORDER BY path,id LIMIT :size OFFSET :offset",
         dict(params, size=CATALOG_PAGE_SIZE, offset=(page - 1) * CATALOG_PAGE_SIZE),
     )
-    data = {"papers": _catalog_summaries(rows), "count": count, "total": total, "page": page}
+    data = {"papers": tags.attach(db, "paper", _catalog_summaries(rows)), "count": count, "total": total, "page": page}
     if facets:
         data["account"] = account
         data["groups"] = []
         if account and account["role"] == "user":
             data["groups"] = [dict(row) for row in db.execute("SELECT * FROM groups ORDER BY name")]
+        data["tags"] = [row[0] for row in db.execute(
+            sharing.PAPER_SCOPE + " SELECT MIN(t.label) FROM paper_tags t JOIN visible_papers p ON p.id=t.paper_id "
+            "WHERE p.id NOT IN (SELECT paper_id FROM archived_papers) GROUP BY t.tag ORDER BY t.tag", params)]
         data["publishers"] = [row[0] for row in db.execute(
             active.format("DISTINCT publisher") + " AND publisher<>'' ORDER BY publisher", params,
         )]
@@ -399,7 +405,7 @@ def paper_detail(db, account, paper_id):
     ).fetchone()
     if row is None:
         raise sharing.AccessDenied
-    paper = dict(row)
+    paper = tags.attach(db, "paper", [dict(row)])[0]
     memberships = []
     if account and account["role"] == "user" and paper["can_read_file"]:
         memberships = [row[0] for row in db.execute(
@@ -437,9 +443,9 @@ def paper_archive(db, account):
     return {"papers": _catalog_summaries(_archived_rows(db, account))}
 
 
-def snapshot(db, view="library", account=None, *, include_comments=True, document_summaries=False):
+def snapshot(db, view="library", account=None, *, include_comments=True, document_summaries=False, tag=""):
     if view == "discussions":
-        return {"account": account, "documents": sharing.documents_for(db, account, summaries=True, discussion_only=True),
+        return {"account": account, "documents": sharing.documents_for(db, account, summaries=True, discussion_only=True, tag=tag),
                 "papers": [], "comments": []}
     def rows(query):
         return [dict(row) for row in db.execute(sharing.PAPER_SCOPE + query, sharing.viewer_params(account))]
@@ -466,7 +472,7 @@ def snapshot(db, view="library", account=None, *, include_comments=True, documen
     if view in ("documents", "news"):
         news = view == "news"
         return {"account": account, "documents": sharing.documents_for(db, account, summaries=document_summaries or news,
-                                                                        news_only=news), "papers": data["papers"],
+                                                                        news_only=news, tag=tag), "papers": data["papers"],
                 "comments": comment_snapshot(db, account, documents=True) if include_comments and not news else []}
     if view in ("paper-details", "compare"):
         data["account"] = account
@@ -548,6 +554,10 @@ def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id
 
 
 def save_metadata(db, paper_id, data):
+    if "tags" in data:
+        tags.save(db, "paper", paper_id, data["tags"])
+        if not any(field in data for field in (*METADATA, "source_url")):
+            return
     values = [data.get(field, "") for field in METADATA]
     if any(not isinstance(value, str) or len(value) > 4000 for value in values):
         raise ValueError("Invalid metadata fields")
