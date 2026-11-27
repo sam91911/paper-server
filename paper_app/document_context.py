@@ -1,4 +1,4 @@
-"""Access-aware links from documents to research and agent goals."""
+"""Access-aware links between documents, discussions, and goals."""
 
 from . import agent_goals, findings, goals, sharing
 
@@ -9,11 +9,18 @@ CREATE TABLE IF NOT EXISTS document_contexts (
     topic TEXT NOT NULL DEFAULT '',
     research_goal_id INTEGER REFERENCES research_goals(id),
     agent_goal_id INTEGER REFERENCES agent_goals(id),
+    report_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
     CHECK (research_goal_id IS NULL OR agent_goal_id IS NULL)
 )
 """
 JOIN = " LEFT JOIN document_contexts dc ON dc.document_id=d.id"
-COLUMNS = "COALESCE(dc.topic,'') AS topic,dc.research_goal_id,dc.agent_goal_id"
+COLUMNS = "COALESCE(dc.topic,'') AS topic,dc.research_goal_id,dc.agent_goal_id,dc.report_document_id"
+
+
+def initialize(db):
+    db.execute(SCHEMA)
+    if "report_document_id" not in {row["name"] for row in db.execute("PRAGMA table_info(document_contexts)")}:
+        db.execute("ALTER TABLE document_contexts ADD COLUMN report_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL")
 
 
 def options(db, account):
@@ -65,15 +72,23 @@ def link_for(db, account, kind, goal_id):
 
 def detail(db, account, document):
     context = db.execute(
-        "SELECT topic,research_goal_id,agent_goal_id FROM document_contexts WHERE document_id=?", (document["id"],)
+        "SELECT topic,research_goal_id,agent_goal_id,report_document_id FROM document_contexts WHERE document_id=?", (document["id"],)
     ).fetchone()
     document.update(dict(context) if context else {"topic": ""})
     return redact(db, account, [document])[0]
 
 
 def redact(db, account, items):
-    links = {}
+    links, reports = {}, {}
     for item in items:
+        report_id = item.pop("report_document_id", None)
+        if report_id is not None:
+            if report_id not in reports:
+                report = sharing.document_for(db, account, report_id)
+                reports[report_id] = report["title"] if report and report["kind"] == "document" else None
+            if reports[report_id] is not None:
+                item["report_document_id"] = report_id
+                item["report_link"] = {"id": report_id, "title": reports[report_id], "url": f"/documents?document={report_id}"}
         for kind in ("research_goal", "agent_goal"):
             field = kind + "_id"
             goal_id = item.pop(field, None)
@@ -88,8 +103,8 @@ def redact(db, account, items):
     return items
 
 
-def save(db, account, document_id, data):
-    if not {"topic", "research_goal_id", "agent_goal_id"}.intersection(data):
+def save(db, account, document_id, data, *, kind):
+    if not {"topic", "research_goal_id", "agent_goal_id", "report_document_id"}.intersection(data):
         return
     existing = db.execute("SELECT * FROM document_contexts WHERE document_id=?", (document_id,)).fetchone()
 
@@ -100,21 +115,31 @@ def save(db, account, document_id, data):
     if not isinstance(topic, str) or len(topic.strip()) > 120:
         raise ValueError("Enter a topic of up to 120 characters or leave it blank.")
     goal_ids = []
-    for kind in ("research_goal", "agent_goal"):
-        field = kind + "_id"
+    for goal_kind in ("research_goal", "agent_goal"):
+        field = goal_kind + "_id"
         goal_id = value(field, None)
         if field in data and goal_id is not None:
             findings.positive_id(goal_id)
-            if (existing is None or goal_id != existing[field]) and not link_for(db, account, kind, goal_id):
+            if (existing is None or goal_id != existing[field]) and not link_for(db, account, goal_kind, goal_id):
                 raise sharing.AccessDenied
         goal_ids.append(goal_id)
     if all(goal_id is not None for goal_id in goal_ids):
         raise ValueError("Choose one linked goal.")
-    if not topic.strip() and all(goal_id is None for goal_id in goal_ids):
+    report_id = value("report_document_id", None)
+    if "report_document_id" in data and report_id is not None:
+        if kind != "discussion":
+            raise ValueError("Link a report from a discussion.")
+        findings.positive_id(report_id)
+        report = sharing.document_for(db, account, report_id)
+        if not report or report["kind"] != "document":
+            raise sharing.AccessDenied
+    if report_id is None and not topic.strip() and all(goal_id is None for goal_id in goal_ids):
         db.execute("DELETE FROM document_contexts WHERE document_id=?", (document_id,))
     else:
         db.execute("""
-            INSERT INTO document_contexts(document_id,topic,research_goal_id,agent_goal_id) VALUES (?,?,?,?)
+            INSERT INTO document_contexts(document_id,topic,research_goal_id,agent_goal_id,report_document_id)
+            VALUES (?,?,?,?,?)
             ON CONFLICT(document_id) DO UPDATE SET topic=excluded.topic,
-                research_goal_id=excluded.research_goal_id,agent_goal_id=excluded.agent_goal_id
-        """, (document_id, topic.strip(), *goal_ids))
+                research_goal_id=excluded.research_goal_id,agent_goal_id=excluded.agent_goal_id,
+                report_document_id=excluded.report_document_id
+        """, (document_id, topic.strip(), *goal_ids, report_id))

@@ -112,6 +112,8 @@ EXPERIMENT_FIELDS = {
     "id": ID, "revision": ID, "title": STRING, "description": STRING, "audience": AUDIENCE,
     "paper_id": nullable(ID), "research_document_id": nullable(ID),
     "source_commit": {**nullable(STRING), "readOnly": True},
+    "project": {**obj({"id": ID, "title": STRING, "branch": STRING, "head": STRING},
+                       ("id", "title", "branch", "head")), "readOnly": True},
 }
 REPRODUCTION_OUTCOME = enum(*experiments.REPRODUCTION_OUTCOMES)
 REPRODUCTION_CHECK = {"run_revision": ID, "outcome": REPRODUCTION_OUTCOME,
@@ -156,6 +158,22 @@ TASK_FIELDS = {"title": schema("string", maxLength=160), "description": schema("
                "due_on": nullable(schema("string", format="date")),
                "issue_url": nullable(schema("string", format="uri")), "assignee": nullable(STRING)}
 
+PROJECT_SUMMARY = obj({"id": ID, "title": STRING, "description": STRING, "revision": ID,
+                       "access": enum("owner", "read", "write")})
+PROJECT_DETAIL = obj({"project": obj({**PROJECT_SUMMARY["properties"], "git_path": STRING,
+                     "branches": schema("object", additionalProperties=STRING),
+                     "experiments": array(obj({"id": ID, "title": STRING, "branch": STRING})),
+                     "members": array(obj({"username": STRING, "access": enum("read", "write")}))})}, ("project",))
+PHYSICAL_PLAN = {key: STRING for key in ("procedure", "equipment", "procurement", "estimated_cost",
+                                         "duration", "measurement", "expected_data")}
+PHYSICAL_LIST = obj({"proposals": array(obj({"id": ID, "title": STRING, "project_id": nullable(ID),
+                      "revision": ID, "editable": BOOLEAN, "status": enum("proposed"), **PHYSICAL_PLAN}))})
+GIT_TOKEN_KIND = enum("projects", "experiments", "documents")
+GIT_TOKEN_ACCESS = enum("read", "write")
+GIT_TOKEN_LIST = obj({"tokens": array(obj({"id": STRING, "kind": GIT_TOKEN_KIND, "resource_id": ID,
+                                          "access": GIT_TOKEN_ACCESS, "expires": COUNT}))})
+RESEARCH_AUTH = [{"ApplicationKey": []}, {"BrowserSession": []}]
+
 SCHEMAS = {
     "Error": obj({"error": STRING}, ("error",)),
     "AgentGoal": obj({"id": ID, "agent": nullable(STRING), "agent_role": nullable(AI_ROLE),
@@ -183,6 +201,7 @@ SCHEMAS = {
     "Document": obj({"id": ID, "owner_id": ID, "title": STRING, "markdown": STRING, "audience": AUDIENCE,
                      "source_url": STRING, "kind": enum("document", "discussion"), "scheduled_at": SCHEDULE_TIME,
                      **DOCUMENT_CONTEXT, "goal_link": GOAL_LINK, **VOTE_FIELDS,
+                     "report_document_id": ID, "report_link": obj({"id": ID, "title": STRING, "url": STRING}),
                      "revision": ID, "recipients": RECIPIENTS, "can_manage": BOOLEAN}, ("id", "title", "revision")),
     "Comment": obj({
         "id": ID, "paper_id": nullable(ID), "document_id": nullable(ID), "parent_id": nullable(ID),
@@ -235,8 +254,8 @@ REVIEW_DETAIL = obj({"review": REVIEW}, ("review",))
 REVIEW_LIST = obj({"reviews": array(REVIEW)}, ("reviews",))
 METRIC_FIELDS = {"page": ID, "metric": STRING, "value": STRING, "unit": STRING,
                  "conditions": STRING, "evidence": STRING}
-PAPER_METRIC = obj({"id": ID, "paper_id": ID, "revision": ID, "can_edit": BOOLEAN, "removed": BOOLEAN, **METRIC_FIELDS},
-                   ("id", "paper_id", "revision", "can_edit", "removed", *METRIC_FIELDS))
+PAPER_METRIC = obj({"id": ID, "paper_id": ID, "revision": ID, "can_edit": BOOLEAN, "can_remove_restore": BOOLEAN, "removed": BOOLEAN, **METRIC_FIELDS},
+                   ("id", "paper_id", "revision", "can_edit", "can_remove_restore", "removed", *METRIC_FIELDS))
 METRIC_HISTORY = obj({
     "original": obj(METRIC_FIELDS, METRIC_FIELDS),
     "corrections": array(obj({"revision": ID, "editor": STRING, "reason": STRING, "created": STRING, "removed": BOOLEAN, **METRIC_FIELDS},
@@ -256,6 +275,41 @@ PATHS = {
             "503": {"description": "Database unavailable", **media(obj({"status": enum("unavailable")}, ("status",)))},
         },
     }},
+    "/api/projects": {
+        "get": operation("List accessible projects or inspect a project", {"oneOf": [
+            obj({"projects": array(PROJECT_SUMMARY)}, ("projects",)), PROJECT_DETAIL,
+        ]}, params=(param("id", ID),), security=RESEARCH_AUTH),
+        "post": operation("Create, edit, share, or link an experiment to a project",
+            acknowledgement("project", **PROJECT_DETAIL["properties"]),
+            body={"oneOf": [
+                obj({"action": enum("create"), "title": STRING, "description": STRING}, ("action", "title")),
+                obj({"action": enum("edit"), "id": ID, "revision": ID, "title": STRING, "description": STRING},
+                    ("action", "id", "revision", "title")),
+                obj({"action": enum("share"), "id": ID, "username": STRING, "access": enum("read", "write", "none")},
+                    ("action", "id", "username", "access")),
+                obj({"action": enum("link_experiment"), "id": ID, "experiment_id": ID},
+                    ("action", "id", "experiment_id")),
+            ]}, security=RESEARCH_AUTH),
+    },
+    "/api/physical-proposals": {
+        "get": operation("Read physical experiment proposals", PHYSICAL_LIST,
+                         params=(param("id", ID),), security=RESEARCH_AUTH),
+        "post": operation("Create or revise a physical experiment proposal",
+            acknowledgement("proposals", **PHYSICAL_LIST["properties"]),
+            body=obj({"id": ID, "revision": ID, "project_id": nullable(ID), "title": STRING, **PHYSICAL_PLAN},
+                     ("title", *PHYSICAL_PLAN)), security=RESEARCH_AUTH),
+    },
+    "/api/git-tokens": {
+        "get": operation("List your active repository-scoped Git tokens", GIT_TOKEN_LIST, security=RESEARCH_AUTH),
+        "post": operation("Issue or revoke a repository-scoped Git token",
+            acknowledgement("tokens", **GIT_TOKEN_LIST["properties"], token=STRING),
+            body={"oneOf": [
+                obj({"action": enum("create"), "kind": GIT_TOKEN_KIND, "resource_id": ID,
+                     "access": GIT_TOKEN_ACCESS, "days": schema("integer", minimum=1, maximum=90)},
+                    ("action", "kind", "resource_id", "access", "days")),
+                obj({"action": enum("revoke"), "id": STRING}, ("action", "id")),
+            ]}, security=RESEARCH_AUTH),
+    },
     "/api/agent-schedules": {
         "get": operation("List managed agent schedules and their latest executions", AGENT_SCHEDULES,
                          security=[{"ApplicationKey": []}, {"BrowserSession": []}]),
@@ -475,7 +529,9 @@ PATHS = {
             acknowledgement("metric_id", "revision", "removed", metric_id=ID, revision=ID, removed=BOOLEAN),
             body=obj({"metric_id": ID, "revision": ID, "reason": STRING, "action": enum("correct", "remove", "restore"), **METRIC_FIELDS},
                      ("metric_id", "revision", "reason")),
-            description="Requires paper access and ownership or an explicit grant. Trusted humans can edit legacy unowned metrics. The default action is correct and requires a changed field. Remove and restore require only the ID, revision, action, and reason. A stale revision returns 409."),
+            description="Agents with access to the paper source can correct active extraction fields. "
+                        "Owners and named editors can also remove or restore metrics. Trusted humans can edit legacy unowned metrics. "
+                        "Correct requires a changed field. Remove and restore require the ID, revision, action, and reason. A stale revision returns 409."),
     },
     "/api/metric-history": {"get": operation("Read the extracted values and correction history",
         METRIC_HISTORY, params=(param("metric_id", ID, required=True), BEFORE),
@@ -536,8 +592,10 @@ PATHS = {
         "post": operation("Create or update a standalone discussion thread",
             acknowledgement("document_id", "revision", document_id=ID, revision=ID),
             body=obj({"document_id": ID, "revision": ID, "title": STRING, "markdown": STRING,
-                      "audience": AUDIENCE, "recipients": RECIPIENTS, "scheduled_at": SCHEDULE_TIME, **DOCUMENT_CONTEXT},
-                      ("title", "markdown"))),
+                      "audience": AUDIENCE, "recipients": RECIPIENTS, "scheduled_at": SCHEDULE_TIME,
+                      "report_document_id": nullable(ID), **DOCUMENT_CONTEXT},
+                     ("title", "markdown")), description="Use report_document_id to link a readable report. "
+                     "The link is returned only to readers who can access the report; null clears it."),
     },
     "/api/document": {"get": operation("Read a visible document", obj({"document": ref("Document")}, ("document",)),
         params=(param("id", ID, required=True),))},

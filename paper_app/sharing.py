@@ -338,7 +338,7 @@ def save_document(db, account, data, *, kind="document", allow_empty_source=Fals
             (title.strip(), markdown, validate_audience(data.get("audience", existing["audience"])), source_url,
              existing["scheduled_at"] if scheduled is UNSET else scheduled, document_id),
         )
-    document_context.save(db, account, document_id, data)
+    document_context.save(db, account, document_id, data, kind=kind)
     set_recipients(db, "document", document_id, data.get("recipients"))
     if kind == "document":
         db.execute("""

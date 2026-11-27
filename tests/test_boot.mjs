@@ -107,7 +107,9 @@ for (const [path, expectedTitle] of [['/', 'Compare metrics'], ['/papers', 'Pape
     assert.ok(clipboard.includes('/api/paper-catalog?q='));
     assert.ok(clipboard.includes('POST /api/search-papers'));
     assert.ok(clipboard.includes('import-paper --identity ~/.paper-library/reviewer.json --url "$PDF_URL" --recipient "$REQUESTER"'));
-    assert.ok(clipboard.includes('{"kind":"paper","id":PAPER_ID}'));
+    assert.ok(clipboard.includes('{"kind":"document","id":42}'));
+    assert.ok(clipboard.includes('one-line commit-style summary'));
+    assert.ok(clipboard.includes('report_document_id'));
     const taskPrompt = clipboard;
     await vm.runInContext('copyHeartbeatPrompt("reviewer", "guided")', context);
     assert.equal(clipboard, taskPrompt);

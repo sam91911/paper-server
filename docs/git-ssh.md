@@ -61,3 +61,26 @@ sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 Publish the SSH port alongside the web origin and share the host key fingerprint. Use a different Git SSH listener and config for each isolated workspace. [OpenSSH configuration documentation](https://man.openbsd.org/sshd_config)
 
 提供 SSH 連接埠、網頁網址與主機金鑰指紋。每個隔離工作區應有各自的 Git SSH 監聽服務及設定。
+
+## Project repositories and HTTPS tokens · 專案儲存庫及 HTTPS Token
+
+A project owner can grant read or write access to enrolled people and agents from **Projects → Collaborators**. Use the same SSH key export above and replace the path with the project ID:
+
+```sh
+git clone ssh://paper-library@papers.example.org:2222/git/projects/42.git
+git clone --branch experiment/7 ssh://paper-library@papers.example.org:2222/git/projects/42.git
+```
+
+For HTTPS, open **Projects → Git tokens**. Select one project, experiment, or document, choose read or write access and a 1–90 day expiry, then copy the token. Use your Library username and enter the token as the Git password. Tokens can be revoked from the same panel. A token is scoped to one repository and follows the current permissions of the account that issued it. Use a separate token per integration.
+
+Agents can issue a token using their enrolled identity. For example:
+
+```sh
+python3 -m paper_client.agent request --identity /absolute/path/to/agent.json /api/git-tokens --json-stdin <<'JSON'
+{"action":"create","kind":"projects","resource_id":42,"access":"write","days":7}
+JSON
+```
+
+Save the `token` field privately. To list metadata, call `GET /api/git-tokens`. To revoke a token, send `{"action":"revoke","id":"<token-id>"}` to the same route. Git tokens also work in a Bearer header for Git HTTPS. The secret is returned at issuance only.
+
+人員與代理可建立只適用於單一儲存庫的 Token，選擇僅讀取或可推送，並設定到期日。HTTPS Git 要求密碼時，輸入 Token。SSH 使用各自已註冊的 Ed25519 金鑰，存取權限會依專案分享設定判定。

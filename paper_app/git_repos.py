@@ -9,9 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory, TemporaryFile
 
-from . import accounts, database, experiments, git_push, library, sharing
+from . import accounts, database, experiments, git_push, git_tokens, library, projects, sharing
 
-ROUTE = re.compile(r"/git/(documents|experiments)/([1-9][0-9]{0,18})\.git/(info/refs|git-upload-pack|git-receive-pack)")
+ROUTE = re.compile(r"/git/(documents|experiments|projects)/([1-9][0-9]{0,18})\.git/(info/refs|git-upload-pack|git-receive-pack)")
 REQUEST_MAX = 1024 * 1024
 GIT_TIMEOUT = 60
 
@@ -130,7 +130,23 @@ class Repository:
             self.run("fast-import", "--quiet", stdin=history)
 
 
+def new_project():
+    executable = shutil.which("git")
+    if not executable:
+        raise ValueError("Git is unavailable on this server.")
+    with TemporaryDirectory(prefix="paper-project-") as directory:
+        repo = Repository(executable, directory, None)
+        saved = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        repo.import_history("refs/heads/main", [
+            ("Paper Library", saved, "Initialize project", {"README.md": b"# Research project\n"}),
+        ])
+        head = repo.head("refs/heads/main")
+        return head, git_push.pack_refs(repo, head)
+
+
 def resource_scope(db, account, kind, resource, *, writing=False):
+    if kind == "projects":
+        return projects.scope(db, account, resource, writing=writing)
     if kind == "experiments":
         return experiments.require_experiment(db, resource, account, edit=writing)
     document = sharing.document_for(db, account, resource)
@@ -141,7 +157,31 @@ def resource_scope(db, account, kind, resource, *, writing=False):
     return document
 
 
+def configure_receive(repo):
+    for option, value in (
+        ("receive.denyNonFastForwards", "true"), ("receive.denyDeletes", "true"),
+        ("receive.fsckObjects", "true"), ("receive.maxInputSize", str(git_push.MAX_PUSH_BYTES)),
+    ):
+        repo.run("config", option, value)
+
+
+def current_head(repo, ref):
+    try:
+        return repo.head(ref)
+    except subprocess.CalledProcessError:
+        return "0" * 40
+
+
 def prepare(repo, db, account, kind, resource, row, writing):
+    if kind == "projects":
+        pack = db.execute("SELECT pack FROM projects WHERE id=?", (resource,)).fetchone()[0]
+        repo.run("index-pack", "--stdin", input=bytes(pack))
+        for branch, head in json.loads(row["refs"]).items():
+            repo.run("update-ref", f"refs/heads/{branch}", head)
+        if writing:
+            configure_receive(repo)
+        return None, row["git_revision"], None
+
     owner = kind == "documents" and sharing.is_owner(db, account, row["owner_id"])
     state = None
     if kind == "experiments" or owner:
@@ -161,11 +201,7 @@ def prepare(repo, db, account, kind, resource, row, writing):
         first = (state["base_revision"] + 1 if state else 1) if owner else row["revision"]
         repo.import_history(ref, document_commits(db, resource, first), state["head"] if state else None)
     if writing:
-        for option, value in (
-            ("receive.denyNonFastForwards", "true"), ("receive.denyDeletes", "true"),
-            ("receive.fsckObjects", "true"), ("receive.maxInputSize", str(git_push.MAX_PUSH_BYTES)),
-        ):
-            repo.run("config", option, value)
+        configure_receive(repo)
     return ref, row["revision"], state["head"] if state else None
 
 
@@ -200,9 +236,34 @@ def read_packet_body(handler, maximum):
         buffer.extend(segment)
 
 
-def accept_update(repo, target, authenticate, kind, resource, revision, state, old, new, storage_limit):
+def accept_update(repo, target, authenticate, kind, resource, revision, state, old, new, storage_limit, *, ref=None):
+    if kind == "projects":
+        with library.connect(target) as db:
+            database.begin(db, write=True)
+            account = authenticate(db)
+            row = resource_scope(db, account, kind, resource, writing=True)
+            if row["git_revision"] != revision:
+                raise git_push.PushRejected("The repository changed while you were pushing. Fetch and retry.")
+            branch = ref.removeprefix("refs/heads/")
+            refs = json.loads(row["refs"])
+            if branch not in refs:
+                if branch == "experiment" or branch.startswith("experiment/"):
+                    raise git_push.PushRejected("Create experiment branches in the project.")
+                if len(refs) >= projects.MAX_BRANCHES:
+                    raise git_push.PushRejected(f"A project can have up to {projects.MAX_BRANCHES} branches.")
+            if refs.get(branch, "0" * 40) != old:
+                raise git_push.PushRejected("The branch changed. Fetch and retry.")
+            git_push.project_updates(repo, old, new, refs)
+            refs[branch] = new
+            packed = git_push.pack_refs(repo, *sorted(set(refs.values())))
+            previous_bytes = db.execute("SELECT length(pack) FROM projects WHERE id=?", (resource,)).fetchone()[0]
+            library.require_upload_space(db, storage_limit, max(0, len(packed) - previous_bytes))
+            db.execute("UPDATE projects SET refs=?,pack=?,git_revision=git_revision+1 WHERE id=?",
+                       (json.dumps(refs), packed, resource))
+        return
+
     documents = git_push.updates(repo, old, new, kind, resource)
-    packed = git_push.pack_branch(repo, new)
+    packed = git_push.pack_refs(repo, new)
     with library.connect(target) as db:
         database.begin(db, write=True)
         account = authenticate(db)
@@ -218,16 +279,21 @@ def receive(handler, repo, kind, resource, ref, revision, state, output):
         # Git probes authentication before a streamed push.
         repo.run("receive-pack", "--stateless-rpc", ".", input=payload, stdout=output)
         return
-    old, new, capabilities = git_push.request_update(payload, ref)
+    old, new, capabilities, ref = git_push.request_update(payload, ref)
     try:
-        if old != repo.head(ref):
+        if old != current_head(repo, ref):
             raise git_push.PushRejected("The branch changed. Fetch and rebase first.")
         repo.run("receive-pack", "--stateless-rpc", ".", input=payload, stdout=output)
-        if repo.head(ref) != new:
+        if current_head(repo, ref) != new:
             # Git generated a native rejection without changing the temporary ref.
             return
-        accept_update(repo, handler.server.database, handler.require_account, kind, resource, revision,
-                      state, old, new, getattr(handler.server, "storage_limit", 0))
+        accept_update(repo, handler.server.database,
+                      lambda db: git_tokens.authenticate(handler, db, kind, resource, True),
+                      kind, resource, revision, state, old, new, getattr(handler.server, "storage_limit", 0), ref=ref)
+    except (sharing.AccessDenied, accounts.SignInRequired):
+        output.seek(0)
+        output.truncate()
+        output.write(git_push.rejection(ref, capabilities, "Git write access is unavailable."))
     except (git_push.PushRejected, sharing.EditConflict, library.UploadQuotaExceeded) as error:
         output.seek(0)
         output.truncate()
@@ -273,7 +339,7 @@ def serve(handler, url, match):
             protocol = None if writing else handler.headers.get("Git-Protocol")
             with library.connect(handler.server.database) as db:
                 database.begin(db)
-                account = handler.require_account(db)
+                account = git_tokens.authenticate(handler, db, kind, resource, writing)
                 row = resource_scope(db, account, kind, resource, writing=writing)
                 repo = Repository(executable, directory, protocol)
                 ref, revision, state = prepare(repo, db, account, kind, resource, row, writing)
@@ -288,7 +354,14 @@ def serve(handler, url, match):
                 repo.run(pack, "--stateless-rpc", ".", input=read_packet_body(handler, REQUEST_MAX), stdout=output)
             send_result(handler, output, media + ("-advertisement" if listing else "-result"))
     except accounts.SignInRequired:
-        handler.send_json(401, {"error": "Use a Paper Library application key or an enrolled agent session for Git."})
+        output = b"Use a Paper Library Git token or an enrolled identity.\n"
+        handler.send_response(401)
+        handler.send_header("WWW-Authenticate", 'Basic realm="Paper Library Git"')
+        handler.send_header("Content-Type", "text/plain; charset=utf-8")
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("Content-Length", str(len(output)))
+        handler.end_headers()
+        handler.wfile.write(output)
     except sharing.AccessDenied:
         handler.send_json(403 if writing else 404, {"error": "Git access is unavailable."})
     except LookupError:

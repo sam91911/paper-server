@@ -404,6 +404,17 @@ def detail(db, account, experiment_id):
     experiment = require_experiment(db, experiment_id, account)
     can_edit = allowed(db, 'experiment', experiment, account, edit=True)
     experiment_data = dict(experiment)
+    from . import projects
+    linked = db.execute("SELECT project_id FROM project_experiments WHERE experiment_id=?", (experiment_id,)).fetchone()
+    if linked:
+        try:
+            project = projects.scope(db, account, linked["project_id"])
+        except sharing.AccessDenied:
+            pass
+        else:
+            branch = f"experiment/{experiment_id}"
+            experiment_data["project"] = {"id": project["id"], "title": project["title"], "branch": branch,
+                                          "head": json.loads(project["refs"])[branch]}
     brief_id = experiment_data.pop('goal_brief_id')
     brief = None
     if brief_id is not None:

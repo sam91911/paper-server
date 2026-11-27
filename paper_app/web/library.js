@@ -2071,8 +2071,8 @@ function showPaperMetric() {
   element("metric-correction-fields").hidden = Boolean(metric.removed);
   element("metric-correction-fields").disabled = Boolean(metric.removed);
   element("save-metric-correction").hidden = Boolean(metric.removed);
-  element("remove-metric").hidden = Boolean(metric.removed);
-  element("restore-metric").hidden = !metric.removed;
+  element("remove-metric").hidden = metric.removed || !metric.can_remove_restore;
+  element("restore-metric").hidden = !metric.removed || !metric.can_remove_restore;
   metricEditors.hidden = true;
   element("metric-editors-panel").hidden = true;
   metricOlder.hidden = true;

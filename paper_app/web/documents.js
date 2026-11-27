@@ -128,11 +128,15 @@ function documentPageUrl(id, topic = activeDocumentTopic) {
 function renderDocumentContext(item) {
   const context = element("document-context");
   context.replaceChildren();
-  context.hidden = !item?.topic && !item?.goal_link;
+  context.hidden = !item?.topic && !item?.goal_link && !item?.report_link;
   if (item?.topic) add(context, "a", item.topic).href = documentPageUrl(null, item.topic);
   if (item?.goal_link) {
     if (item.topic) context.append(" · ");
     add(context, "a", item.goal_link.label).href = item.goal_link.url;
+  }
+  if (item?.report_link) {
+    if (item.topic || item.goal_link) context.append(" · ");
+    add(context, "a", `Report: ${item.report_link.title}`).href = item.report_link.url;
   }
 }
 

@@ -110,7 +110,7 @@ def connect(path):
 
 
 def initialize(path):
-    from . import agent_goals, agent_schedules, ai_accounts, compute_tasks, human_keys, passkeys, reviews
+    from . import agent_goals, agent_schedules, ai_accounts, compute_tasks, git_tokens, projects, human_keys, passkeys, reviews
 
     with connect(path) as db:
         if isinstance(path, storage.PostgreSQL):
@@ -149,9 +149,9 @@ def initialize(path):
         for statement in (*findings.SCHEMA, *goals.SCHEMA, *metrics.SCHEMA):
             db.execute(statement)
         agent_goals.initialize(db)
-        for statement in agent_schedules.SCHEMA:
+        for statement in (*agent_schedules.SCHEMA, *projects.SCHEMA, git_tokens.SCHEMA):
             db.execute(statement)
-        db.execute(document_context.SCHEMA)
+        document_context.initialize(db)
         for table, name, definition in (
             ("metric_corrections", "removed", metrics.REMOVED_COLUMN),
             ("papers", "pdf_size", "INTEGER"),
@@ -176,7 +176,8 @@ def initialize(path):
         db.execute("CREATE INDEX IF NOT EXISTS documents_updated ON documents(updated DESC, id DESC)")
         db.execute("INSERT INTO comment_id_sequence SELECT 1, COALESCE(MAX(id), 0) FROM comments WHERE TRUE ON CONFLICT DO NOTHING")
         for table in ("comments", "comment_authors", "item_grants", "agent_goal_events", "agent_goal_readers",
-                      "review_requests"):
+                      "review_requests", "document_contexts", "projects", "project_members", "project_experiments",
+                      "physical_proposals", "git_tokens"):
             if db.execute(f"PRAGMA foreign_key_check({table})").fetchone():
                 raise sqlite3.IntegrityError("Invalid library references during migration")
 
@@ -192,7 +193,8 @@ def require_upload_space(db, limit, additional_bytes):
     used = db.execute(
         "SELECT COALESCE((SELECT SUM(pdf_size) FROM papers),0) "
         "+ COALESCE((SELECT SUM(length(content)) FROM research_versions),0) "
-        "+ COALESCE((SELECT SUM(length(pack)) FROM git_repository_state),0)"
+        "+ COALESCE((SELECT SUM(length(pack)) FROM git_repository_state),0) "
+        "+ COALESCE((SELECT SUM(length(pack)) FROM projects),0)"
     ).fetchone()[0]
     # Libraries created before size tracking already have PDF files on disk.
     for (path,) in db.execute("SELECT path FROM papers WHERE sha256 IS NOT NULL AND pdf_size IS NULL"):

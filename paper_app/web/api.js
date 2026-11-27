@@ -18,10 +18,13 @@ async function api(route, data) {
 
 async function copyCloneCommand(kind, id, status, branch = "") {
   const url = `${location.origin}/git/${kind}/${id}.git`;
-  const command = `git --config-env=http.extraHeader=PAPER_GIT_AUTH clone${branch ? ` --branch ${branch}` : ""} "${url}"`;
+  const git = kind === "projects" ? "git" : "git --config-env=http.extraHeader=PAPER_GIT_AUTH";
+  const command = `${git} clone${branch ? ` --branch ${branch}` : ""} "${url}"`;
   try {
     await navigator.clipboard.writeText(command);
-    status.textContent = "Clone command copied. Set PAPER_GIT_AUTH to an Authorization header for your application key.";
+    status.textContent = kind === "projects"
+      ? "Clone command copied. Enter your username and Git token when prompted."
+      : "Clone command copied. Set PAPER_GIT_AUTH to an Authorization header for your Git token or application key.";
   } catch {
     status.textContent = command;
   }

@@ -72,6 +72,7 @@ def retain_detections(db, paper_id, rows):
 def list_metrics(db, account, paper_id, after, *, removed=False):
     paper = paper_for(db, account, paper_id)
     can_edit = can_edit_all(db, paper, account)
+    agent = account["role"] in ("local", "cloud")
     owner = paper["owner_id"] is not None and can_edit
     rows = db.execute(
         f"SELECT m.cursor_id AS id,{COLUMNS},COALESCE(c.revision,1) AS revision,COALESCE(c.removed,0) AS removed,"
@@ -84,7 +85,8 @@ def list_metrics(db, account, paper_id, after, *, removed=False):
     for row in rows[:PAGE_SIZE]:
         item = dict(row)
         item["removed"] = bool(item["removed"])
-        item["can_edit"] = bool(item.pop("granted") or can_edit)
+        item["can_remove_restore"] = bool(item.pop("granted") or can_edit)
+        item["can_edit"] = item["can_remove_restore"] or (agent and not item["removed"])
         items.append(item)
     return {"metrics": items, "can_manage_editors": owner, "can_claim_paper": paper["owner_id"] is None and can_edit,
             "next_after": items[-1]["id"] if len(rows) > PAGE_SIZE else None}
@@ -120,7 +122,11 @@ def correct(db, account, data):
     metric_id = identifier(data.get("metric_id"))
     revision = identifier(data.get("revision"))
     original, paper = metric_for(db, account, metric_id)
-    if not (can_edit_all(db, paper, account) or db.execute(
+    action = data.get("action", "correct")
+    if action not in ("correct", "remove", "restore"):
+        raise ValueError("Choose correct, remove, or restore.")
+    agent_correction = action == "correct" and account["role"] in ("local", "cloud")
+    if not (agent_correction or can_edit_all(db, paper, account) or db.execute(
         "SELECT 1 FROM metric_editors WHERE metric_id=? AND account_id=?", (metric_id, account["id"]),
     ).fetchone()):
         raise sharing.AccessDenied
@@ -130,10 +136,7 @@ def correct(db, account, data):
         raise sharing.EditConflict("This metric changed. Reload it before saving.")
     base = latest or original
     was_removed = bool(latest and latest["removed"])
-    action = data.get("action", "correct")
     reason = correction_text(data, "reason", 2000, required=True)
-    if action not in ("correct", "remove", "restore"):
-        raise ValueError("Choose correct, remove, or restore.")
     if was_removed != (action == "restore"):
         raise ValueError("This metric is removed. Restore it first." if was_removed else "This metric is active.")
     if action != "correct":

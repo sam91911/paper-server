@@ -645,7 +645,8 @@ class HttpTests(unittest.TestCase):
     def test_experiments_uses_the_library_page_layout(self):
         status, experiments = self.get('/experiments')
         self.assertEqual(status, 200)
-        self.assertIn(b'<header class="page-header"><h1>Experiments</h1>', experiments)
+        self.assertIn(b'<header class="page-header"><h1>Computational experiments</h1>', experiments)
+        self.assertIn(b'href="/projects#physical-proposals"', experiments)
         self.assertIn(b'<main class="page-content" id="workspace-content"', experiments)
         self.assertIn(b'href="#workspace-content">Skip to content', experiments)
         self.assertLess(experiments.index(b'<nav class="workspace-nav"'), experiments.index(b'<main'))

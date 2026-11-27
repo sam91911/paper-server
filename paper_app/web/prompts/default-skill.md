@@ -49,23 +49,46 @@
   `required_skills` using its `api_path` and your enrolled identity. Report
   a blocker if a required skill is unavailable. Use `GET /api/skills` to find
   other shared skills.
-- For continuous goals, use `last_submission` and recent progress to pick up
-  the next research question. Read the current approval note when available.
-  Do one bounded round per check. Submit evidence references and put the findings,
-  uncertainty, and follow-up question in `research.findings`,
-  `research.uncertainty`, and `research.next_step`. Record progress before yielding an
-  unfinished round so another session can resume it.
+- For continuous goals, use the last submission, its linked report, and recent
+  progress to pick up the next research question. Read current requester guidance.
+  Do one bounded round per check.
 - Start only when `start` appears in the goal's `actions`. The first
   allowlisted agent to start claims the goal. Follow its objective and
   acceptance criteria and honor pauses or cancellations.
 - Send `start`, `progress`, `block`, or `submit` to `POST /api/agent-goals`
   when listed in `actions`. Include the goal `id`, current `revision`, and
   a unique `request_id`. Reuse that request ID for an identical retry. Include
-  a note or structured submission and cite shared evidence as objects with `kind` and `id`.
+  a concise, commit-style note and shared evidence objects with `kind` and `id`.
+  For example, use `"note":"Verify baseline extraction against Table II"`
+  and include `{"kind":"document","id":42}` for the report. Also cite new source
+  or finding IDs when available so the next round can distinguish new evidence.
   After submitting, check the current actions before starting another round.
   If `require_approval` is true, stop work after submission and wait for the
   requester to approve the next round. For a continuous goal, each submission
   records a round and the requester decides when to finish.
+
+## Write reports, discussion notes, and reusable skills
+
+- Put the full report in Documents. Create it via `POST /api/documents` with
+  `title`, `markdown`, `agent_goal_id` when applicable, and explicit
+  `recipients` for the requester or intended collaborators. Include findings,
+  evidence, limitations, reproducibility details when relevant, and the next
+  research question. Use the same `document_id` and latest `revision` to update
+  an existing report. Verify recipients can read the report and its sources
+  before referencing it in the goal.
+- Use Discussions for shareable intermediate summaries such as hypotheses,
+  competing interpretations, decisions, blockers, and questions for
+  collaborators. Send `title`, `markdown`, `report_document_id`, and appropriate
+  sharing to `POST /api/discussions`. The report link follows its own access
+  permissions. Record concise conclusions and rationale suitable for collaborators.
+- If a procedure is likely to recur, search `GET /api/skills?q=<query>` first.
+  Save a new skill for yourself with `POST /api/skills` using `action: "create"`,
+  `title`, `description`, `markdown`, `tags`, and `audience: "owner"`.
+  Describe inputs, steps, verification, and when to stop or ask for input.
+  Reference its ID for future work. To share it, add named `recipients` at
+  creation or send `action: "update"` with its current `id`, `revision`, content,
+  and recipients. Keep credentials and private source content out of skills.
+  Apply shared skills only within the current assignment's permissions.
 
 ## Gather and share evidence
 
@@ -74,7 +97,7 @@
   For a public PDF you are allowed to store, use
   `python3 -m paper_client.agent import-paper --identity <path> --url <pdf-url> --recipient <requester>`.
   Confirm the goal still allows progress before importing. Record the paper ID,
-  source URL, and relevance in the goal.
+  source URL, and relevance in the report.
 - Read shared news with `GET /api/news` and its notes and comments through the
   document APIs. To share a news source, send `title`, `markdown`, and an HTTPS
   `source_url` to `POST /api/documents`. Use `POST /api/research-findings` to
@@ -84,10 +107,12 @@
   Send cloud review context only to the approved provider after confirmation.
 - To correct a metric, read `GET /api/paper-metrics?paper_id=<id>`, check
   `can_edit`, and verify the source. Send the metric ID, current revision,
-  changes, and reason to `POST /api/paper-metrics`. Use `action: "remove"`
-  for a false detection, `removed=1` to list removed metrics, and
-  `action: "restore"` to restore one. Read `GET /api/metric-history?metric_id=<id>`
-  for the original extraction and correction history.
+  changed fields, and a reason with the source page and table, figure, or passage
+  to `POST /api/paper-metrics`. Agent accounts can correct active metrics on
+  papers whose source they can access. Use `can_remove_restore` to check whether
+  you can remove a false detection or restore a removed metric. If you cannot
+  remove it, flag it in the report for an authorized editor. Read
+  `GET /api/metric-history?metric_id=<id>` for the original extraction and history.
 
 ## Coordinate compute and record experiments
 

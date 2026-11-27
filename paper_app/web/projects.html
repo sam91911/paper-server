@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Projects · Paper Library</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body class="workspace-shell">
+<!-- workspace-shell -->
+<header class="page-header"><h1>Projects</h1></header>
+<main class="page-content" id="workspace-content" tabindex="-1">
+  <p id="project-status" role="status"></p>
+  <p id="project-sign-in" hidden><a href="/account">Sign in to manage projects</a>.</p>
+  <section id="project-workspace" hidden>
+    <details>
+      <summary>New project</summary>
+      <form id="new-project" class="experiment-form">
+        <label>Title <input name="title" required maxlength="160"></label>
+        <label>Description <textarea name="description" maxlength="20000" rows="3"></textarea></label>
+        <button>Create project</button>
+      </form>
+    </details>
+    <form id="project-picker" class="filters">
+      <label>Project <select name="project"></select></label>
+      <button type="button" id="project-refresh" class="secondary">Refresh</button>
+    </form>
+    <section id="project-detail" hidden>
+      <h2 id="project-title"></h2>
+      <p id="project-description" class="goal-brief-text"></p>
+      <label>HTTPS clone URL <input id="project-clone-url" readonly></label>
+      <button type="button" id="project-copy-clone" class="secondary">Copy clone command</button>
+      <h3>Branches</h3>
+      <ul id="project-branches"></ul>
+      <form id="project-edit" class="experiment-form" hidden>
+        <label>Title <input name="title" required maxlength="160"></label>
+        <label>Description <textarea name="description" maxlength="20000" rows="3"></textarea></label>
+        <button>Save project details</button>
+      </form>
+      <form id="project-link" class="filters" hidden>
+        <label>Computational experiment <select name="experiment" required></select></label>
+        <button>Create experiment branch</button>
+      </form>
+      <section id="project-collaborators" hidden>
+        <h3>Collaborators</h3>
+        <ul id="project-members"></ul>
+        <form id="project-share" class="filters">
+          <label>Username <input name="username" required></label>
+          <label>Access <select name="access"><option value="read">Read</option><option value="write">Read and write</option><option value="none">Remove access</option></select></label>
+          <button>Save access</button>
+        </form>
+      </section>
+    </section>
+    <details id="physical-proposals">
+      <summary>Physical experiment proposals</summary>
+      <ul id="physical-proposal-list" class="experiment-records"></ul>
+      <form id="physical-proposal-form" class="experiment-form">
+        <label>Title <input name="title" required maxlength="160"></label>
+        <label>Project <select name="project_id"></select></label>
+        <label>Procedure <textarea name="procedure" rows="3" required maxlength="12000"></textarea></label>
+        <label>Equipment and materials <textarea name="equipment" rows="2" required maxlength="12000"></textarea></label>
+        <label>How to obtain them <textarea name="procurement" rows="2" required maxlength="12000"></textarea></label>
+        <label>Estimated cost and currency <textarea name="estimated_cost" rows="2" required maxlength="12000"></textarea></label>
+        <label>Expected duration <textarea name="duration" rows="2" required maxlength="12000"></textarea></label>
+        <label>Measurement plan <textarea name="measurement" rows="3" required maxlength="12000"></textarea></label>
+        <label>Expected data <textarea name="expected_data" rows="3" required maxlength="12000"></textarea></label>
+        <button>Save proposal</button>
+        <button type="button" id="physical-proposal-new" class="secondary">New proposal</button>
+      </form>
+    </details>
+    <details id="git-token-settings">
+      <summary>Git tokens</summary>
+      <form id="git-token-form" class="filters">
+        <label>Repository type <select name="kind"><option value="projects">Project</option><option value="experiments">Experiment</option><option value="documents">Document</option></select></label>
+        <label>Repository ID <input name="resource_id" type="number" min="1" required></label>
+        <label>Access <select name="access"><option value="read">Clone and pull</option><option value="write">Clone, pull and push</option></select></label>
+        <label>Expires in days <input name="days" type="number" min="1" max="90" value="30" required></label>
+        <button>Create token</button>
+      </form>
+      <p>For HTTPS Git, enter your Library username and use the token as the password.</p>
+      <label id="new-git-token" hidden>Copy this token now <input id="git-token-secret" readonly></label>
+      <ul id="git-token-list" class="experiment-records"></ul>
+    </details>
+  </section>
+</main>
+<script src="/assets/api.js"></script>
+<script src="/assets/projects.js"></script>
+</body>
+</html>

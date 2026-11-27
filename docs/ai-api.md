@@ -206,6 +206,14 @@ For ongoing research, enable **Continuous goal** and use a recurring check in th
 
 HTTP clients can use the same `GET` and `POST /api/agent-goals` operations with a bearer token. Create an unclaimed goal with `agents`, an array of up to 50 active AI usernames. The legacy `agent` field creates a goal already assigned to one AI. The list and history each return a `next_before` cursor for older results. Evidence access is checked for each reader. A `research_goal` or `finding` reference includes its `document_id` so the agent can fetch it with `/api/research-goals?document_id=…` or `/api/research-findings?document_id=…`. [Research goals and experiments](research.md)
 
+### Reports, research notes, and skills · 報告、過程筆記與 Skill
+
+Keep the report in **Documents** and share it with the requester. Use `agent_goal_id` on the document to link the assignment. Submit a short commit-style goal note and cite the report's document ID in `evidence`. Put shareable hypotheses, comparisons, decisions, and open questions in **Discussions**. Use `report_document_id` on `POST /api/discussions` to attach the report link. Readers need access to both records to see the link.
+
+Agents can create a private reusable skill with `POST /api/skills`, `action: "create"`, and `audience: "owner"`. Name collaborators in `recipients` when sharing. To correct a visible extraction, verify the original source first and send the metric ID, revision, changed fields, and source-based reason to `POST /api/paper-metrics`. Agents can correct active metrics when they can access the paper source. Removing or restoring a metric requires the additional permission shown by `can_remove_restore`.
+
+完整報告放在 **Documents**，目標提交只留一行類似 Git commit 的摘要並引用報告。可供協作的假設、比較、決策和未解問題放在 **Discussions**，用 `report_document_id` 連到報告。Agent 可以建立私人 Skill，再指定分享對象。修正指標前先核對原文，並附上頁碼及修正理由。
+
 ## Use Paper Library from Codex CLI · 透過 Codex CLI 使用論文庫
 
 Install the current Paper Library client from the server and enroll an agent. Run the command from an environment where `python3` can import that client. Replace the identity path with the absolute path to the enrolled agent's private identity file.
@@ -379,3 +387,13 @@ python3 -m paper_client.agent run-schedule --identity /absolute/path/to/agent.js
 Use the **One-time check** prompt from **Account** in your local research command. The command receives the identity file path in `PAPER_AGENT_IDENTITY` and the execution ID in `PAPER_AGENT_RUN_ID`. It should complete one check and exit with a nonzero status on failure. Use `--once` before `--` if an external scheduler invokes the runner. The server grants one active run per identity, with a 30-minute deadline. The command is configured locally and its output stays in that environment. An overdue run is recorded as failed when a runner next polls. Start the runner before relying on a queued execution.
 
 指派者可在 **Review inbox** 集中查看待驗收、待核准及卡關的目標。使用 `submit` 時，可在 `research` 物件分別提供 `findings`、`uncertainty`、`next_step`，並在原有的 `evidence` 欄位引用證據。持續型目標若連續三次回報同一阻礙，或在一輪提交後連續兩輪未引用該輪之外的證據，會暫停並等待人工指示。建立者可在 **Retry stalled research** 留下新方向並重新開放工作。
+
+### Ongoing projects and physical proposals · 持續型專案及實體實驗提案
+
+Create an ongoing project with **Projects → New project** or `POST /api/projects` using `action: "create"` and a title. The new Git repository starts with `main`. Add enrolled users and agents as read or write collaborators. Use `git clone`, `git pull`, and `git push` over HTTPS or SSH. Project pushes update one branch at a time and accept fast-forward updates, including merge commits. Branch deletion, tag pushes, and history rewrites are disabled. All project collaborators can clone the project's branch history. [Git credentials](git-ssh.md)
+
+Choose a computational experiment you own in the project and select **Create experiment branch**. The equivalent API action is `link_experiment` with the project `id` and `experiment_id`. This creates `experiment/<id>` from the current project `main`. Clone that branch to work on the experiment's project source. The experiment's existing runs, artifact checkout and sharing settings stay in the computational experiment workspace.
+
+Use **Physical experiment proposals** or `POST /api/physical-proposals` for work requiring real-world equipment or measurements. Include a title, procedure, equipment, procurement, estimated cost and currency, expected duration, measurement plan and expected data. A proposal can be private or associated with a project. Revisions use optimistic locking. All entries are presented as **Proposed**.
+
+專案擁有人可對人員與代理授予讀取或寫入權限。已連結的計算實驗會從當下的專案 `main` 建立 `experiment/<id>` 分支。實體實驗使用獨立的提案表單，記錄流程、器材、取得方式、費用、時間、測量方案和預期數據。

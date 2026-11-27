@@ -2,9 +2,10 @@
 
 import json
 import re
+import subprocess
 from tempfile import TemporaryFile
 
-from . import library, sharing
+from . import library, projects, sharing
 
 MAX_PUSH_BYTES = 16 * 1024 * 1024
 MAX_REPO_BYTES = 32 * 1024 * 1024
@@ -12,7 +13,7 @@ MAX_SOURCE_BYTES = 5 * 1024 * 1024
 MAX_COMMITS = 100
 MAX_TREE_ENTRIES = 5000
 OID = rb"[0-9a-f]{40}"
-COMMAND = re.compile(rb"(" + OID + rb") (" + OID + rb") (refs/heads/(?:main|source))\0(.*)")
+COMMAND = re.compile(rb"(" + OID + rb") (" + OID + rb") (refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]{0,119})\0(.*)")
 
 
 class PushRejected(ValueError):
@@ -25,12 +26,14 @@ def request_update(body, ref):
     except ValueError:
         raise PushRejected("Invalid Git push command.") from None
     match = COMMAND.fullmatch(body[4:length].rstrip(b"\n"))
-    if not match or body[length:length + 4] != b"0000" or match[3] != ref.encode():
-        raise PushRejected(f"Push one update to {ref.removeprefix('refs/heads/')} at a time.")
+    if (not match or body[length:length + 4] != b"0000"
+            or (ref and match[3] != ref.encode()) or not projects.valid_branch(match[3].decode()[11:])):
+        branch = ref.removeprefix("refs/heads/") if ref else "a project branch"
+        raise PushRejected(f"Push one update to {branch} at a time.")
     old, new = match[1].decode(), match[2].decode()
     if new == "0" * 40:
         raise PushRejected("Deleting the branch is disabled.")
-    return old, new, match[4].split()
+    return old, new, match[4].split(), match[3].decode()
 
 
 def packet(value):
@@ -108,9 +111,23 @@ def read_document(repo, entries, resource_id):
     return description["revision"], {"title": title, "markdown": body, "source_url": source}
 
 
-def pack_branch(repo, ref):
+def project_updates(repo, old, new, refs):
+    if old != "0" * 40:
+        try:
+            repo.run("merge-base", "--is-ancestor", old, new)
+        except subprocess.CalledProcessError:
+            raise PushRejected("Use a fast-forward update. Fetch and merge or rebase first.") from None
+    lines = repo.output("rev-list", f"--max-count={MAX_COMMITS + 1}", new, "--not", *set(refs.values())).splitlines()
+    if len(lines) > MAX_COMMITS:
+        raise PushRejected(f"Push at most {MAX_COMMITS} new commits at a time.")
+    for commit in lines:
+        if any(size > MAX_SOURCE_BYTES for _, size in tree(repo, commit.decode()).values()):
+            raise PushRejected("Source files can be up to 5 MiB. Upload large files as experiment artifacts.")
+
+
+def pack_refs(repo, *refs):
     with TemporaryFile() as packed:
-        repo.run("pack-objects", "--stdout", "--revs", input=(ref + "\n").encode(), stdout=packed)
+        repo.run("pack-objects", "--stdout", "--revs", input=("\n".join(refs) + "\n").encode(), stdout=packed)
         if packed.tell() > MAX_REPO_BYTES:
             raise PushRejected("This Git repository exceeds its 32 MiB packed limit.")
         packed.seek(0)

@@ -60,8 +60,9 @@ class LauncherTests(unittest.TestCase):
         first_release = self.directory / "first"
         second_release = self.directory / "second"
         for release in (first_release, second_release):
-            shutil.copytree(LAUNCHER.parent / "paper_app", release / "paper_app",
-                            ignore=shutil.ignore_patterns("__pycache__"))
+            for package in ("paper_app", "paper_client"):
+                shutil.copytree(LAUNCHER.parent / package, release / package,
+                                ignore=shutil.ignore_patterns("__pycache__"))
             source = release / "paper_app" / "server.py"
             code = source.read_text().replace('{"status": "ok"}', f'{{"status": "{release.name}"}}')
             if release == first_release:
@@ -90,7 +91,8 @@ class LauncherTests(unittest.TestCase):
             self.fail(log_path.read_text())
 
         log_path = self.directory / "server.log"
-        env = {**os.environ, "PYTHONPATH": str(current)}
+        paths = [str(current), os.environ.get("PYTHONPATH")]
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, paths))}
         for name in ("PAPER_DATABASE_URL", "PAPER_PUBLIC_URL", "PAPER_SERVER_WORKER_FDS"):
             env.pop(name, None)
         with log_path.open("w") as log:

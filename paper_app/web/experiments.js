@@ -435,6 +435,15 @@ function renderExperiment(result) {
   $("experiment-description").textContent = experiment.description;
   const workspace = $("experiment-workspace");
   workspace.replaceChildren();
+  if (experiment.project) {
+    const project = experiment.project;
+    const link = text("a", `${project.title} · ${project.branch}`, workspace);
+    link.href = `/projects?id=${project.id}`;
+    sourceCommit.hidden = false;
+    sourceCommit.textContent = `Project branch commit ${project.head.slice(0, 12)}`;
+    sourceCommit.title = project.head;
+    if (experiment.research_document_id) workspace.append(" · ");
+  }
   if (experiment.research_document_id) {
     const link = text("a", brief ? `Open ${brief.stage} goal and brief #${brief.id}` : "Open research document", workspace);
     link.href = `/documents?document=${experiment.research_document_id}${brief ? `&goal=${brief.goal_id}` : "&research=1"}`;
@@ -611,7 +620,9 @@ $("clone-experiment").addEventListener("click", () => {
   if (displayedExperimentId !== null) copyCloneCommand("experiments", displayedExperimentId, $("status"));
 });
 $("clone-experiment-source").addEventListener("click", () => {
-  if (displayedExperimentId !== null) copyCloneCommand("experiments", displayedExperimentId, $("status"), "source");
+  const project = experimentDetail?.experiment.project;
+  if (project) copyCloneCommand("projects", project.id, $("status"), project.branch);
+  else if (displayedExperimentId !== null) copyCloneCommand("experiments", displayedExperimentId, $("status"), "source");
 });
 $("cancel-run-edit").addEventListener("click", () => editRun());
 

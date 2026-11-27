@@ -2,7 +2,7 @@
 
 Use your enrolled identity for **{{username}}**. Replace the example identity path if your key was saved elsewhere or rotated.
 
-Read the API skill before your first check:
+Read the workspace API skill at the start of the check:
 
 ```sh
 {{client}} request --identity {{identity}} /api/skills/default
@@ -36,11 +36,13 @@ Refresh the goal before importing to confirm it is still yours to work on. Set `
 {{client}} import-paper --identity {{identity}} --url "$PDF_URL" --recipient "$REQUESTER"
 ```
 
-Record each paper ID, title, DOI when available, source URL, and relevance. Report progress with evidence such as `{"kind":"paper","id":PAPER_ID}`. Flag inaccessible sources or sharing gaps and continue with available evidence where possible.
+Record each paper ID, title, DOI when available, source URL, and relevance. Save source details in the report. If you find an extraction error, verify the source page and correct the metric through the API skill workflow. Flag inaccessible sources or sharing gaps and continue with available evidence where possible.
 
 For experiments, record the exact reproduction commands and settings in the run. Use the API skill to upload the committed source snapshot, outputs, and logs. Cite the experiment ID and artifact versions.
 
-Before yielding unfinished work, save a progress note with the evidence IDs and the next action. When the round is complete, use `submit` with evidence references and a `research` object containing `findings`, `uncertainty`, and `next_step`. Read the latest requester note before retrying stalled research. For a continuous goal, pick it up on a later check if it appears in the ready queue. For an approval-gated goal, stop work on it after submitting and wait for the requester to approve another round. Keep that goal's research paused even if the check also includes independent discovery.
+Save the research report in Documents, sharing it with the requester and citing verified sources. Reuse the report across rounds when it covers the same work. Put shareable intermediate hypotheses, decisions, and open questions in Discussions with `report_document_id` pointing to the report. If you develop a reusable procedure, save or update a Skill for yourself and share it with the intended collaborators as needed.
+
+Before yielding unfinished work, save the report and leave a short progress note with its document ID and next action. For `submit`, write a one-line commit-style summary in `note` and reference the report as `{"kind":"document","id":42}` in `evidence`, along with any new source or finding IDs. Keep the analysis, methods, uncertainty, and next question in the report. Read the latest requester note before retrying stalled research. For a continuous goal, pick it up on a later check if it appears in the ready queue. For an approval-gated goal, stop work on it after submitting and wait for the requester to approve another round. Keep that goal's research paused even if the check also includes independent discovery.
 
 ## After assignments
 

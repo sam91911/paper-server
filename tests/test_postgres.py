@@ -173,7 +173,8 @@ class PostgreSQLTests(unittest.TestCase):
         self.api("/api/paper-access", cookie=cookie, data={"paper_id": paper, "audience": "local", "allow_title": True})
         self.assertEqual(self.api(f"/api/paper-detail?paper_id={paper}", key=local)["paper"]["title"], "Long methods")
         metric = self.api(f"/api/paper-metrics?paper_id={paper}", key=local)["metrics"][0]
-        self.assertFalse(metric["can_edit"])
+        self.assertTrue(metric["can_edit"])
+        self.assertFalse(metric["can_remove_restore"])
         self.api("/api/metric-editors", cookie=cookie, data={
             "action": "grant", "username": "local-agent", "metric_id": metric["id"],
         })
@@ -307,6 +308,31 @@ class PostgreSQLTests(unittest.TestCase):
             owner_id = db.execute("SELECT id FROM accounts WHERE username=?", (pilot["human_username"],)).fetchone()[0]
             cookie = accounts.start_session(db, owner_id, None)
         agent_username = self.api("/api/account", target=source, key=key)["account"]["username"]
+        with library.connect(source) as db:
+            ai_accounts.assign_operator(db, agent_username, pilot["human_username"])
+        agent_goal = self.api("/api/agent-goals", target=source, cookie=cookie, data={
+            "action": "create", "request_id": uuid4().hex, "agents": [agent_username],
+            "objective": "Track the experiment", "continuous": True, "require_approval": True,
+        })["goal"]
+        agent_goal_path = f"/api/agent-goals?id={agent_goal['id']}"
+        expected_agent_goal = self.api(agent_goal_path, target=source, key=key)["goal"]
+        self.api("/api/agent-schedules", target=source, cookie=cookie, data={
+            "action": "run_now", "agent": agent_username,
+        })
+        execution = self.api("/api/agent-schedules", target=source, key=key, data={"action": "claim"})["run"]
+        self.api("/api/agent-schedules", target=source, key=key, data={
+            "action": "finish", "id": execution["id"], "success": False, "detail": "Needs input",
+        })
+        project = self.api("/api/projects", target=source, key=key, data={
+            "action": "create", "title": "Migrated project",
+        })["project"]
+        experiment = self.api("/api/experiments", target=source, key=key, data={"title": "Linked experiment"})["id"]
+        project = self.api("/api/projects", target=source, key=key, data={
+            "action": "link_experiment", "id": project["id"], "experiment_id": experiment,
+        })["project"]
+        discussion = self.api("/api/discussions", target=source, key=key, data={
+            "title": "Report discussion", "markdown": "Next step", "report_document_id": document,
+        })["document_id"]
         metric_path = f"/api/paper-metrics?paper_id={pilot['paper']}"
         original_metrics = self.api(metric_path, target=source, key=key)["metrics"]
         metric_id = next(row["id"] for row in original_metrics if row["metric"] == "manual check")
@@ -334,6 +360,12 @@ class PostgreSQLTests(unittest.TestCase):
         self.assertEqual(self.api(comment_path, key=key), expected_comments)
         self.assertEqual(self.api(f"/api/skills/{migrated_skill['id']}", key=key)["skill"], migrated_skill)
         self.assertEqual(self.api(history_path, cookie=cookie), expected_history)
+        self.assertEqual(self.api(agent_goal_path, key=key)["goal"], expected_agent_goal)
+        schedule = self.api("/api/agent-schedules", cookie=cookie)["schedules"][0]
+        self.assertFalse(schedule["runs"][0]["success"])
+        self.assertEqual(schedule["failures"], 1)
+        self.assertEqual(self.api(f"/api/projects?id={project['id']}", key=key)["project"], project)
+        self.assertEqual(self.api(f"/api/document?id={discussion}", key=key)["document"]["report_document_id"], document)
         edited = next(row for row in self.api(metric_path, key=key)["metrics"] if row["id"] == metric_id)
         self.assertEqual((edited["value"], edited["can_edit"]), ("5", True))
         self.assertEqual(self.api(f"/papers/{pilot['paper']}/source.pdf", key=key), original_bytes)

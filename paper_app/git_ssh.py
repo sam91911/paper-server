@@ -15,9 +15,9 @@ from tempfile import TemporaryDirectory
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from . import accounts, database, git_push, git_repos, library, sharing
+from . import accounts, database, git_push, git_repos, library, projects, sharing
 
-REPOSITORY = re.compile(r"/?git/(documents|experiments)/([1-9][0-9]{0,18})\.git")
+REPOSITORY = re.compile(r"/?git/(documents|experiments|projects)/([1-9][0-9]{0,18})\.git")
 CONTEXT = "PAPER_GIT_SSH_CONTEXT"
 
 
@@ -137,28 +137,33 @@ def push_context():
 def check_update(ref, *, allow_head=False):
     body = sys.stdin.buffer.read(512)
     command = rb"([0-9a-f]{40}) ([0-9a-f]{40}) "
-    matches = [re.fullmatch(command + rb"(refs/heads/(?:main|source)|HEAD)", line) for line in body.splitlines()]
+    matches = [re.fullmatch(command + rb"(refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]{0,119}|HEAD)", line)
+               for line in body.splitlines()]
     updates = {match[3].decode(): (match[1].decode(), match[2].decode()) for match in matches if match}
+    branches = updates.keys() - {"HEAD"}
+    if ref is None and len(branches) == 1:
+        ref = next(iter(branches))
     permitted = {ref, "HEAD"} if allow_head and ref == "refs/heads/main" else {ref}
     if (len(body) >= 512 or not body.endswith(b"\n") or len(updates) != len(matches)
-            or ref not in updates or updates.keys() - permitted or any(pair != updates[ref] for pair in updates.values())):
-        raise git_push.PushRejected(f"Push one update to {ref.removeprefix('refs/heads/')} at a time.")
+            or ref not in updates or updates.keys() - permitted or not projects.valid_branch(ref[11:])
+            or any(pair != updates[ref] for pair in updates.values())):
+        raise git_push.PushRejected("Push one permitted branch at a time.")
     old, new = updates[ref]
     if new == "0" * 40:
         raise git_push.PushRejected("Deleting the branch is disabled.")
-    return old, new
+    return old, new, ref
 
 
 def accept(config):
     directory, key_hex, kind, resource, ref, revision, state = push_context()
-    old, new = check_update(ref, allow_head=True)
+    old, new, ref = check_update(ref, allow_head=True)
     target, limit = settings(config)
     repo = git_repos.Repository(git_executable(), directory, None, initialize=False)
-    if old != repo.head(ref):
+    if old != git_repos.current_head(repo, ref):
         raise git_push.PushRejected("The branch changed. Fetch and rebase first.")
     key = bytes.fromhex(key_hex)
     git_repos.accept_update(repo, target, lambda db: account_for(db, key), kind, resource, revision,
-                            state, old, new, limit)
+                            state, old, new, limit, ref=ref)
 
 
 def main():

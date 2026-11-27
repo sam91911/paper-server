@@ -15,7 +15,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from paper_app import accounts, experiments, git_ssh, library, sharing
+from paper_app import accounts, experiments, git_ssh, library, projects, sharing
 from paper_client.agent import encode
 from paper_client.ssh_key import export
 
@@ -211,3 +211,22 @@ class GitSSHTests(unittest.TestCase):
         with library.connect(self.db) as db:
             saved = experiments.require_experiment(db, self.experiment, self.agent)["source_commit"]
             self.assertEqual(saved, git(source, self.agent_key, "rev-parse", "HEAD").stdout.decode().strip())
+
+
+        with library.connect(self.db) as db:
+            project = projects.update(db, self.owner, {"action": "create", "title": "Project"}, 0)["project"]
+            projects.update(db, self.owner, {"action": "share", "id": project["id"],
+                                            "username": "writer-ai", "access": "write"}, 0)
+            projects.update(db, self.agent, {"action": "link_experiment", "id": project["id"],
+                                            "experiment_id": self.experiment}, 0)
+        project_url = origin + project["git_path"]
+        branch = f"experiment/{self.experiment}"
+        git(self.root, self.agent_key, "clone", "--branch", branch, project_url, "project")
+        work = self.root / "project"
+        (work / "simulation.py").write_text("print(42)\n")
+        git(work, self.agent_key, "add", ".")
+        git(work, self.agent_key, "-c", "user.name=Agent", "-c", "user.email=agent@example.invalid",
+            "-c", "commit.gpgsign=false", "commit", "-m", "Update simulation")
+        git(work, self.agent_key, "push")
+        git(self.root, self.human_key, "clone", "--branch", branch, project_url, "project-copy")
+        self.assertTrue((self.root / "project-copy/simulation.py").exists())

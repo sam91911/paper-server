@@ -24,7 +24,7 @@ from time import perf_counter
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
-from . import git_repos, supervisor
+from . import git_repos, git_tokens, projects, supervisor
 from . import passkeys
 from . import agent_schedules, compute_tasks
 from . import account_routes, accounts, admin_console, agent_goals, ai_accounts, client_distribution, comment_routes, crossref, document_context, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tasks, tools_catalog
@@ -47,6 +47,8 @@ ASSETS = {
     "/assets/agent-goals.js": ("agent-goals.js", "text/javascript; charset=utf-8"),
     "/skills": ("skills.html", "text/html; charset=utf-8"),
     "/assets/skills.js": ("skills.js", "text/javascript; charset=utf-8"),
+    "/projects": ("projects.html", "text/html; charset=utf-8"),
+    "/assets/projects.js": ("projects.js", "text/javascript; charset=utf-8"),
     "/experiments": ("experiments.html", "text/html; charset=utf-8"),
     "/assets/experiments.js": ("experiments.js", "text/javascript; charset=utf-8"),
     "/assets/findings.js": ("findings.js", "text/javascript; charset=utf-8"),
@@ -287,6 +289,30 @@ class Handler(BaseHTTPRequestHandler):
             self.read_ai_invitations(url)
         elif route == "/api/agent-goals":
             self.read_agent_goals(url)
+        elif route in ("/api/projects", "/api/physical-proposals", "/api/git-tokens"):
+            try:
+                params = parse_qs(url.query, keep_blank_values=True)
+                item_id = skills.query_id(params["id"][0]) if "id" in params else None
+                with library.connect(self.server.database) as db:
+                    storage.begin(db)
+                    account = self.require_account(db)
+                    if route == "/api/git-tokens":
+                        result = git_tokens.list_tokens(db, account)
+                    elif route == "/api/physical-proposals":
+                        result = projects.proposals(db, account, proposal_id=item_id)
+                    elif item_id is None:
+                        result = projects.list_projects(db, account)
+                    else:
+                        result = projects.detail(db, account, item_id)
+                self.send_json(200, result)
+            except accounts.SignInRequired:
+                self.send_json(401, {"error": "Sign in to continue."})
+            except (sharing.AccessDenied, LookupError):
+                self.send_json(404, {"error": "Resource unavailable."})
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+            except storage.ERRORS:
+                self.send_json(500, {"error": "Could not read this resource."})
         elif route == "/api/agent-schedules":
             try:
                 with library.connect(self.server.database) as db:
@@ -907,6 +933,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(500, {"error": "Could not read the avatar."})
 
     def update(self, db, data):
+        if self.path == "/api/projects":
+            return projects.update(db, self.require_account(db), data, getattr(self.server, "storage_limit", 0))
+        if self.path == "/api/physical-proposals":
+            return projects.save_proposal(db, self.require_account(db), data)
+        if self.path == "/api/git-tokens":
+            return git_tokens.update(db, self.require_account(db), data)
         if self.path == "/api/account/profile":
             account = self.require_browser_account(db)
             if account["role"] not in ("user", "member"):

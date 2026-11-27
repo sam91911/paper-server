@@ -49,22 +49,27 @@ class MetricCorrectionTests(unittest.TestCase):
     def test_named_grants_apply_only_to_one_metric_with_paper_access(self):
         first, second = self.list_rows(cookie=self.cookie)
         self.assertTrue(first["can_edit"])
-        self.assertFalse(self.list_rows(key=self.ai)[0]["can_edit"])
-        self.api("/api/paper-metrics", key=self.ai, data=self.correction(first), status=403)
+        ai_rows = self.list_rows(key=self.ai)
+        self.assertEqual([row["can_edit"] for row in ai_rows], [True, True])
+        self.assertEqual([row["can_remove_restore"] for row in ai_rows], [False, False])
+        self.api("/api/paper-metrics", key=self.reader, data=self.correction(first), status=403)
         self.grant(first["id"], "reviewer-ai", key=self.ai, status=403)
         self.grant(first["id"], "reviewer-ai", cookie=self.cookie)
         self.grant(second["id"], "reader", cookie=self.cookie)
         self.grant(first["id"], "cloud-agent", cookie=self.cookie)
-        self.assertEqual([row["can_edit"] for row in self.list_rows(key=self.ai)], [True, False])
+        self.assertEqual([row["can_remove_restore"] for row in self.list_rows(key=self.ai)], [True, False])
         self.assertEqual([row["can_edit"] for row in self.list_rows(key=self.reader)], [False, True])
-        self.api("/api/paper-metrics", key=self.ai, data=self.correction(second), status=403)
+        removal = {"action": "remove", "metric_id": second["id"], "revision": 1, "reason": "False detection"}
+        self.api("/api/paper-metrics", key=self.ai, data=removal, status=403)
         self.api("/api/paper-metrics", key=self.cloud, data=self.correction(first), status=403)
 
         self.assertEqual(self.api("/api/paper-metrics", key=self.ai, data=self.correction(first))["revision"], 2)
         self.assertEqual(self.api("/api/paper-metrics", key=self.reader, data=self.correction(second))["revision"], 2)
         self.api("/api/paper-metrics", cookie=self.cookie, data=self.correction(first), status=409)
         self.grant(first["id"], "reviewer-ai", "revoke", cookie=self.cookie)
-        self.api("/api/paper-metrics", key=self.ai, data=self.correction(first, revision=2), status=403)
+        self.api("/api/paper-metrics", key=self.ai, data={**removal, "metric_id": first["id"], "revision": 2}, status=403)
+        self.assertEqual(self.api("/api/paper-metrics", key=self.ai,
+                                  data=self.correction(first, revision=2, value="13"))["revision"], 3)
 
         history = f"/api/metric-history?metric_id={first['id']}"
         self.assertEqual(self.api(history, cookie=self.cookie)["editors"], ["cloud-agent"])

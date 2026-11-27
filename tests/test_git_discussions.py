@@ -49,6 +49,22 @@ class GitAndDiscussionTests(unittest.TestCase):
                  "-c", "commit.gpgsign=false", "commit", "-m", message)
         return self.git(checkout, "rev-parse", "HEAD").stdout.strip()
 
+    def test_discussion_report_link_follows_the_reports_access(self):
+        report = self.api("/api/documents", {"title": "Report", "markdown": "Evidence"})
+        payload = {"title": "Open question", "markdown": "Compare both explanations",
+                   "audience": "users", "report_document_id": report["document_id"]}
+        thread = self.api("/api/discussions", payload)
+        self.api("/api/discussions", payload, reader=True, expected=403)
+        path = f"/api/document?id={thread['document_id']}"
+        self.assertEqual(self.api(path)["document"]["report_link"]["title"], "Report")
+        self.assertNotIn("report_document_id", self.api(path, reader=True)["document"])
+        self.assertNotIn("report_link", self.api("/api/discussions", reader=True)["documents"][0])
+        self.api("/api/documents", {"title": "Report", "markdown": "Evidence", "audience": "users", **report})
+        self.assertEqual(self.api(path, reader=True)["document"]["report_link"]["url"],
+                         f"/documents?document={report['document_id']}")
+        self.api("/api/discussions", {**payload, **thread, "report_document_id": None})
+        self.assertNotIn("report_link", self.api(path)["document"])
+
     def test_discussion_uses_separate_listing_and_scoped_votes(self):
         regular = self.api("/api/documents", {"title": "Note", "markdown": "Ordinary"})["document_id"]
         thread = self.api("/api/discussions", {

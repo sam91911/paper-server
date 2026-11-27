@@ -55,10 +55,12 @@ def copy_tables(source, db):
             raise ValueError(f"Source is missing table {name}.")
         source_tables.remove(name)
         table = quote(name)
-        identity = db.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() "
-            "AND table_name=? AND is_identity='YES'", (name,),
-        ).fetchone()
+        target_columns = db.execute(
+            "SELECT column_name,data_type,is_identity FROM information_schema.columns "
+            "WHERE table_schema=current_schema() AND table_name=?", (name,),
+        ).fetchall()
+        identity = next((column for column, _, flag in target_columns if flag == "YES"), None)
+        booleans = {column for column, data_type, _ in target_columns if data_type == "boolean"}
         rows = source.execute(f"SELECT * FROM {table}")
         columns = [column[0] for column in rows.description]
         field_names = ", ".join(map(quote, columns))
@@ -66,12 +68,14 @@ def copy_tables(source, db):
         # Initialization seeds the comment sequence; the copy supplies its value.
         if name == "comment_id_sequence":
             db.execute("DELETE FROM comment_id_sequence")
-        db.executemany(f"INSERT INTO {table} ({field_names}) VALUES ({markers})", rows)
+        values = (tuple(bool(value) if column in booleans and value is not None else value
+                        for column, value in zip(columns, row)) for row in rows) if booleans else rows
+        db.executemany(f"INSERT INTO {table} ({field_names}) VALUES ({markers})", values)
         expected = source.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         if db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] != expected:
             raise ValueError(f"Row count verification failed for {name}.")
         if identity:
-            column = identity[0]
+            column = identity
             latest = db.execute(f"SELECT MAX({quote(column)}) FROM {table}").fetchone()[0]
             if name == "application_keys":
                 high_water = source.execute("SELECT seq FROM sqlite_sequence WHERE name=?", (name,)).fetchone()
