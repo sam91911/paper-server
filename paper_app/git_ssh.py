@@ -135,6 +135,7 @@ def push_context():
 
 
 def check_update(ref, *, allow_head=False):
+    project = ref is None
     body = sys.stdin.buffer.read(512)
     command = rb"([0-9a-f]{40}) ([0-9a-f]{40}) "
     matches = [re.fullmatch(command + rb"(refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]{0,119}|HEAD)", line)
@@ -143,7 +144,7 @@ def check_update(ref, *, allow_head=False):
     branches = updates.keys() - {"HEAD"}
     if ref is None and len(branches) == 1:
         ref = next(iter(branches))
-    permitted = {ref, "HEAD"} if allow_head and ref == "refs/heads/main" else {ref}
+    permitted = {ref, "HEAD"} if allow_head and (project or ref == "refs/heads/main") else {ref}
     if (len(body) >= 512 or not body.endswith(b"\n") or len(updates) != len(matches)
             or ref not in updates or updates.keys() - permitted or not projects.valid_branch(ref[11:])
             or any(pair != updates[ref] for pair in updates.values())):

@@ -13,7 +13,13 @@
     <p id="agent-goal-status" role="status"></p>
     <p id="agent-goal-sign-in" hidden><a href="/account">Sign in to view agent goals</a>.</p>
     <section id="agent-goal-workspace" hidden>
-      <details id="agent-schedules-panel" hidden>
+      <div class="goal-browser detail-layout">
+    <div class="detail-topbar" aria-label="Agent goal controls">
+      <label id="goal-attention-filter" class="inline-check" hidden>
+            <input id="goal-attention-only" type="checkbox"> Review inbox
+          </label>
+      <button id="refresh-agent-goals" class="secondary" type="button">Refresh goals</button>
+      <details id="agent-schedules-panel" class="toolbar-menu" hidden>
         <summary>Agent schedules</summary>
         <p>Schedules run when the enrolled agent polls from its execution environment.</p>
         <form id="agent-schedules" class="filters">
@@ -27,7 +33,6 @@
         <p id="agent-schedule-summary"></p>
         <ol id="agent-schedule-runs" class="experiment-records"></ol>
       </details>
-      <div class="goal-browser detail-layout">
         <details class="goal-index browse-controls" id="goal-browse-controls" open>
           <summary>Browse goals</summary>
           <details id="set-goal-panel" hidden>
@@ -51,15 +56,13 @@
               <button>Save goal</button>
             </form>
           </details>
-          <label id="goal-attention-filter" class="inline-check" hidden>
-            <input id="goal-attention-only" type="checkbox"> Review inbox
-          </label>
           <ul id="agent-goal-list" class="skill-results"></ul>
           <div class="file-actions">
-            <button id="refresh-agent-goals" class="secondary" type="button">Refresh goals</button>
             <button id="more-agent-goals" class="secondary" type="button" hidden>Older goals</button>
           </div>
         </details>
+    </div>
+
         <div id="agent-goal-empty" class="empty-record">
           <h2>Select a goal</h2>
           <p>Open a goal to see its objective, required skills, and work history.</p>

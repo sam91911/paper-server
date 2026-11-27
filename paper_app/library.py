@@ -110,7 +110,7 @@ def connect(path):
 
 
 def initialize(path):
-    from . import agent_goals, agent_schedules, ai_accounts, compute_tasks, git_tokens, projects, human_keys, passkeys, reviews
+    from . import agent_goals, agent_schedules, ai_accounts, compute_tasks, git_tokens, projects, human_keys, metadata_sync, passkeys, reviews
 
     with connect(path) as db:
         if isinstance(path, storage.PostgreSQL):
@@ -149,8 +149,10 @@ def initialize(path):
         for statement in (*findings.SCHEMA, *goals.SCHEMA, *metrics.SCHEMA):
             db.execute(statement)
         agent_goals.initialize(db)
-        for statement in (*agent_schedules.SCHEMA, *projects.SCHEMA, *mentions.SCHEMA, *tags.SCHEMA, git_tokens.SCHEMA):
+        for statement in (*agent_schedules.SCHEMA, *mentions.SCHEMA, *tags.SCHEMA, git_tokens.SCHEMA):
             db.execute(statement)
+        projects.initialize(db)
+        metadata_sync.initialize(db)
         document_context.initialize(db)
         for table, name, definition in (
             ("metric_corrections", "removed", metrics.REMOVED_COLUMN),
@@ -373,7 +375,13 @@ def paper_catalog(db, account, *, query="", group=None, publisher="", from_year=
         filters.append("publication_year(year)<=:through_year")
 
     filtered = active + "".join(f" AND {condition}" for condition in filters)
-    total, = db.execute(active.format("COUNT(*)"), params).fetchone()
+    if facets:
+        publishers = db.execute(
+            active.format("publisher,COUNT(*)") + " GROUP BY publisher ORDER BY publisher", params,
+        ).fetchall()
+        total = sum(amount for _, amount in publishers)
+    else:
+        total, = db.execute(active.format("COUNT(*)"), params).fetchone()
     count = db.execute(filtered.format("COUNT(*)"), params).fetchone()[0] if filters else total
     page = min(page, max(1, (count + CATALOG_PAGE_SIZE - 1) // CATALOG_PAGE_SIZE))
     rows = db.execute(
@@ -391,9 +399,7 @@ def paper_catalog(db, account, *, query="", group=None, publisher="", from_year=
         data["tags"] = [row[0] for row in db.execute(
             sharing.PAPER_SCOPE + " SELECT MIN(t.label) FROM paper_tags t JOIN visible_papers p ON p.id=t.paper_id "
             "WHERE p.id NOT IN (SELECT paper_id FROM archived_papers) GROUP BY t.tag ORDER BY t.tag", params)]
-        data["publishers"] = [row[0] for row in db.execute(
-            active.format("DISTINCT publisher") + " AND publisher<>'' ORDER BY publisher", params,
-        )]
+        data["publishers"] = [name for name, _ in publishers if name]
     return data
 
 

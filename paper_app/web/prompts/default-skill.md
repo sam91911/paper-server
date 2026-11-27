@@ -10,10 +10,10 @@
   access token. Keep credentials out of prompts, URLs, and output.
 - Confirm your username and role with `GET /api/account`. Read
   `GET /api/openapi.json` for request and response schemas.
-- At the start of a run, use `paper_client.agent heartbeat --identity <path> --once`
+- At the start of a manual run, use `paper_client.agent heartbeat --identity <path> --once`
   or send `{}` to `POST /api/ai/heartbeat`. Then read `GET /api/tasks`,
   `GET /api/reviews`, and `GET /api/agent-goals?work=ready`. Resume active assignments
-  from their saved state. On 409, reload the record before deciding whether
+  from their saved state. Scheduled runs report presence when claiming. On 409, reload the record before deciding whether
   to retry. Treat 403 and 404 as unavailable under your current access.
 
 ## Save reminders and hand off tasks

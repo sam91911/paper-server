@@ -29,6 +29,8 @@ class AgentScheduleTests(unittest.TestCase):
 
             class Client:
                 def request(self, route, data):
+                    if route != "/api/agent-schedules":
+                        raise AssertionError(f"Unexpected runner request: {route}")
                     status, result = request(database, route, key=worker_key, data=data)
                     if status != 200:
                         raise AssertionError(result)
@@ -38,6 +40,9 @@ class AgentScheduleTests(unittest.TestCase):
                 self.assertEqual(update(other_key, "run_now", agent="worker")[0], 404)
                 self.assertEqual(update(owner_key, "configure", agent="worker", interval_seconds=60)[0], 200)
                 self.assertIsNone(update(worker_key, "claim")[1]["run"])
+                with library.connect(database) as db:
+                    self.assertEqual(db.execute("SELECT last_heartbeat FROM accounts WHERE id=?",
+                                                (worker,)).fetchone()[0], 100)
                 self.assertEqual(update(owner_key, "run_now", agent="worker")[0], 200)
                 agent.run_schedule(Client(), Path(directory) / "identity.json",
                                    [sys.executable, "-c", "import os; assert os.environ['PAPER_AGENT_RUN_ID']"], once=True)

@@ -130,20 +130,6 @@ class Repository:
             self.run("fast-import", "--quiet", stdin=history)
 
 
-def new_project():
-    executable = shutil.which("git")
-    if not executable:
-        raise ValueError("Git is unavailable on this server.")
-    with TemporaryDirectory(prefix="paper-project-") as directory:
-        repo = Repository(executable, directory, None)
-        saved = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        repo.import_history("refs/heads/main", [
-            ("Paper Library", saved, "Initialize project", {"README.md": b"# Research project\n"}),
-        ])
-        head = repo.head("refs/heads/main")
-        return head, git_push.pack_refs(repo, head)
-
-
 def resource_scope(db, account, kind, resource, *, writing=False):
     if kind == "projects":
         return projects.scope(db, account, resource, writing=writing)
@@ -174,10 +160,13 @@ def current_head(repo, ref):
 
 def prepare(repo, db, account, kind, resource, row, writing):
     if kind == "projects":
-        pack = db.execute("SELECT pack FROM projects WHERE id=?", (resource,)).fetchone()[0]
-        repo.run("index-pack", "--stdin", input=bytes(pack))
-        for branch, head in json.loads(row["refs"]).items():
-            repo.run("update-ref", f"refs/heads/{branch}", head)
+        refs = json.loads(row["refs"])
+        if refs:
+            pack = db.execute("SELECT pack FROM projects WHERE id=?", (resource,)).fetchone()[0]
+            repo.run("index-pack", "--stdin", input=bytes(pack))
+            for branch, head in refs.items():
+                repo.run("update-ref", f"refs/heads/{branch}", head)
+            repo.run("symbolic-ref", "HEAD", f"refs/heads/{projects.default_branch(refs)}")
         if writing:
             configure_receive(repo)
         return None, row["git_revision"], None

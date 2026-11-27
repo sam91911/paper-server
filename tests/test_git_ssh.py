@@ -214,12 +214,22 @@ class GitSSHTests(unittest.TestCase):
 
 
         with library.connect(self.db) as db:
-            project = projects.update(db, self.owner, {"action": "create", "title": "Project"}, 0)["project"]
+            project = projects.update(db, self.owner, {"action": "create", "title": "Project"})["project"]
             projects.update(db, self.owner, {"action": "share", "id": project["id"],
-                                            "username": "writer-ai", "access": "write"}, 0)
-            projects.update(db, self.agent, {"action": "link_experiment", "id": project["id"],
-                                            "experiment_id": self.experiment}, 0)
+                                            "username": "writer-ai", "access": "write"})
         project_url = origin + project["git_path"]
+        git(self.root, self.agent_key, "init", "--initial-branch=master", "initial")
+        initial = self.root / "initial"
+        (initial / "baseline.txt").write_text("Baseline")
+        git(initial, self.agent_key, "add", ".")
+        git(initial, self.agent_key, "-c", "user.name=Agent", "-c", "user.email=agent@example.invalid",
+            "-c", "commit.gpgsign=false", "commit", "-m", "Initial project source")
+        git(initial, self.agent_key, "push", project_url, "master")
+        git(self.root, self.human_key, "clone", project_url, "default-project")
+        self.assertTrue((self.root / "default-project/baseline.txt").exists())
+        with library.connect(self.db) as db:
+            projects.update(db, self.agent, {"action": "link_experiment", "id": project["id"],
+                                            "experiment_id": self.experiment})
         branch = f"experiment/{self.experiment}"
         git(self.root, self.agent_key, "clone", "--branch", branch, project_url, "project")
         work = self.root / "project"

@@ -15,6 +15,17 @@ FIELDS = library.METADATA[:-1]
 RETRY_SECONDS = 7 * 24 * 60 * 60
 ERROR_SECONDS = 60 * 60
 FIRST_PAGE_LIMIT = 50 * 1024 * 1024
+POLL_SECONDS = 30
+MAX_IDLE_SECONDS = 120
+BATCH_SIZE = 16
+MISSING_FIELDS = " OR ".join(f"trim({field})=''" for field in FIELDS)
+SOURCE_AVAILABLE = "(sha256 IS NOT NULL OR trim(doi)<>'')"
+
+
+def initialize(db):
+    db.execute("CREATE INDEX IF NOT EXISTS paper_metadata_due ON paper_metadata_checks(next_check,paper_id)")
+    db.execute(f"CREATE INDEX IF NOT EXISTS paper_metadata_unchecked ON papers(id) "
+               f"WHERE {SOURCE_AVAILABLE} AND ({MISSING_FIELDS})")
 
 
 def set_title_lookup(db, paper_id, allow):
@@ -26,12 +37,29 @@ def set_title_lookup(db, paper_id, allow):
 
 
 def pending(db, now):
-    fields_missing = " OR ".join(f"trim(p.{field})=''" for field in FIELDS)
+    # Bound each ordered candidate stream before joining wide paper rows.
     return db.execute(
-        "SELECT p.*, COALESCE(c.allow_title, 0) AS allow_title, c.detected_doi "
-        "FROM papers p LEFT JOIN paper_metadata_checks c ON c.paper_id=p.id "
-        f"WHERE ({fields_missing}) AND COALESCE(c.next_check,0)<=? "
-        "ORDER BY COALESCE(c.next_check,0),p.id LIMIT 16", (now,),
+        f"""WITH unchecked AS (
+            SELECT p.id,0 AS due FROM papers p
+            WHERE {SOURCE_AVAILABLE} AND ({MISSING_FIELDS}) AND NOT EXISTS (
+                SELECT 1 FROM paper_metadata_checks c WHERE c.paper_id=p.id
+            ) AND NOT EXISTS (SELECT 1 FROM archived_papers a WHERE a.paper_id=p.id)
+            ORDER BY p.id LIMIT {BATCH_SIZE}
+        ), scheduled AS (
+            SELECT c.paper_id AS id,c.next_check AS due
+            FROM paper_metadata_checks c JOIN papers p ON p.id=c.paper_id
+            WHERE c.next_check<=? AND ({MISSING_FIELDS}) AND (
+               trim(p.doi)<>'' OR c.allow_title=1 OR c.detected_doi<>'' OR
+               (c.detected_doi IS NULL AND p.sha256 IS NOT NULL)
+            ) AND NOT EXISTS (SELECT 1 FROM archived_papers a WHERE a.paper_id=p.id)
+            ORDER BY c.next_check,c.paper_id LIMIT {BATCH_SIZE}
+        ), candidates AS (
+            SELECT id,due FROM unchecked UNION ALL SELECT id,due FROM scheduled
+            ORDER BY due,id LIMIT {BATCH_SIZE}
+        )
+        SELECT p.*,COALESCE(c.allow_title,0) AS allow_title,c.detected_doi
+        FROM candidates k JOIN papers p ON p.id=k.id
+        LEFT JOIN paper_metadata_checks c ON c.paper_id=p.id ORDER BY k.due,p.id""", (now,),
     ).fetchall()
 
 
@@ -88,7 +116,8 @@ def match_paper(paper, detected_doi):
 def current_paper(db, paper_id):
     return db.execute(
         "SELECT p.*,COALESCE(c.allow_title,0) AS allow_title,c.detected_doi "
-        "FROM papers p LEFT JOIN paper_metadata_checks c ON c.paper_id=p.id WHERE p.id=?",
+        "FROM papers p LEFT JOIN paper_metadata_checks c ON c.paper_id=p.id WHERE p.id=? "
+        "AND NOT EXISTS (SELECT 1 FROM archived_papers a WHERE a.paper_id=p.id)",
         (paper_id,),
     ).fetchone()
 
@@ -126,10 +155,14 @@ def check_paper(database, paper):
 
 
 def run(database, stop):
+    delay = POLL_SECONDS
     while not stop.is_set():
+        papers = []
         try:
             with library.connect(database) as db:
                 papers = pending(db, int(time.time()))
+            if papers:
+                delay = POLL_SECONDS
             for paper in papers:
                 if stop.is_set():
                     return
@@ -137,4 +170,7 @@ def run(database, stop):
                 stop.wait(1)
         except storage.ERRORS:
             LOG.exception("Could not check missing paper metadata")
-        stop.wait(30)
+        if stop.wait(delay):
+            return
+        if not papers:
+            delay = min(delay * 2, MAX_IDLE_SECONDS)

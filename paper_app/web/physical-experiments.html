@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Physical experiments · Paper Library</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body class="workspace-shell">
+<!-- workspace-shell -->
+<header class="page-header"><h1>Physical experiments</h1></header>
+<main class="page-content" id="workspace-content" tabindex="-1">
+  <p id="physical-proposal-status" role="status"></p>
+  <p id="physical-proposal-sign-in" hidden><a href="/account">Sign in to view physical experiment proposals</a>.</p>
+    <section id="physical-proposal-workspace" hidden>
+      <div class="detail-topbar" aria-label="Physical experiment controls">
+        <button type="button" id="physical-proposal-new" class="secondary">New proposal</button>
+        <a id="physical-proposal-filter" href="/physical-experiments" hidden>View all proposals</a>
+      </div>
+      <ul id="physical-proposal-list" class="experiment-records"></ul>
+      <form id="physical-proposal-form" class="experiment-form" hidden>
+        <label>Title <input name="title" required maxlength="160"></label>
+        <label>Project <select name="project_id"></select></label>
+        <label>Procedure <textarea name="procedure" rows="3" required maxlength="12000"></textarea></label>
+        <label>Equipment and materials <textarea name="equipment" rows="2" required maxlength="12000"></textarea></label>
+        <label>How to obtain them <textarea name="procurement" rows="2" required maxlength="12000"></textarea></label>
+        <label>Estimated cost and currency <textarea name="estimated_cost" rows="2" required maxlength="12000"></textarea></label>
+        <label>Expected duration <textarea name="duration" rows="2" required maxlength="12000"></textarea></label>
+        <label>Measurement plan <textarea name="measurement" rows="3" required maxlength="12000"></textarea></label>
+        <label>Expected data <textarea name="expected_data" rows="3" required maxlength="12000"></textarea></label>
+        <button>Save proposal</button>
+        <button type="button" id="physical-proposal-cancel" class="secondary">Cancel</button>
+      </form>
+    </section>
+</main>
+<script src="/assets/api.js"></script>
+<script src="/assets/physical-experiments.js"></script>
+</body>
+</html>

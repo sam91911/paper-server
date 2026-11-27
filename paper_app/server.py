@@ -16,6 +16,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import IPv6Address
 from pathlib import Path
@@ -24,7 +25,7 @@ from time import perf_counter
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
-from . import git_repos, git_tokens, mentions, projects, supervisor, tags
+from . import git_repos, git_tokens, mentions, project_browser, projects, supervisor, tags
 from . import passkeys
 from . import agent_schedules, compute_tasks
 from . import account_routes, accounts, admin_console, agent_goals, ai_accounts, client_distribution, comment_routes, crossref, document_context, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tasks, tools_catalog
@@ -47,6 +48,8 @@ ASSETS = {
     "/assets/agent-goals.js": ("agent-goals.js", "text/javascript; charset=utf-8"),
     "/skills": ("skills.html", "text/html; charset=utf-8"),
     "/assets/skills.js": ("skills.js", "text/javascript; charset=utf-8"),
+    "/physical-experiments": ("physical-experiments.html", "text/html; charset=utf-8"),
+    "/assets/physical-experiments.js": ("physical-experiments.js", "text/javascript; charset=utf-8"),
     "/projects": ("projects.html", "text/html; charset=utf-8"),
     "/assets/projects.js": ("projects.js", "text/javascript; charset=utf-8"),
     "/experiments": ("experiments.html", "text/html; charset=utf-8"),
@@ -54,6 +57,7 @@ ASSETS = {
     "/assets/findings.js": ("findings.js", "text/javascript; charset=utf-8"),
     "/assets/goals.js": ("goals.js", "text/javascript; charset=utf-8"),
     "/assets/mentions.js": ("mentions.js", "text/javascript; charset=utf-8"),
+    "/assets/workspace-nav.js": ("workspace-nav.js", "text/javascript; charset=utf-8"),
     "/assets/api.js": ("api.js", "text/javascript; charset=utf-8"),
     "/assets/human-keys.js": ("human-keys.js", "text/javascript; charset=utf-8"),
     "/assets/passkeys.js": ("passkeys.js", "text/javascript; charset=utf-8"),
@@ -290,6 +294,28 @@ class Handler(BaseHTTPRequestHandler):
             self.read_ai_invitations(url)
         elif route == "/api/agent-goals":
             self.read_agent_goals(url)
+        elif route == "/api/project-browser":
+            try:
+                params = parse_qs(url.query, keep_blank_values=True)
+                project_id = skills.query_id(params.get("id", [""])[0])
+                offset = params.get("offset", ["0"])[0]
+                if not re.fullmatch(r"[0-9]{1,9}", offset):
+                    raise ValueError("Choose a valid history offset.")
+                with library.connect(self.server.database) as db:
+                    storage.begin(db)
+                    result = project_browser.read(
+                        db, self.require_account(db), project_id, branch=params.get("branch", [""])[0],
+                        path=params.get("path", [""])[0], commit=params.get("commit", [None])[0], offset=int(offset),
+                    )
+                self.send_json(200, result)
+            except accounts.SignInRequired:
+                self.send_json(401, {"error": "Sign in to browse a project."})
+            except (sharing.AccessDenied, LookupError):
+                self.send_json(404, {"error": "Project, commit, or path unavailable."})
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+            except storage.ERRORS + (OSError, RuntimeError, subprocess.SubprocessError):
+                self.send_json(503, {"error": "Could not read the Git repository."})
         elif route in ("/api/projects", "/api/physical-proposals", "/api/git-tokens"):
             try:
                 params = parse_qs(url.query, keep_blank_values=True)
@@ -816,6 +842,13 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self.send_json(200, result)
                 return
+            if self.path == "/api/ai/heartbeat":
+                with library.connect(self.server.database) as db:
+                    storage.begin(db)
+                    receipt = ai_accounts.recent_heartbeat(db, self.require_account(db), int(time.time()))
+                if receipt is not None:
+                    self.send_json(200, {"ok": True, **receipt})
+                    return
             with library.connect(self.server.database) as db:
                 storage.begin(db, write=True)
                 result = self.update(db, data)
@@ -950,7 +983,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def update(self, db, data):
         if self.path == "/api/projects":
-            return projects.update(db, self.require_account(db), data, getattr(self.server, "storage_limit", 0))
+            return projects.update(db, self.require_account(db), data)
         if self.path == "/api/physical-proposals":
             return projects.save_proposal(db, self.require_account(db), data)
         if self.path == "/api/git-tokens":
@@ -1042,7 +1075,10 @@ class InheritedHTTPServer(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", 0), Handler, bind_and_activate=False)
         self.socket.close()
         self.socket = socket.socket(fileno=listener_fd)
-        self.socket.setblocking(False)
+        # handle_request uses the socket timeout as an upper bound for its
+        # selector wait. A nonblocking socket reports zero and spins when idle.
+        # A positive Python timeout still leaves the shared descriptor nonblocking.
+        self.socket.settimeout(self.timeout)
         self.server_address = self.socket.getsockname()
         self.server_name, self.server_port = self.server_address
 

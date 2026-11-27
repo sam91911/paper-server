@@ -2,7 +2,6 @@
 
 import json
 import re
-import subprocess
 
 from . import experiments, sharing
 
@@ -11,7 +10,8 @@ SCHEMA = (
         id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES accounts(id),
         title TEXT NOT NULL, description TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
         git_revision INTEGER NOT NULL DEFAULT 1, refs TEXT NOT NULL, pack BLOB NOT NULL,
-        created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0,1))
     )""",
     """CREATE TABLE IF NOT EXISTS project_members (
         project_id INTEGER NOT NULL REFERENCES projects(id), account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -42,7 +42,7 @@ def scope(db, account, project_id, *, writing=False, managing=False):
         raise sharing.AccessDenied
     row = db.execute("""SELECT p.id,p.owner_id,p.title,p.description,p.revision,p.git_revision,p.refs,
                                m.access FROM projects p LEFT JOIN project_members m
-                               ON m.project_id=p.id AND m.account_id=? WHERE p.id=?""",
+                               ON m.project_id=p.id AND m.account_id=? WHERE p.id=? AND p.deleted=0""",
                      (account["id"], project_id)).fetchone()
     if row is None or (row["owner_id"] != account["id"] and
                        (managing or row["access"] not in (("write",) if writing else ("read", "write")))):
@@ -56,16 +56,28 @@ def list_projects(db, account):
         for row in db.execute("""SELECT p.id,p.title,p.description,p.revision,
                                   CASE WHEN p.owner_id=? THEN 'owner' ELSE m.access END AS access
                                  FROM projects p LEFT JOIN project_members m ON m.project_id=p.id AND m.account_id=?
-                                 WHERE p.owner_id=? OR m.access IS NOT NULL ORDER BY p.id DESC""",
+                                 WHERE p.deleted=0 AND (p.owner_id=? OR m.access IS NOT NULL) ORDER BY p.id DESC""",
                               (account["id"], account["id"], account["id"]))
     ]}
 
 
+def initialize(db):
+    for statement in SCHEMA:
+        db.execute(statement)
+    if "deleted" not in {row["name"] for row in db.execute("PRAGMA table_info(projects)")}:
+        db.execute("ALTER TABLE projects ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0,1))")
+
+
+def default_branch(refs):
+    return "main" if "main" in refs else next(iter(refs), None)
+
+
 def detail(db, account, project_id):
     row = scope(db, account, project_id)
-    result = {key: row[key] for key in ("id", "title", "description", "revision")}
+    result = {key: row[key] for key in ("id", "title", "description", "revision", "git_revision")}
+    refs = json.loads(row["refs"])
     result.update(access="owner" if row["owner_id"] == account["id"] else row["access"],
-                  branches=json.loads(row["refs"]), git_path=f"/git/projects/{project_id}.git")
+                  branches=refs, default_branch=default_branch(refs), git_path=f"/git/projects/{project_id}.git")
     result["experiments"] = []
     for link in db.execute("SELECT experiment_id FROM project_experiments WHERE project_id=? ORDER BY experiment_id",
                            (project_id,)):
@@ -82,20 +94,14 @@ def detail(db, account, project_id):
     return {"project": result}
 
 
-def update(db, account, data, storage_limit):
+def update(db, account, data):
     action, project_id = data.get("action"), data.get("id")
     if action == "create":
-        from . import git_repos, library
         title = experiments.validate_text(data.get("title"), "a title", 160, required=True)
         description = experiments.validate_text(data.get("description", ""), "a description", 20000)
-        try:
-            head, pack = git_repos.new_project()
-        except (OSError, subprocess.SubprocessError):
-            raise RuntimeError("Could not initialize the Git repository.") from None
-        library.require_upload_space(db, storage_limit, len(pack))
         project_id = db.execute(
             "INSERT INTO projects(owner_id,title,description,refs,pack) VALUES (?,?,?,?,?) RETURNING id",
-            (account["id"], title, description, json.dumps({"main": head}), pack)).fetchone()[0]
+            (account["id"], title, description, "{}", b"")).fetchone()[0]
     elif action == "edit":
         row = scope(db, account, project_id, writing=True)
         if data.get("revision") != row["revision"]:
@@ -104,6 +110,18 @@ def update(db, account, data, storage_limit):
         description = experiments.validate_text(data.get("description", ""), "a description", 20000)
         db.execute("UPDATE projects SET title=?,description=?,revision=revision+1 WHERE id=?",
                    (title, description, project_id))
+    elif action == "delete":
+        row = scope(db, account, project_id, managing=True)
+        if data.get("revision") != row["revision"] or data.get("git_revision") != row["git_revision"]:
+            raise sharing.EditConflict("The project changed. Reload it before deleting.")
+        db.execute("UPDATE physical_proposals SET project_id=NULL,revision=revision+1 WHERE project_id=?", (project_id,))
+        db.execute("DELETE FROM project_experiments WHERE project_id=?", (project_id,))
+        db.execute("DELETE FROM project_members WHERE project_id=?", (project_id,))
+        db.execute("DELETE FROM git_tokens WHERE kind='projects' AND resource_id=?", (project_id,))
+        # Keep the ID reserved so old repository URLs cannot address a later project.
+        db.execute("""UPDATE projects SET deleted=1,title='',description='',refs='{}',pack=?,
+                      revision=revision+1,git_revision=git_revision+1 WHERE id=?""", (b"", project_id))
+        return {"deleted_project_id": project_id}
     elif action == "share":
         from . import accounts
         row = scope(db, account, project_id, managing=True)
@@ -136,7 +154,10 @@ def update(db, account, data, storage_limit):
                 raise sharing.EditConflict("The experiment branch already exists.")
             if len(refs) >= MAX_BRANCHES:
                 raise ValueError(f"A project can have up to {MAX_BRANCHES} branches.")
-            refs[branch] = refs["main"]
+            base = default_branch(refs)
+            if base is None:
+                raise sharing.EditConflict("Push the first project commit before creating an experiment branch.")
+            refs[branch] = refs[base]
             db.execute("INSERT INTO project_experiments VALUES (?,?)", (experiment["id"], project_id))
             db.execute("UPDATE projects SET refs=?,git_revision=git_revision+1 WHERE id=?",
                        (json.dumps(refs), project_id))

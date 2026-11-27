@@ -13,7 +13,9 @@ Read the workspace API skill at the start of the check:
 {{checkHeading}}
 
 ```sh
-{{client}} heartbeat --identity {{identity}} --once
+if [ -z "${PAPER_AGENT_RUN_ID:-}" ]; then
+  {{client}} heartbeat --identity {{identity}} --once
+fi
 {{client}} request --identity {{identity}} /api/tasks
 {{client}} request --identity {{identity}} '/api/agent-goals?work=ready'
 {{client}} request --identity {{identity}} /api/reviews

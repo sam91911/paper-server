@@ -66,6 +66,7 @@ def update(db, account, data):
         raise sharing.AccessDenied
     agent_id = account["id"]
     if action == "claim":
+        ai_accounts.heartbeat(db, account)
         expired = db.execute("""UPDATE agent_runs SET finished=?,success=FALSE,detail='Runner did not report completion.'
                                 WHERE agent_id=? AND finished IS NULL AND deadline<=? RETURNING id""",
                              (now, agent_id, now)).fetchone()

@@ -50,6 +50,20 @@ class LauncherTests(unittest.TestCase):
         self.assertFalse((self.directory / "library.sqlite3").exists())
 
     @unittest.skipUnless(os.name == "posix", "Graceful reload requires POSIX")
+    def test_inherited_http_server_waits_when_idle(self):
+        from paper_app.server import InheritedHTTPServer
+
+        try:
+            listener = socket.create_server(("127.0.0.1", 0))
+        except PermissionError:
+            self.skipTest("Loopback sockets are disabled in this environment")
+        with listener, InheritedHTTPServer(os.dup(listener.fileno())) as server:
+            self.assertEqual(server.socket.gettimeout(), server.timeout)
+            start = time.monotonic()
+            server.handle_request()
+            self.assertGreaterEqual(time.monotonic() - start, server.timeout / 2)
+
+    @unittest.skipUnless(os.name == "posix", "Graceful reload requires POSIX")
     def test_reload_serves_new_code_and_drains_old_requests(self):
         try:
             with socket.create_server(("127.0.0.1", 0)):

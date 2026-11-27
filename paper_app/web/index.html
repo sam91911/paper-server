@@ -33,10 +33,12 @@
 </details>
 <section id="library" hidden>
   <div class="paper-browser detail-layout">
-    <details class="paper-catalog-panel browse-controls" id="paper-browse-controls" open>
-      <summary>Browse papers</summary>
+    <div class="detail-topbar" aria-label="Paper controls">
       <label>Tag <select id="paper-tag-filter"><option value="">All tags</option></select></label>
       <label>Search papers <input type="search" id="paper-search" maxlength="500" placeholder="Title, author, DOI, venue, or filename"></label>
+      <label class="paper-picker">Jump to a paper <select id="library-paper"></select></label>
+    <details class="paper-catalog-panel browse-controls" id="paper-browse-controls" open>
+      <summary>Browse papers</summary>
       <details>
         <summary>Filters and groups</summary>
         <div class="library-actions">
@@ -50,7 +52,6 @@
           </form>
         </div>
       </details>
-      <label class="paper-picker">Jump to a paper <select id="library-paper"></select></label>
       <p id="paper-search-status" role="status"></p>
       <button id="paper-catalog-retry" type="button" hidden>Retry loading papers</button>
       <ul id="paper-catalog-list" class="paper-catalog-list" aria-label="Papers on this page"></ul>
@@ -130,6 +131,8 @@
         <div id="archived-papers"></div>
       </details>
     </details>
+    </div>
+
     <div class="paper-record">
   <p id="library-status" role="status"></p>
   <p id="paper-detail-status" role="status"></p>
@@ -491,10 +494,21 @@
 <section id="markdown-documents" hidden>
     <p id="documents-sign-in"><a href="/account">Sign in to create a document</a>.</p>
     <div id="documents-workspace" class="detail-layout" hidden>
-      <details id="document-browse-controls" class="browse-controls" open>
-        <summary id="document-browse-label">Browse documents</summary>
+    <div class="detail-topbar" aria-label="Document controls">
       <label>Topic <select id="document-topic-filter"></select></label>
       <label>Tag <select id="document-tag-filter"><option value="">All tags</option></select></label>
+      <div class="account-actions">
+        <label><span id="document-picker-label">Document</span><select id="document-picker"></select></label>
+        <button type="button" id="new-document" class="secondary">New document</button>
+      </div>
+      <div class="account-actions document-actions">
+        <button type="button" id="download-document" class="secondary" hidden>Download Markdown</button>
+        <button type="button" id="clone-document" class="secondary" hidden>Copy Git clone command</button>
+        <button type="button" id="edit-document" class="secondary" hidden>Edit</button>
+        <button type="button" id="review-document" class="secondary" hidden>Review with AI</button>
+      </div>
+      <details id="document-browse-controls" class="browse-controls" open>
+        <summary id="document-browse-label">Browse documents</summary>
       <section id="news-feed" aria-labelledby="news-feed-title" hidden>
         <h2 id="news-feed-title">Shared news</h2>
         <label id="discussion-sort-label" hidden>Sort threads
@@ -502,18 +516,10 @@
         </label>
         <ul id="news-list" class="skill-results"></ul>
       </section>
-      <div class="account-actions">
-        <label><span id="document-picker-label">Document</span><select id="document-picker"></select></label>
-        <button type="button" id="new-document" class="secondary">New document</button>
-      </div>
       </details>
+    </div>
+
       <div class="document-record">
-      <div class="account-actions document-actions">
-        <button type="button" id="download-document" class="secondary" hidden>Download Markdown</button>
-        <button type="button" id="clone-document" class="secondary" hidden>Copy Git clone command</button>
-        <button type="button" id="edit-document" class="secondary" hidden>Edit</button>
-        <button type="button" id="review-document" class="secondary" hidden>Review with AI</button>
-      </div>
       <p id="document-owner"></p>
       <p id="document-context" hidden></p>
       <div id="document-tags" class="record-tags" hidden></div>
@@ -647,9 +653,6 @@
       </details>
       <p id="document-status" role="status"></p>
       </div>
-    </div>
-</section>
-<div id="results" hidden>
   <details id="comparison-browse-controls" class="compare-panel" open>
     <summary>Comparison filters</summary>
     <div class="filters">
@@ -660,6 +663,10 @@
     <label>Sort by value <select id="sort"><option value="desc">Highest first</option><option value="asc">Lowest first</option></select></label>
     </div>
   </details>
+    </div>
+</section>
+<div id="results" hidden>
+
   <details id="compare-2d" class="compare-panel">
     <summary>2D comparison</summary>
     <div class="filters">

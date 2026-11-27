@@ -161,8 +161,8 @@ TASK_FIELDS = {"title": schema("string", maxLength=160), "description": schema("
 
 PROJECT_SUMMARY = obj({"id": ID, "title": STRING, "description": STRING, "revision": ID,
                        "access": enum("owner", "read", "write")})
-PROJECT_DETAIL = obj({"project": obj({**PROJECT_SUMMARY["properties"], "git_path": STRING,
-                     "branches": schema("object", additionalProperties=STRING),
+PROJECT_DETAIL = obj({"project": obj({**PROJECT_SUMMARY["properties"], "git_path": STRING, "git_revision": ID,
+                     "branches": schema("object", additionalProperties=STRING), "default_branch": nullable(STRING),
                      "experiments": array(obj({"id": ID, "title": STRING, "branch": STRING})),
                      "members": array(obj({"username": STRING, "access": enum("read", "write")}))})}, ("project",))
 PHYSICAL_PLAN = {key: STRING for key in ("procedure", "equipment", "procurement", "estimated_cost",
@@ -276,16 +276,29 @@ PATHS = {
             "503": {"description": "Database unavailable", **media(obj({"status": enum("unavailable")}, ("status",)))},
         },
     }},
+    "/api/project-browser": {"get": operation("Browse a project branch, file, or historical tree",
+        obj({"branch": STRING, "head": nullable(STRING), "commit": nullable(STRING), "path": STRING, "kind": enum("directory", "file", "empty"),
+             "entries": array(obj({"name": STRING, "kind": enum("directory", "file", "other")})),
+             "size": COUNT, "text": nullable(STRING), "preview": enum("text", "binary", "too_large"),
+             "history": array(obj({"id": STRING, "author": STRING, "date": STRING, "subject": STRING})),
+             "previous_offset": nullable(COUNT), "next_offset": nullable(COUNT)},
+            ("branch", "head", "commit", "path", "kind", "history", "previous_offset", "next_offset")),
+        params=(param("id", ID, required=True), param("branch", STRING), param("path", STRING),
+                param("commit", STRING), param("offset", COUNT)), security=RESEARCH_AUTH,
+        description="Text preview is limited to UTF-8 files up to 128 KiB. Historical commits must be reachable from the selected branch.")},
     "/api/projects": {
         "get": operation("List accessible projects or inspect a project", {"oneOf": [
             obj({"projects": array(PROJECT_SUMMARY)}, ("projects",)), PROJECT_DETAIL,
         ]}, params=(param("id", ID),), security=RESEARCH_AUTH),
-        "post": operation("Create, edit, share, or link an experiment to a project",
-            acknowledgement("project", **PROJECT_DETAIL["properties"]),
+        "post": operation("Create, edit, delete, share, or link an experiment to a project",
+            {"oneOf": [acknowledgement("project", **PROJECT_DETAIL["properties"]),
+                       acknowledgement("deleted_project_id", deleted_project_id=ID)]},
             body={"oneOf": [
                 obj({"action": enum("create"), "title": STRING, "description": STRING}, ("action", "title")),
                 obj({"action": enum("edit"), "id": ID, "revision": ID, "title": STRING, "description": STRING},
                     ("action", "id", "revision", "title")),
+                obj({"action": enum("delete"), "id": ID, "revision": ID, "git_revision": ID},
+                    ("action", "id", "revision", "git_revision")),
                 obj({"action": enum("share"), "id": ID, "username": STRING, "access": enum("read", "write", "none")},
                     ("action", "id", "username", "access")),
                 obj({"action": enum("link_experiment"), "id": ID, "experiment_id": ID},
@@ -435,7 +448,8 @@ PATHS = {
                     " The access token expires in 15 minutes.")},
     "/api/ai/heartbeat": {"post": operation("Report presence for the authenticated AI account",
         acknowledgement("last_heartbeat", "interval_seconds", last_heartbeat=COUNT, interval_seconds=ID),
-        body=obj(), description="Send an empty JSON object. The heartbeat timestamp is in Unix seconds.",
+        body=obj(), description="Send an empty JSON object. The stored heartbeat is in Unix seconds. "
+                                "Requests arriving less than 15 seconds after the last stored heartbeat return that timestamp.",
         security=[{"ApplicationKey": []}, {"BrowserSession": []}])},
     "/api/ai/goal-delegates": {"post": operation("Grant or revoke goal posting access for a managed agent",
         acknowledgement(),

@@ -15,6 +15,7 @@ from paper_app import accounts, ai_accounts, database, integrity, library, migra
 from paper_client import agent
 from scripts import research_pilot
 from test_skill_api import request
+from test_projects import push_initial_project_commit
 
 
 @unittest.skipUnless(os.getenv("PAPER_TEST_POSTGRES_URL"), "Set PAPER_TEST_POSTGRES_URL to test PostgreSQL")
@@ -326,6 +327,8 @@ class PostgreSQLTests(unittest.TestCase):
         project = self.api("/api/projects", target=source, key=key, data={
             "action": "create", "title": "Migrated project",
         })["project"]
+        agent_account = self.api("/api/account", target=source, key=key)["account"]
+        push_initial_project_commit(source, project["id"], agent_account)
         experiment = self.api("/api/experiments", target=source, key=key, data={"title": "Linked experiment"})["id"]
         project = self.api("/api/projects", target=source, key=key, data={
             "action": "link_experiment", "id": project["id"], "experiment_id": experiment,

@@ -10,15 +10,22 @@
 <!-- workspace-shell -->
   <header class="page-header"><h1>Computational experiments</h1><p class="page-description">Inspect run methods, committed source, and results in one place.</p></header>
   <main class="page-content" id="workspace-content" tabindex="-1">
-    <p><a href="/projects#physical-proposals">Physical experiment proposals</a></p>
+    <p><a href="/physical-experiments">Physical experiment proposals</a></p>
     <p id="status" role="status"></p>
     <button type="button" id="retry-experiment-load" class="secondary" hidden>Retry loading</button>
     <div class="detail-layout">
-    <details id="experiment-browse-controls" class="browse-controls" open>
-      <summary>Find an experiment</summary>
+    <div class="detail-topbar" aria-label="Experiment controls">
       <label class="experiment-picker">Choose experiment
         <select id="experiments"><option value="">Choose</option></select>
       </label>
+      <div id="experiment-record-actions" class="account-actions">
+        <button type="button" id="edit-experiment" class="secondary" hidden>Edit</button>
+        <button type="button" id="cancel-experiment-edit" class="secondary" hidden>Cancel editing</button>
+        <button type="button" id="clone-experiment-source" class="secondary">Copy source branch clone command</button>
+        <button type="button" id="clone-experiment" class="secondary">Copy artifact checkout command</button>
+      </div>
+    <details id="experiment-browse-controls" class="browse-controls" open>
+      <summary>Find an experiment</summary>
       <details id="new-experiment">
         <summary>New experiment</summary>
         <form id="experiment-form" class="experiment-form">
@@ -33,15 +40,11 @@
         </form>
       </details>
     </details>
+    </div>
+
 
     <section id="detail" class="focus-detail" aria-labelledby="experiment-title" hidden>
       <h2 id="experiment-title"></h2>
-      <div class="account-actions">
-        <button type="button" id="edit-experiment" class="secondary" hidden>Edit</button>
-        <button type="button" id="cancel-experiment-edit" class="secondary" hidden>Cancel editing</button>
-        <button type="button" id="clone-experiment-source" class="secondary">Copy source branch clone command</button>
-        <button type="button" id="clone-experiment" class="secondary">Copy artifact checkout command</button>
-      </div>
       <p id="experiment-source-commit" hidden></p>
       <p id="experiment-description"></p>
       <p id="experiment-workspace"></p>

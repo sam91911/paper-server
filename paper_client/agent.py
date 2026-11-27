@@ -193,7 +193,6 @@ def run_schedule(client, identity, command, *, once=False):
                 completion = None
                 if once:
                     return
-            client.request("/api/ai/heartbeat", {})
             started = time.monotonic()
             run = json.loads(client.request(route, {"action": "claim"}))["run"]
             if run is not None:

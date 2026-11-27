@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from paper_app import accounts, ai_accounts, library
+from paper_app import accounts, ai_accounts, database, library
 from paper_client import agent, review
 from test_skill_api import request
 
@@ -29,6 +29,23 @@ class AIRegistrationTests(unittest.TestCase):
         status, result = request(self.database, path, **options)
         self.assertEqual(status, expected, result)
         return result
+
+    def test_duplicate_heartbeats_use_only_a_read_transaction(self):
+        path = "/api/ai/heartbeat"
+        with library.connect(self.database) as db:
+            agent_id = accounts.create_account(db, "heartbeat-agent", "agent password", "local")
+            key = accounts.create_key(db, agent_id, "Heartbeat")
+        with patch.object(ai_accounts.time, "time", return_value=100):
+            self.assertEqual(self.api(path, key=key, data={})["last_heartbeat"], 100)
+        with patch.object(ai_accounts.time, "time", return_value=101), \
+                patch.object(database, "begin", wraps=database.begin) as begin:
+            self.assertEqual(self.api(path, key=key, data={})["last_heartbeat"], 100)
+            self.assertFalse(any(call.kwargs.get("write") for call in begin.call_args_list))
+        with patch.object(ai_accounts.time, "time", return_value=115):
+            self.assertEqual(self.api(path, key=key, data={})["last_heartbeat"], 115)
+        with library.connect(self.database) as db:
+            db.execute("UPDATE accounts SET disabled_at=? WHERE id=?", (116, agent_id))
+        self.api(path, key=key, data={}, expected=401)
 
     def test_recurring_heartbeat_stops_on_authentication_failure(self):
         client = Mock()

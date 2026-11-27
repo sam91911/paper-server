@@ -13,9 +13,8 @@
     <p id="skill-status" role="status"></p>
     <p id="skill-sign-in" hidden><a href="/account">Sign in to use the skill library</a>.</p>
     <div id="skill-library" class="detail-layout" hidden>
-      <details id="skill-browse-controls" class="browse-controls" open>
-        <summary>Find a skill</summary>
-        <p><button id="default-skill" type="button" class="secondary">Default API skill</button></p>
+    <div class="detail-topbar" aria-label="Skill controls">
+      <p><button id="default-skill" type="button" class="secondary">Default API skill</button></p>
         <form id="skill-search" class="filters">
           <label>Search <input name="q" type="search" maxlength="200" placeholder="Title, description, or tag"></label>
           <label>Tag <input name="tag" maxlength="40"></label>
@@ -23,16 +22,20 @@
           <button>Search</button>
           <button type="button" class="secondary" id="new-skill">New skill</button>
         </form>
+        <button id="edit-skill" type="button" hidden>Edit</button>
+        <button id="archive-skill" type="button" class="secondary" hidden></button>
+      <details id="skill-browse-controls" class="browse-controls" open>
+        <summary>Find a skill</summary>
         <ul id="skill-results" class="skill-results"></ul>
         <button id="more-skills" class="secondary" type="button" hidden>Load more</button>
       </details>
+    </div>
+
       <section id="skill-detail" class="focus-detail" aria-labelledby="skill-title" hidden>
         <h2 id="skill-title" tabindex="-1"></h2>
         <p id="skill-description"></p>
         <p id="skill-meta"></p>
         <pre id="skill-markdown" class="skill-markdown"></pre>
-        <button id="edit-skill" type="button" hidden>Edit</button>
-        <button id="archive-skill" type="button" class="secondary" hidden></button>
       </section>
       <section id="skill-editor" class="focus-detail" aria-labelledby="skill-editor-title" hidden>
         <h2 id="skill-editor-title">New skill</h2>

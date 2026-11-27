@@ -133,7 +133,8 @@ def update_paper(handler, db, data):
     ))
     if handler.path == "/api/metadata":
         library.save_metadata(db, paper_id, data)
-        db.execute("UPDATE paper_metadata_checks SET next_check=0 WHERE paper_id=?", (paper_id,))
+        if "tags" not in data or any(field in data for field in (*library.METADATA, "source_url")):
+            db.execute("UPDATE paper_metadata_checks SET next_check=0 WHERE paper_id=?", (paper_id,))
     elif handler.path == "/api/archive-paper":
         archived = data.get("archived")
         if type(archived) is not bool:

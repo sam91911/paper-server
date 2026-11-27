@@ -11,6 +11,7 @@ INVITE_SECONDS = 900
 ACCESS_SECONDS = 900
 HEARTBEAT_SECONDS = 60
 ONLINE_SECONDS = 3 * HEARTBEAT_SECONDS
+HEARTBEAT_COALESCE_SECONDS = 15
 PAGE_SIZE = 100
 
 SCHEMA = """
@@ -136,10 +137,20 @@ def deactivate(db, operator, username):
     return {"username": agent["username"], "disabled_at": disabled}
 
 
-def heartbeat(db, account):
+def recent_heartbeat(db, account, now):
     if account["role"] not in ("local", "cloud"):
         raise sharing.AccessDenied
+    last = db.execute("SELECT last_heartbeat FROM accounts WHERE id=?", (account["id"],)).fetchone()[0]
+    if last is not None and 0 <= now - last < HEARTBEAT_COALESCE_SECONDS:
+        return {"last_heartbeat": last, "interval_seconds": HEARTBEAT_SECONDS}
+    return None
+
+
+def heartbeat(db, account):
     now = int(time.time())
+    recent = recent_heartbeat(db, account, now)
+    if recent is not None:
+        return recent
     db.execute("UPDATE accounts SET last_heartbeat=? WHERE id=?", (now, account["id"]))
     return {"last_heartbeat": now, "interval_seconds": HEARTBEAT_SECONDS}
 

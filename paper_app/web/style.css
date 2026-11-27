@@ -117,6 +117,10 @@ a { color: var(--accent-dark); text-underline-offset: .18em; }
     grid-template-areas: "brand brand" "nav header" "nav content";
   }
   .workspace-bar { grid-area: brand; padding-inline: 1.6rem; }
+  .workspace-shell[data-sidebar="hidden"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "brand" "header" "content";
+  }
   .page-header { grid-area: header; }
   .page-content { grid-area: content; }
   .workspace-nav {
@@ -737,7 +741,7 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
   .remote-layout { grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr); }
 }
 
-#library, #agent-goal-workspace {
+#library, #agent-goal-workspace, #project-workspace {
   padding: 0;
   margin-top: .5rem;
   border: 0;
@@ -751,7 +755,7 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
 }
 #paper-archive { margin-top: 1rem; }
 #set-goal-panel { margin-bottom: 1rem; }
-.detail-layout { display: grid; gap: 1rem; align-items: start; }
+.detail-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
 .detail-layout > * { min-width: 0; }
 .detail-layout > section, .detail-layout > .browse-controls { margin: 0; }
 .browse-controls, .paper-record, .document-record, #agent-goal-empty {
@@ -827,9 +831,9 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
 .goal-list-status[data-status="blocked"], .goal-list-status[data-status="canceled"] { color: #8d3d28; }
 #account-page { max-width: 56rem; }
 #account-avatar { border-radius: 50%; object-fit: cover; }
-.account-options:has(> details[open]:not([hidden])) { display: grid; gap: .65rem; }
+.account-options:has(> details[open]:not([hidden])) { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .65rem; }
 .account-options:has(> details[open]:not([hidden])) > details { margin: 0; }
-.account-options > details[open] { grid-row: 1; background: var(--surface); }
+.account-options > details[open] { order: 1; flex-basis: 100%; background: var(--surface); }
 .account-options:has(> details[open]:not([hidden])) > details:not([open]) { padding-block: .65rem; }
 #account-page:has(.account-options > details[open]:not([hidden])) { max-width: none; }
 
@@ -845,26 +849,7 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
 .workspace-shell:has(.focus-detail:not([hidden]), #results:not([hidden]) #compare-2d[open], #account-page:not([hidden]) .account-options > details[open]:not([hidden]))
   .page-description { display: none; }
 
-@media (min-width: 46rem) {
-  .account-options:has(> details[open]:not([hidden])) {
-    grid-template-columns: 11rem minmax(0, 1fr);
-    grid-template-rows: repeat(5, max-content) 1fr;
-    align-items: start;
-  }
-  .account-options:has(> details[open]:not([hidden])) > details:not([open]) { grid-column: 1; }
-  .account-options > details[open] { grid-column: 2; grid-row: 1 / span 6; }
-}
-@media (min-width: 60rem) {
-  .detail-layout:has(.focus-detail:not([hidden])) { grid-template-columns: 8.5rem minmax(0, 1fr); }
-  .detail-layout:has(.focus-detail:not([hidden])):has(> .browse-controls[open]) {
-    grid-template-columns: minmax(17rem, 25%) minmax(0, 1fr);
-  }
-  .detail-layout:has(.focus-detail:not([hidden])) > :not(.browse-controls) { grid-column: 2; grid-row: 1; }
-  .detail-layout:has(.focus-detail:not([hidden])) > .browse-controls:not([open]) { position: sticky; top: 1rem; }
-}
 @media (min-width: 72rem) {
-  .paper-browser:not(:has(.focus-detail:not([hidden]))),
-  .goal-browser:not(:has(.focus-detail:not([hidden]))) { grid-template-columns: minmax(17rem, 1fr) minmax(0, 2.1fr); }
   .paper-catalog-panel .library-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .paper-catalog-panel .library-actions > label:nth-child(-n+2), #create-group { grid-column: 1 / -1; }
 }
@@ -916,3 +901,83 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
 
 .record-tags { display: flex; flex-wrap: wrap; gap: .4rem; margin-block: .5rem; }
 .record-tag { padding: .2rem .55rem; font-size: .85rem; }
+
+.project-path { display: flex; align-items: baseline; flex-wrap: wrap; gap: .35rem; margin-block: .75rem; overflow-wrap: anywhere; }
+.project-preview { max-height: min(72vh, 56rem); overflow: auto; padding: 1rem; background: var(--surface); border: 1px solid var(--field-line); }
+#project-files button, #project-history button { text-align: start; overflow-wrap: anywhere; }
+
+.repository-toolbar, .repository-revision { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+.repository-toolbar { padding-block: .65rem; border-bottom: 1px solid var(--field-line); }
+.repository-toolbar label { display: flex; gap: .45rem; align-items: center; }
+.repository-views { display: flex; gap: .3rem; }
+.repository-views [aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.repository-clone { margin-inline-start: auto; }
+.repository-panel { margin-block: .65rem 1rem; border: 1px solid var(--field-line); border-radius: .55rem; overflow: hidden; }
+.repository-panel > :not(table) { margin-inline: .85rem; }
+.repository-byline { padding-block: .6rem; overflow-wrap: anywhere; }
+#project-file-table { width: 100%; margin: 0; }
+#project-file-table td:first-child { width: 75%; overflow-wrap: anywhere; }
+.repository-log { padding: .25rem 0; list-style: none; }
+.repository-log li { padding: .7rem 0; overflow-wrap: anywhere; }
+.repository-log li + li { border-top: 1px solid var(--field-line); }
+.repository-log p { margin: .25rem 0 0; }
+
+.workspace-bar { justify-content: space-between; gap: .75rem; }
+.workspace-bar #workspace-nav-toggle { margin: 0; padding: .32rem .65rem; white-space: nowrap; }
+@media (max-width: 59.99rem) {
+  .workspace-shell[data-sidebar="visible"] .workspace-nav {
+    position: absolute;
+    z-index: 12;
+    inset: 4rem auto auto 0;
+    width: min(18rem, 88vw);
+    max-height: calc(100dvh - 4rem);
+    overflow: auto;
+    flex-direction: column;
+    padding: .6rem;
+    border: 1px solid var(--line);
+    box-shadow: 0 .6rem 1.6rem var(--shade);
+  }
+}
+
+.detail-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .55rem .8rem;
+  align-items: end;
+  min-width: 0;
+  padding: .55rem .75rem;
+  border: 1px solid var(--line);
+  border-radius: .65rem;
+  background: var(--surface);
+}
+.detail-topbar label { min-width: 0; }
+.detail-topbar select { max-width: min(22rem, 65vw); }
+.detail-topbar button, .detail-topbar > p { margin: 0; }
+.detail-topbar > .account-actions { align-items: end; }
+.detail-topbar .filters { align-items: end; gap: .5rem; margin: 0; }
+.detail-topbar .inline-check { align-self: center; }
+.detail-topbar > details,
+.detail-topbar .repository-toolbar > details {
+  margin: 0;
+  padding: .33rem .55rem;
+  border: 1px solid var(--line);
+  border-radius: .4rem;
+  background: var(--surface);
+}
+.detail-topbar .toolbar-menu[open] { flex-basis: 100%; }
+.detail-topbar:has(.repository-clone[open]) .repository-toolbar { flex-basis: 100%; }
+.project-topbar .repository-toolbar { padding: 0; border: 0; margin-inline-start: auto; }
+.project-topbar .repository-clone { margin-inline-start: 0; }
+.project-picker { display: flex; gap: .5rem; align-items: end; min-width: 0; }
+#project-detail { padding: clamp(.65rem, 1.4vw, 1rem); }
+#project-browser { padding: 0; margin-block: .75rem 1rem; border: 0; box-shadow: none; }
+
+.detail-topbar > .browse-controls[open], .detail-topbar > .toolbar-menu[open] {
+  flex-basis: 100%;
+  order: 1;
+}
+
+.detail-layout:not(:has(> #detail:not([hidden]))) #experiment-record-actions,
+.detail-layout:not(:has(> #skill-detail:not([hidden]))) :is(#edit-skill, #archive-skill) {
+  display: none;
+}

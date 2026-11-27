@@ -642,11 +642,29 @@ class HttpTests(unittest.TestCase):
         for name in scripts:
             self.assertEqual(self.get('/assets/' + name)[0], 200)
 
+    def test_detail_pages_share_a_sidebar_and_top_controls(self):
+        for path in ("/projects", "/papers", "/documents", "/discussions", "/experiments",
+                     "/physical-experiments", "/agent-goals", "/skills"):
+            status, page = self.get(path)
+            self.assertEqual(status, 200, path)
+            self.assertIn(b'aria-controls="workspace-navigation"', page, path)
+            self.assertIn(b'class="detail-topbar', page, path)
+            self.assertIn(b'/assets/workspace-nav.js', page, path)
+        self.assertEqual(self.get("/assets/workspace-nav.js")[0], 200)
+
+    def test_physical_experiments_has_its_own_page(self):
+        status, page = self.get("/physical-experiments")
+        self.assertEqual(status, 200)
+        self.assertIn(b'id="physical-proposal-form"', page)
+        self.assertIn(b'href="/physical-experiments" aria-current="page"', page)
+        self.assertNotIn(b'id="physical-proposal-form"', self.get("/projects")[1])
+        self.assertEqual(self.get("/assets/physical-experiments.js")[0], 200)
+
     def test_experiments_uses_the_library_page_layout(self):
         status, experiments = self.get('/experiments')
         self.assertEqual(status, 200)
         self.assertIn(b'<header class="page-header"><h1>Computational experiments</h1>', experiments)
-        self.assertIn(b'href="/projects#physical-proposals"', experiments)
+        self.assertIn(b'href="/physical-experiments"', experiments)
         self.assertIn(b'<main class="page-content" id="workspace-content"', experiments)
         self.assertIn(b'href="#workspace-content">Skip to content', experiments)
         self.assertLess(experiments.index(b'<nav class="workspace-nav"'), experiments.index(b'<main'))

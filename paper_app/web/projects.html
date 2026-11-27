@@ -13,7 +13,12 @@
   <p id="project-status" role="status"></p>
   <p id="project-sign-in" hidden><a href="/account">Sign in to manage projects</a>.</p>
   <section id="project-workspace" hidden>
-    <details>
+    <div class="detail-topbar project-topbar" aria-label="Project controls">
+    <form id="project-picker" class="project-picker">
+      <label>Project <select name="project"></select></label>
+      <button type="button" id="project-refresh" class="secondary">Refresh</button>
+    </form>
+    <details id="new-project-panel" class="toolbar-menu">
       <summary>New project</summary>
       <form id="new-project" class="experiment-form">
         <label>Title <input name="title" required maxlength="160"></label>
@@ -21,17 +26,26 @@
         <button>Create project</button>
       </form>
     </details>
-    <form id="project-picker" class="filters">
-      <label>Project <select name="project"></select></label>
-      <button type="button" id="project-refresh" class="secondary">Refresh</button>
-    </form>
-    <section id="project-detail" hidden>
-      <h2 id="project-title"></h2>
-      <p id="project-description" class="goal-brief-text"></p>
-      <label>HTTPS clone URL <input id="project-clone-url" readonly></label>
-      <button type="button" id="project-copy-clone" class="secondary">Copy clone command</button>
-      <h3>Branches</h3>
-      <ul id="project-branches"></ul>
+    <details id="git-token-settings" class="toolbar-menu">
+      <summary>Git tokens</summary>
+      <form id="git-token-form" class="filters">
+        <label>Repository type <select name="kind"><option value="projects">Project</option><option value="experiments">Experiment</option><option value="documents">Document</option></select></label>
+        <label>Repository ID <input name="resource_id" type="number" min="1" required></label>
+        <label>Access <select name="access"><option value="read">Clone and pull</option><option value="write">Clone, pull and push</option></select></label>
+        <label>Expires in days <input name="days" type="number" min="1" max="90" value="30" required></label>
+        <button>Create token</button>
+      </form>
+      <p>For HTTPS Git, enter your Library username and use the token as the password.</p>
+      <label id="new-git-token" hidden>Copy this token now <input id="git-token-secret" readonly></label>
+      <ul id="git-token-list" class="experiment-records"></ul>
+    </details>
+    <details id="project-settings-menu" class="toolbar-menu" hidden>
+      <summary>Project options</summary>
+      <p><a id="project-physical-experiments" href="/physical-experiments">Physical experiment proposals</a></p>
+      <details id="project-branch-details">
+        <summary>Branches and linked experiments</summary>
+        <ul id="project-branches"></ul>
+      </details>
       <form id="project-edit" class="experiment-form" hidden>
         <label>Title <input name="title" required maxlength="160"></label>
         <label>Description <textarea name="description" maxlength="20000" rows="3"></textarea></label>
@@ -50,37 +64,53 @@
           <button>Save access</button>
         </form>
       </section>
+      <details id="project-delete-settings" hidden>
+        <summary>Delete project</summary>
+        <p>Deleting the project removes its Git repository. Computational experiment records stay available. Physical experiment proposals become private to their authors.</p>
+        <button id="project-delete" type="button">Delete project</button>
+      </details>
+    </details>
+        <div id="project-repository-controls" class="repository-toolbar" hidden>
+          <div class="repository-views" aria-label="Repository views">
+            <button id="project-code-view" type="button" class="secondary" aria-pressed="true">Files</button>
+            <button id="project-history-view" type="button" class="secondary" aria-pressed="false">Commits</button>
+          </div>
+          <label>Branch <select id="project-browser-branch"></select></label>
+          <details class="repository-clone toolbar-menu">
+            <summary>Clone</summary>
+            <label>HTTPS clone URL <input id="project-clone-url" readonly></label>
+            <button type="button" id="project-copy-clone" class="secondary">Copy clone command</button>
+          </details>
+        </div>
+    </div>
+    <p id="project-empty" class="empty-record">Choose a project to browse its files and commits.</p>
+    <section id="project-detail" class="focus-detail" hidden>
+      <h2 id="project-title"></h2>
+      <p id="project-description" class="goal-brief-text"></p>
+      <section id="project-browser" aria-labelledby="project-browser-heading">
+        <h3 id="project-browser-heading">Repository</h3>
+        <p id="project-browser-status" role="status"></p>
+        <div id="project-file-view" class="repository-panel">
+          <div class="repository-revision">
+            <nav id="project-path" class="project-path" aria-label="Repository path"></nav>
+            <button id="project-tip" type="button" class="secondary" hidden>Back to branch tip</button>
+          </div>
+          <p id="project-latest-commit" class="repository-byline"></p>
+          <table id="project-file-table" aria-label="Repository files" hidden>
+            <thead><tr><th scope="col">Name</th><th scope="col">Type</th></tr></thead>
+            <tbody id="project-files"></tbody>
+          </table>
+          <pre id="project-preview" class="project-preview" tabindex="0" hidden></pre>
+        </div>
+        <section id="project-history-panel" class="repository-panel" aria-label="Commit history" hidden>
+          <ol id="project-history" class="repository-log"></ol>
+          <div class="file-actions">
+            <button id="project-history-previous" type="button" class="secondary" disabled>Newer commits</button>
+            <button id="project-history-next" type="button" class="secondary" disabled>Older commits</button>
+          </div>
+        </section>
+      </section>
     </section>
-    <details id="physical-proposals">
-      <summary>Physical experiment proposals</summary>
-      <ul id="physical-proposal-list" class="experiment-records"></ul>
-      <form id="physical-proposal-form" class="experiment-form">
-        <label>Title <input name="title" required maxlength="160"></label>
-        <label>Project <select name="project_id"></select></label>
-        <label>Procedure <textarea name="procedure" rows="3" required maxlength="12000"></textarea></label>
-        <label>Equipment and materials <textarea name="equipment" rows="2" required maxlength="12000"></textarea></label>
-        <label>How to obtain them <textarea name="procurement" rows="2" required maxlength="12000"></textarea></label>
-        <label>Estimated cost and currency <textarea name="estimated_cost" rows="2" required maxlength="12000"></textarea></label>
-        <label>Expected duration <textarea name="duration" rows="2" required maxlength="12000"></textarea></label>
-        <label>Measurement plan <textarea name="measurement" rows="3" required maxlength="12000"></textarea></label>
-        <label>Expected data <textarea name="expected_data" rows="3" required maxlength="12000"></textarea></label>
-        <button>Save proposal</button>
-        <button type="button" id="physical-proposal-new" class="secondary">New proposal</button>
-      </form>
-    </details>
-    <details id="git-token-settings">
-      <summary>Git tokens</summary>
-      <form id="git-token-form" class="filters">
-        <label>Repository type <select name="kind"><option value="projects">Project</option><option value="experiments">Experiment</option><option value="documents">Document</option></select></label>
-        <label>Repository ID <input name="resource_id" type="number" min="1" required></label>
-        <label>Access <select name="access"><option value="read">Clone and pull</option><option value="write">Clone, pull and push</option></select></label>
-        <label>Expires in days <input name="days" type="number" min="1" max="90" value="30" required></label>
-        <button>Create token</button>
-      </form>
-      <p>For HTTPS Git, enter your Library username and use the token as the password.</p>
-      <label id="new-git-token" hidden>Copy this token now <input id="git-token-secret" readonly></label>
-      <ul id="git-token-list" class="experiment-records"></ul>
-    </details>
   </section>
 </main>
 <script src="/assets/api.js"></script>
