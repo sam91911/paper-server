@@ -60,8 +60,9 @@
   a unique `request_id`. Reuse that request ID for an identical retry. Include
   a concise, commit-style note and shared evidence objects with `kind` and `id`.
   For example, use `"note":"Verify baseline extraction against Table II"`
-  and include `{"kind":"document","id":42}` for the report. Also cite new source
-  or finding IDs when available so the next round can distinguish new evidence.
+  and cite `{"kind":"thread","id":42}` for a single-paper report comment, or
+  `{"kind":"document","id":42}` for a broader report. Include new source or
+  finding IDs when available so the next round can distinguish new evidence.
   After submitting, check the current actions before starting another round.
   If `require_approval` is true, stop work after submission and wait for the
   requester to approve the next round. For a continuous goal, each submission
@@ -69,7 +70,14 @@
 
 ## Write reports, discussion notes, and reusable skills
 
-- Put the full report in Documents. Create it via `POST /api/documents` with
+- If the report is about one paper, post it as a comment on that paper via
+  `POST /api/comments` with `paper_id`, `body`, and appropriate sharing. Cite
+  pages, tables, or figures, and link to the comment from your goal using the
+  returned `comment_id` as a `thread` reference. Read existing paper comments
+  first and update your report or reply to the relevant thread when suitable.
+  Reserve Documents for cross-paper syntheses, standalone analyses, or work
+  whose primary subject is not one paper.
+- Create broader reports via `POST /api/documents` with
   `title`, `markdown`, `agent_goal_id` when applicable, and explicit
   `recipients` for the requester or intended collaborators. Include findings,
   evidence, limitations, reproducibility details when relevant, and the next
@@ -79,8 +87,12 @@
 - Use Discussions for shareable intermediate summaries such as hypotheses,
   competing interpretations, decisions, blockers, and questions for
   collaborators. Send `title`, `markdown`, `report_document_id`, and appropriate
-  sharing to `POST /api/discussions`. The report link follows its own access
-  permissions. Record concise conclusions and rationale suitable for collaborators.
+  sharing to `POST /api/discussions` when you have a report document. For a
+  single-paper report, use the paper's comment thread for related questions.
+  The report link follows its own access permissions. Record concise conclusions and rationale suitable for collaborators.
+- Use `@username` when a specific collaborator should see an update. Mentions
+  appear on their home page when they have access to the item. Use ordinary
+  sharing to grant the necessary access before expecting a response.
 - If a procedure is likely to recur, search `GET /api/skills?q=<query>` first.
   Save a new skill for yourself with `POST /api/skills` using `action: "create"`,
   `title`, `description`, `markdown`, `tags`, and `audience: "owner"`.

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const source = fs.readFileSync(new URL('../paper_app/web/library.js', import.meta.url), 'utf8');
-const code = source.slice(source.indexOf('async function loadPaperComments()'), source.indexOf('async function updateLibrary('));
+const code = source.slice(source.indexOf('function requestedComment('), source.indexOf('async function updateLibrary('));
 const controls = new Map();
 function element(id) {
   if (!controls.has(id)) controls.set(id, {hidden: false, disabled: false, addEventListener(type, callback) {this[type] = callback;}});
@@ -14,7 +14,7 @@ let pending = [];
 let renders = [];
 const data = {comments: [], account: {id: 1}};
 const commentForm = {hidden: false};
-const context = {libraryData: data, commentLoadSequence: 0, nextCommentBefore: null,
+const context = {location: {search: ""}, URLSearchParams, libraryData: data, commentLoadSequence: 0, nextCommentBefore: null,
   element, selectedPaper: () => selected, commentForm, commentDrafts: new Map(),
   api: route => new Promise(resolve => pending.push({route, resolve})),
   showReplyTarget() {}, renderPaperComments: item => renders.push(item.id),
@@ -45,4 +45,13 @@ assert.deepEqual(Array.from(data.comments, item => item.id), [15, 20]);
 assert.equal(button.hidden, true);
 assert.equal(button.disabled, false);
 assert.deepEqual(renders, [2, 2]);
+context.location.search = "?paper=2&comment=7";
+let focused = false;
+element("comment-7").focus = () => { focused = true; };
+const mention = context.loadPaperComments();
+assert.equal(pending[3].route, "paper-comments?paper_id=2&focus=7");
+pending[3].resolve({comments: [{id: 7}], next_before: null});
+await mention;
+assert.equal(element("paper-comments").open, true);
+assert.equal(focused, true);
 console.log('Comment loading and pagination passed');

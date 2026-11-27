@@ -908,3 +908,8 @@ textarea[name="doi_refs"] { min-height: 3.5rem; }
 .task-card fieldset { padding: 0; border: 0; min-width: 0; }
 .task-description { white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-overdue { color: var(--tradeoff); font-weight: 650; }
+
+#mention-inbox { margin-bottom: 1.5rem; }
+#mention-inbox-list small { display: block; color: var(--muted); }
+.mention-options { position: static; }
+.mention-options [aria-selected="true"] { outline: 2px solid var(--accent); }

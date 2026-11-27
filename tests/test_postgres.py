@@ -331,7 +331,8 @@ class PostgreSQLTests(unittest.TestCase):
             "action": "link_experiment", "id": project["id"], "experiment_id": experiment,
         })["project"]
         discussion = self.api("/api/discussions", target=source, key=key, data={
-            "title": "Report discussion", "markdown": "Next step", "report_document_id": document,
+            "title": "Report discussion", "markdown": f"Next step, @{pilot['human_username']}.",
+            "report_document_id": document, "recipients": [pilot["human_username"]],
         })["document_id"]
         metric_path = f"/api/paper-metrics?paper_id={pilot['paper']}"
         original_metrics = self.api(metric_path, target=source, key=key)["metrics"]
@@ -366,6 +367,8 @@ class PostgreSQLTests(unittest.TestCase):
         self.assertEqual(schedule["failures"], 1)
         self.assertEqual(self.api(f"/api/projects?id={project['id']}", key=key)["project"], project)
         self.assertEqual(self.api(f"/api/document?id={discussion}", key=key)["document"]["report_document_id"], document)
+        self.assertEqual(self.api("/api/mentions", cookie=cookie)["mentions"][0]["url"],
+                         f"/discussions?document={discussion}")
         edited = next(row for row in self.api(metric_path, key=key)["metrics"] if row["id"] == metric_id)
         self.assertEqual((edited["value"], edited["can_edit"]), ("5", True))
         self.assertEqual(self.api(f"/papers/{pilot['paper']}/source.pdf", key=key), original_bytes)

@@ -24,7 +24,7 @@ from time import perf_counter
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import database as storage
-from . import git_repos, git_tokens, projects, supervisor
+from . import git_repos, git_tokens, mentions, projects, supervisor
 from . import passkeys
 from . import agent_schedules, compute_tasks
 from . import account_routes, accounts, admin_console, agent_goals, ai_accounts, client_distribution, comment_routes, crossref, document_context, document_routes, experiment_routes, experiments, findings, goals, google_signin, human_keys, library, metadata_sync, openapi, paper_routes, pdf, reviews, sharing, skills, tasks, tools_catalog
@@ -53,6 +53,7 @@ ASSETS = {
     "/assets/experiments.js": ("experiments.js", "text/javascript; charset=utf-8"),
     "/assets/findings.js": ("findings.js", "text/javascript; charset=utf-8"),
     "/assets/goals.js": ("goals.js", "text/javascript; charset=utf-8"),
+    "/assets/mentions.js": ("mentions.js", "text/javascript; charset=utf-8"),
     "/assets/api.js": ("api.js", "text/javascript; charset=utf-8"),
     "/assets/human-keys.js": ("human-keys.js", "text/javascript; charset=utf-8"),
     "/assets/passkeys.js": ("passkeys.js", "text/javascript; charset=utf-8"),
@@ -393,18 +394,28 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": "Choose a document." if is_document else "Choose a paper."})
                 return
             before = params.get("before", [None])[0]
-            if before is not None and (not re.fullmatch(r"[1-9][0-9]{0,18}", before) or int(before) >= 2**63):
+            focus = params.get("focus", [None])[0]
+            if any(cursor is not None and (not re.fullmatch(r"[1-9][0-9]{0,18}", cursor) or int(cursor) >= 2**63)
+                   for cursor in (before, focus)):
                 self.send_json(400, {"error": "Invalid comment cursor."})
                 return
+            scope = {"documents": is_document, "document_id": int(value) if is_document else None,
+                     "paper_id": None if is_document else int(value)}
             try:
                 with library.connect(self.server.database) as db:
                     storage.begin(db)
                     account = self.current_account(db)
-                    comments = library.comment_snapshot(db, account, documents=is_document,
-                                                        document_id=int(value) if is_document else None,
-                                                        paper_id=None if is_document else int(value),
-                                                        before=int(before) if before else None, root_limit=50)
-                roots = [item["id"] for item in comments if item["parent_id"] is None]
+                    comments = library.comment_snapshot(db, account, **scope, before=int(before) if before else None,
+                                                        root_limit=50)
+                    roots = [item["id"] for item in comments if item["parent_id"] is None]
+                    if focus and not before and not any(item["id"] == int(focus) for item in comments):
+                        focused_id = int(focus)
+                        paper_id, document_id = scope["paper_id"], scope["document_id"]
+                        root = (library.comment_root(db, focused_id, paper_id, document_id)
+                                if library.can_reply(db, paper_id, focused_id, account, document_id) else None)
+                        if root and root[0] not in roots:
+                            comments += library.comment_snapshot(db, account, **scope, root_id=root[0])
+                            comments.sort(key=lambda item: item["id"])
                 self.send_json(200, {"comments": comments, "next_before": min(roots) if len(roots) == 50 else None})
             except storage.ERRORS as error:
                 LOG.error("Comment read failed (%s)", type(error).__name__)
@@ -477,10 +488,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(500 if action == "file" else 400, {"error": str(error)})
             except storage.ERRORS:
                 self.send_json(500, {"error": "Could not read this file."})
-        elif route in ("/api/usernames", "/api/agent-options", "/api/document"):
+        elif route in ("/api/usernames", "/api/agent-options", "/api/document", "/api/mentions"):
             try:
                 with library.connect(self.server.database) as db:
-                    if route == "/api/document":
+                    if route in ("/api/document", "/api/mentions"):
                         storage.begin(db)
                     account = self.require_account(db)
                     if route == "/api/document":
@@ -492,6 +503,8 @@ class Handler(BaseHTTPRequestHandler):
                             raise LookupError
                         items = sharing.attach_recipients(db, "document", [dict(document)], account)
                         data = {"document": document_context.detail(db, account, items[0])}
+                    elif route == "/api/mentions":
+                        data = mentions.inbox(db, account)
                     elif route == "/api/usernames":
                         params = parse_qs(url.query)
                         data = accounts.suggest_usernames(db, params.get("q", [""])[0],

@@ -55,14 +55,18 @@ async function loadDocumentComments() {
   nextDocumentCommentBefore = null;
   element("older-document-comments").hidden = true;
   element("document-discussion").hidden = true;
+  const focus = item && requestedComment("document", item.id);
   if (item) {
-    const result = await api(`document-comments?document_id=${item.id}`);
+    const result = await api(`document-comments?document_id=${item.id}${focus ? `&focus=${focus}` : ""}`);
     if (sequence !== documentCommentSequence || data !== libraryData || selectedDocument()?.id !== item.id) return;
     data.comments = result.comments;
     nextDocumentCommentBefore = result.next_before;
     element("older-document-comments").hidden = !nextDocumentCommentBefore;
   }
-  if (sequence === documentCommentSequence && data === libraryData) renderDocumentComments(item);
+  if (sequence === documentCommentSequence && data === libraryData) {
+    renderDocumentComments(item);
+    scrollToRequestedComment(focus, "document-discussion");
+  }
 }
 
 element("older-document-comments").addEventListener("click", async event => {
@@ -76,7 +80,7 @@ element("older-document-comments").addEventListener("click", async event => {
   try {
     const result = await api(`document-comments?document_id=${item.id}&before=${cursor}`);
     if (sequence !== documentCommentSequence || data !== libraryData || selectedDocument()?.id !== item.id) return;
-    data.comments = [...result.comments, ...data.comments];
+    data.comments = mergeCommentPages(result.comments, data.comments);
     nextDocumentCommentBefore = result.next_before;
     button.hidden = !nextDocumentCommentBefore;
     renderDocumentComments(item);

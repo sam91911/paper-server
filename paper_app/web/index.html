@@ -13,6 +13,12 @@
 <p class="page-description" id="page-description">Compare measurements across papers, units, and experimental conditions.</p>
 </header>
 <main class="page-content" id="workspace-content" tabindex="-1">
+<section id="mention-inbox" hidden aria-labelledby="mention-inbox-heading">
+  <h2 id="mention-inbox-heading">Mentions</h2>
+  <p id="mention-inbox-status" role="status"></p>
+  <ul id="mention-inbox-list" class="experiment-records"></ul>
+  <button id="mention-refresh" type="button" class="secondary">Refresh mentions</button>
+</section>
 <p class="compare-only"><a class="utility-link" href="/exports/metrics.csv">Download library metrics CSV</a></p>
 <p id="status" class="compare-only" role="status">Loading metrics…</p>
 <details class="compare-only compare-panel">
@@ -291,7 +297,7 @@
       <form id="add-comment" hidden>
         <p id="reply-context" hidden></p>
         <button type="button" id="cancel-reply" class="secondary" hidden>Cancel reply</button>
-        <label>New comment <textarea id="new-comment" required maxlength="20000"></textarea></label>
+        <label>New comment <textarea id="new-comment" data-mentions required maxlength="20000"></textarea></label>
         <label>Related papers, one DOI or DOI link per line
           <textarea name="doi_refs" rows="2" maxlength="9000"></textarea>
         </label>
@@ -512,7 +518,7 @@
         <form id="document-editor" hidden>
           <h2 id="document-editor-heading">Edit Markdown</h2>
           <div class="document-fields">
-            <label class="document-title-field">Title <input name="title" maxlength="160" required></label>
+            <label class="document-title-field">Title <input name="title" data-mentions maxlength="160" required></label>
             <label id="news-source-field" class="document-title-field" hidden>Source URL
               <input name="source_url" type="url" maxlength="2048" placeholder="https://">
             </label>
@@ -524,7 +530,7 @@
               <input name="scheduled_at" type="datetime-local">
             </label>
           </div>
-          <label>Markdown <textarea name="markdown" maxlength="100000" spellcheck="false"></textarea></label>
+          <label>Markdown <textarea name="markdown" data-mentions maxlength="100000" spellcheck="false"></textarea></label>
           <div class="document-tools">
             <div class="account-actions">
               <label>DOI <input id="document-doi" maxlength="500"></label>
@@ -622,7 +628,7 @@
         <form id="document-comment-form">
           <p id="document-reply-context" hidden></p>
           <button id="cancel-document-reply" type="button" class="secondary" hidden>Cancel reply</button>
-          <label>Comment <textarea name="body" required maxlength="20000"></textarea></label>
+          <label>Comment <textarea name="body" data-mentions required maxlength="20000"></textarea></label>
           <label id="document-comment-dois">Related papers, one DOI per line <textarea name="doi_refs" rows="2" maxlength="9000"></textarea></label>
           <div class="document-fields">
             <label id="document-comment-line">Source line (optional) <input name="line" type="number" min="1" max="1000000"></label>
@@ -736,6 +742,7 @@
 <script src="/assets/documents.js"></script>
 <script src="/assets/findings.js"></script>
 <script src="/assets/goals.js"></script>
+<script src="/assets/mentions.js"></script>
 <script src="/assets/boot.js"></script>
 </body>
 </html>

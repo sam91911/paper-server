@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import database as storage
-from . import accounts, document_context, experiments, findings, goals, google_signin, metrics, sharing, skills, tasks, tools_catalog
+from . import accounts, document_context, experiments, findings, goals, google_signin, mentions, metrics, sharing, skills, tasks, tools_catalog
 
 FIELDS = ("paper", "page", "metric", "value", "unit", "conditions", "evidence")
 METADATA = ("doi", "title", "authors", "year", "venue", "publisher", "source")
@@ -149,7 +149,7 @@ def initialize(path):
         for statement in (*findings.SCHEMA, *goals.SCHEMA, *metrics.SCHEMA):
             db.execute(statement)
         agent_goals.initialize(db)
-        for statement in (*agent_schedules.SCHEMA, *projects.SCHEMA, git_tokens.SCHEMA):
+        for statement in (*agent_schedules.SCHEMA, *projects.SCHEMA, *mentions.SCHEMA, git_tokens.SCHEMA):
             db.execute(statement)
         document_context.initialize(db)
         for table, name, definition in (
@@ -177,7 +177,7 @@ def initialize(path):
         db.execute("INSERT INTO comment_id_sequence SELECT 1, COALESCE(MAX(id), 0) FROM comments WHERE TRUE ON CONFLICT DO NOTHING")
         for table in ("comments", "comment_authors", "item_grants", "agent_goal_events", "agent_goal_readers",
                       "review_requests", "document_contexts", "projects", "project_members", "project_experiments",
-                      "physical_proposals", "git_tokens"):
+                      "physical_proposals", "git_tokens", "comment_mentions", "document_mentions"):
             if db.execute(f"PRAGMA foreign_key_check({table})").fetchone():
                 raise sqlite3.IntegrityError("Invalid library references during migration")
 
@@ -484,7 +484,7 @@ def snapshot(db, view="library", account=None, *, include_comments=True, documen
     return data
 
 
-def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id=None, before=None, root_limit=None):
+def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id=None, before=None, root_limit=None, root_id=None):
     finding_ids = []
     goal_ids = []
     if documents:
@@ -502,6 +502,8 @@ def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id
         root_scope += " AND c.document_id=:document_filter"
     if before is not None:
         root_scope += " AND c.id<:before"
+    if root_id is not None:
+        root_scope += " AND c.id=:root_id"
     root_order = " ORDER BY c.id DESC LIMIT :root_limit" if root_limit is not None else ""
     json_ids = (
         "SELECT CAST(value AS BIGINT) FROM jsonb_array_elements_text(CAST(:{param} AS jsonb)) AS ids(value)"
@@ -529,7 +531,7 @@ def comment_snapshot(db, account, *, documents=False, paper_id=None, document_id
         LEFT JOIN accounts u ON a.account_id=u.id ORDER BY c.id
         """,
         sharing.viewer_params(account, paper_filter=paper_id, document_filter=document_id, before=before,
-                              root_limit=root_limit, finding_ids=json.dumps(finding_ids), goal_ids=json.dumps(goal_ids)),
+                              root_limit=root_limit, root_id=root_id, finding_ids=json.dumps(finding_ids), goal_ids=json.dumps(goal_ids)),
     )]
     sharing.attach_recipients(db, "comment", items, account, "author_id")
     for comment in items:
@@ -667,6 +669,15 @@ def can_reply(db, paper_id, parent_id, account, document_id=None):
     return True
 
 
+def comment_root(db, comment_id, paper_id, document_id):
+    return db.execute("""WITH RECURSIVE thread AS (
+                            SELECT id,parent_id FROM comments WHERE id=? AND
+                            paper_id IS NOT DISTINCT FROM ? AND document_id IS NOT DISTINCT FROM ?
+                            UNION ALL SELECT c.id,c.parent_id FROM comments c JOIN thread t ON c.id=t.parent_id
+                         ) SELECT id FROM thread WHERE parent_id IS NULL""",
+                      (comment_id, paper_id, document_id)).fetchone()
+
+
 def save_comment(db, paper_id, body, account, comment_id=None, kind="user",
                  parent_id=None, doi_refs=None, audience=None, location=None, recipients=None, document_id=None,
                  finding_id=None, goal_id=None, scheduled_at=sharing.UNSET):
@@ -721,6 +732,8 @@ def save_comment(db, paper_id, body, account, comment_id=None, kind="user",
         if not db.execute("UPDATE comments SET scheduled_at=? WHERE id=? AND parent_id IS NULL",
                           (scheduled_at, comment_id)).rowcount:
             raise ValueError("Schedule the thread rather than a reply.")
+    author_id = db.execute("SELECT account_id FROM comment_authors WHERE comment_id=?", (comment_id,)).fetchone()[0]
+    mentions.sync(db, "comment", comment_id, author_id, body)
     return comment_id
 
 
@@ -736,6 +749,7 @@ def delete_comment(db, paper_id, comment_id, account, document_id=None):
         (paper_id, document_id, comment_id),
     ).rowcount == 0:
         raise accounts.CommentAccessDenied
+    db.execute("DELETE FROM comment_mentions WHERE comment_id=?", (comment_id,))
 
 
 def set_archived(db, paper_id, archived):

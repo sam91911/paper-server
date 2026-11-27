@@ -474,6 +474,7 @@ function renderComments(comments, summary, items, host, area, status, onReply) {
     const form = add(edit, "form");
     const field = add(add(form, "label", "Comment text"), "textarea");
     field.value = comment.body;
+    field.dataset.mentions = "";
     field.required = true;
     field.maxLength = 20000;
     const refsLabel = add(form, "label", "Related papers, one DOI or DOI link per line");
@@ -540,7 +541,11 @@ function showArchive(papers) {
 
 function rememberPaperSelection() {
   const url = new URL(location.href);
-  if ((url.searchParams.get("paper") || "") !== paperSelection) url.searchParams.delete("page");
+  if ((url.searchParams.get("paper") || "") !== paperSelection) {
+    url.searchParams.delete("page");
+    url.searchParams.delete("comment");
+    if (url.hash.startsWith("#comment-")) url.hash = "";
+  }
   if (paperSelection) url.searchParams.set("paper", paperSelection);
   else url.searchParams.delete("paper");
   history.replaceState(null, "", url);
@@ -861,6 +866,25 @@ async function loadLibrary(paperId) {
   }
 }
 
+function requestedComment(containerKey, containerId) {
+  const params = new URLSearchParams(location.search);
+  const focus = params.get("comment");
+  return params.get(containerKey) === String(containerId) && /^[1-9][0-9]{0,18}$/.test(focus || "") ? focus : "";
+}
+
+function scrollToRequestedComment(focus, panel) {
+  if (!focus) return;
+  const comment = element(`comment-${focus}`);
+  if (!comment) return;
+  element(panel).open = true;
+  comment.tabIndex = -1;
+  comment.focus();
+}
+
+function mergeCommentPages(older, current) {
+  return [...new Map([...older, ...current].map(item => [item.id, item])).values()].sort((a, b) => a.id - b.id);
+}
+
 async function loadPaperComments() {
   const sequence = ++commentLoadSequence;
   const data = libraryData;
@@ -874,7 +898,8 @@ async function loadPaperComments() {
   status.textContent = "Loading comments…";
   retry.hidden = true;
   try {
-    const result = await api(`paper-comments?paper_id=${selected.id}`);
+    const focus = requestedComment("paper", selected.id);
+    const result = await api(`paper-comments?paper_id=${selected.id}${focus ? `&focus=${focus}` : ""}`);
     if (!isCurrent()) return;
     data.comments = result.comments;
     nextCommentBefore = result.next_before;
@@ -883,6 +908,7 @@ async function loadPaperComments() {
     commentForm.hidden = !data.account;
     renderPaperComments(selected);
     showReplyTarget(commentDrafts.get(selected.id)?.parentId);
+    scrollToRequestedComment(focus, "paper-comments");
   } catch (error) {
     if (!isCurrent()) return;
     status.textContent = error.message;
@@ -901,7 +927,7 @@ element("older-comments").addEventListener("click", async event => {
   try {
     const result = await api(`paper-comments?paper_id=${selected.id}&before=${cursor}`);
     if (sequence !== commentLoadSequence || data !== libraryData || selectedPaper()?.id !== selected.id) return;
-    data.comments = [...result.comments, ...data.comments];
+    data.comments = mergeCommentPages(result.comments, data.comments);
     nextCommentBefore = result.next_before;
     button.hidden = !nextCommentBefore;
     renderPaperComments(selected);

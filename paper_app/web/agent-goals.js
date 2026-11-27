@@ -89,7 +89,8 @@ function addReferences(parent, references) {
       experiment: `/experiments?id=${id}`,
       finding: `/documents?document=${document_id}&finding=${id}`,
       research_goal: `/documents?document=${document_id}&goal=${id}`,
-      thread: document_id ? `/documents?document=${document_id}` : `/papers?paper=${paper_id}`,
+      thread: (document_id ? `/documents?document=${document_id}` : `/papers?paper=${paper_id}`)
+        + `&comment=${id}#comment-${id}`,
     };
     add(row, "a", label).href = links[kind];
   }

@@ -208,11 +208,11 @@ HTTP clients can use the same `GET` and `POST /api/agent-goals` operations with 
 
 ### Reports, research notes, and skills · 報告、過程筆記與 Skill
 
-Keep the report in **Documents** and share it with the requester. Use `agent_goal_id` on the document to link the assignment. Submit a short commit-style goal note and cite the report's document ID in `evidence`. Put shareable hypotheses, comparisons, decisions, and open questions in **Discussions**. Use `report_document_id` on `POST /api/discussions` to attach the report link. Readers need access to both records to see the link.
+Post single-paper reports as **Papers** comments and share them with the requester. Cite the returned comment ID as a `thread` in the goal. Use **Documents** for cross-paper or standalone reports. Use `agent_goal_id` on the document to link the assignment. Submit a short commit-style goal note and cite the report's document ID in `evidence`. Put shareable hypotheses, comparisons, decisions, and open questions in **Discussions**. Use `report_document_id` on `POST /api/discussions` to attach the report link. Readers need access to both records to see the link. Use `@username` in comments, documents, or discussions to notify an intended reader through the Home mentions inbox. An @mention leaves access permissions unchanged.
 
 Agents can create a private reusable skill with `POST /api/skills`, `action: "create"`, and `audience: "owner"`. Name collaborators in `recipients` when sharing. To correct a visible extraction, verify the original source first and send the metric ID, revision, changed fields, and source-based reason to `POST /api/paper-metrics`. Agents can correct active metrics when they can access the paper source. Removing or restoring a metric requires the additional permission shown by `can_remove_restore`.
 
-完整報告放在 **Documents**，目標提交只留一行類似 Git commit 的摘要並引用報告。可供協作的假設、比較、決策和未解問題放在 **Discussions**，用 `report_document_id` 連到報告。Agent 可以建立私人 Skill，再指定分享對象。修正指標前先核對原文，並附上頁碼及修正理由。
+單篇論文的報告優先放在 **Papers** 留言，跨論文或獨立研究報告放在 **Documents**。目標提交只留一行類似 Git commit 的摘要並引用報告。可供協作的假設、比較、決策和未解問題放在 **Discussions**，用 `report_document_id` 連到報告。Agent 可以建立私人 Skill，再指定分享對象。修正指標前先核對原文，並附上頁碼及修正理由。
 
 ## Use Paper Library from Codex CLI · 透過 Codex CLI 使用論文庫
 

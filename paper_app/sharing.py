@@ -314,7 +314,7 @@ def save_document(db, account, data, *, kind="document", allow_empty_source=Fals
         if kind != "discussion":
             raise ValueError("Choose a discussion to schedule.")
         scheduled = schedule_value(scheduled)
-    from . import document_context
+    from . import document_context, mentions
 
     document_id = data.get("document_id")
     if document_id is None:
@@ -339,6 +339,8 @@ def save_document(db, account, data, *, kind="document", allow_empty_source=Fals
              existing["scheduled_at"] if scheduled is UNSET else scheduled, document_id),
         )
     document_context.save(db, account, document_id, data, kind=kind)
+    author_id = db.execute("SELECT owner_id FROM documents WHERE id=?", (document_id,)).fetchone()[0]
+    mentions.sync(db, "document", document_id, author_id, title + "\n" + markdown)
     set_recipients(db, "document", document_id, data.get("recipients"))
     if kind == "document":
         db.execute("""

@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const source = fs.readFileSync(new URL('../paper_app/web/documents.js', import.meta.url), 'utf8');
+const library = fs.readFileSync(new URL('../paper_app/web/library.js', import.meta.url), 'utf8');
+const helpers = library.slice(library.indexOf('function requestedComment('), library.indexOf('async function loadPaperComments()'));
 const start = source.indexOf('async function loadDocumentComments()');
 const code = source.slice(start, source.indexOf('element("cancel-document-reply").addEventListener', start));
 const controls = new Map();
@@ -14,12 +16,12 @@ let selected = {id: 1};
 const pending = [];
 const rendered = [];
 const data = {comments: []};
-const context = {libraryData: data, documentCommentSequence: 0, nextDocumentCommentBefore: null,
+const context = {location: {search: ""}, URLSearchParams, libraryData: data, documentCommentSequence: 0, nextDocumentCommentBefore: null,
   element, selectedDocument: () => selected,
   api: route => new Promise(resolve => pending.push({route, resolve})),
   renderDocumentComments: item => rendered.push(item?.id), documentStatus: {textContent: ''}};
 vm.createContext(context);
-vm.runInContext(code, context);
+vm.runInContext(helpers + code, context);
 const first = context.loadDocumentComments();
 selected = {id: 2};
 const second = context.loadDocumentComments();
